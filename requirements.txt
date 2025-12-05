@@ -1,0 +1,11 @@
+# Render Manager ITT02 - Dependencies
+# Core dependencies (all optional but recommended)
+
+# For logo/icon display in the UI
+Pillow>=9.0.0
+
+# Note: tkinter is required but comes with Python standard library
+# On Linux you may need to install it separately:
+#   Ubuntu/Debian: sudo apt-get install python3-tk
+#   Fedora: sudo dnf install python3-tkinter
+#   Arch: sudo pacman -S tk

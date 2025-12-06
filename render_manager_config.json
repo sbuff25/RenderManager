@@ -1,0 +1,17 @@
+{
+  "settings": {
+    "engine_paths": {},
+    "default_versions": {},
+    "default_engine_type": "blender",
+    "default_resolution": "1920x1080",
+    "default_format": "PNG",
+    "blender_default_engine": "Cycles",
+    "blender_default_samples": 128,
+    "blender_use_gpu": true,
+    "blender_compute_device": "Auto",
+    "marmoset_renderer": "Ray Tracing",
+    "marmoset_samples": 256,
+    "marmoset_shadow_quality": "High"
+  },
+  "jobs": []
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Render Manager - Multi-Engine Edition (ITT04-Native Desktop)
+Wain - Multi-Engine Render Queue Manager (ITT04-Native Desktop)
 Queue-based render management with pause/resume support
 Supports: Blender, Marmoset Toolbag
 
@@ -36,7 +36,7 @@ def _check_and_install_dependencies():
     
     if missing:
         print("=" * 60)
-        print("Render Manager - First Run Setup")
+        print("Wain - First Run Setup")
         print("=" * 60)
         print(f"\nInstalling required packages: {', '.join(missing)}")
         print("This only happens once...\n")
@@ -56,7 +56,7 @@ def _check_and_install_dependencies():
                 sys.exit(1)
         
         print("\n" + "=" * 60)
-        print("Setup complete! Starting Render Manager...")
+        print("Setup complete! Starting Wain...")
         print("=" * 60 + "\n")
 
 # Run dependency check before any imports
@@ -86,6 +86,11 @@ from typing import List, Optional, Callable, Dict, Any
 from pathlib import Path
 
 from nicegui import ui, app
+
+# ============================================================================
+# CACHE BUSTING - Force browser to reload assets when version changes
+# ============================================================================
+ASSET_VERSION = "v2"  # Increment this to force cache refresh
 
 # ============================================================================
 # SUPPRESS ALL NOTIFICATIONS (Desktop app - no need for toasts)
@@ -302,17 +307,23 @@ def open_folder_dialog_async(title: str, initial_dir: str, callback: Callable[[O
 DARK_THEME = {
     'dark': True,
     'colors': {
-        'primary': '#3b82f6',
+        'primary': '#a1a1aa',      # Neutral gray for main app chrome
         'secondary': '#6b7280',
-        'accent': '#8b5cf6',
+        'accent': '#71717a',        # Neutral accent
         'positive': '#22c55e',
         'negative': '#ef4444',
-        'info': '#3b82f6',
+        'info': '#71717a',          # Neutral info
         'warning': '#f59e0b',
     }
 }
 
-ENGINE_COLORS = {"blender": "#ea7600", "marmoset": "#06b6d4"}
+ENGINE_COLORS = {"blender": "#ea7600", "marmoset": "#ef0343"}
+
+# Engine logo files (relative to script directory)
+ENGINE_LOGOS = {
+    "blender": "blender_logo.png",
+    "marmoset": "marmoset_logo.png",
+}
 
 STATUS_CONFIG = {
     "rendering": {"color": "blue", "icon": "play_circle", "bg": "blue-900"},
@@ -340,7 +351,8 @@ class RenderJob:
     is_animation: bool = False
     frame_start: int = 1
     frame_end: int = 250
-    current_frame: int = 0
+    current_frame: int = 0      # Last COMPLETED frame (used for resume)
+    rendering_frame: int = 0    # Frame currently being rendered (for display)
     original_start: int = 0
     res_width: int = 1920
     res_height: int = 1080
@@ -351,21 +363,31 @@ class RenderJob:
     elapsed_time: str = ""
     accumulated_seconds: int = 0
     error_message: str = ""
+    current_sample: int = 0
+    total_samples: int = 0
+    
+    @property
+    def samples_display(self) -> str:
+        """Display sample progress for single frame renders"""
+        if self.current_sample > 0 and self.total_samples > 0:
+            return f"{self.current_sample}/{self.total_samples}"
+        return ""
+    
+    @property
+    def display_frame(self) -> int:
+        """Get the frame to display (rendering or last completed)"""
+        if self.rendering_frame > 0:
+            return self.rendering_frame
+        return self.current_frame
     
     @property
     def frames_display(self) -> str:
         if self.is_animation:
-            if self.current_frame > 0 and self.current_frame >= self.frame_start:
-                next_frame = self.current_frame + 1
-                if next_frame <= self.frame_end:
-                    # Only show "paused at" when actually paused, not when rendering
-                    if self.status == "paused":
-                        return f"{next_frame}-{self.frame_end} (paused at {self.current_frame})"
-                    else:
-                        # When rendering, show current progress
-                        return f"{self.current_frame}/{self.frame_end}"
-                return f"Complete ({self.frame_start}-{self.frame_end})"
-            return f"{self.frame_start}-{self.frame_end}"
+            frame = self.display_frame
+            if frame > 0 and frame >= self.frame_start:
+                # Show current/total format for both rendering and paused
+                return f"{frame}/{self.frame_end}"
+            return f"0/{self.frame_end}"
         return str(self.frame_start)
     
     @property 
@@ -752,7 +774,7 @@ class EngineRegistry:
 # APPLICATION STATE
 # ============================================================================
 class RenderApp:
-    CONFIG_FILE = "render_manager_config.json"
+    CONFIG_FILE = "wain_config.json"
     
     def __init__(self):
         self.engine_registry = EngineRegistry()
@@ -764,6 +786,7 @@ class RenderApp:
         self.queue_container = None
         self.log_container = None
         self.stats_container = None
+        self.job_count_container = None  # Job count display
         # Flags for thread-safe UI updates
         self._ui_needs_update = False
         self._render_finished = False
@@ -785,6 +808,7 @@ class RenderApp:
         self.log(f"Added: {job.name}")
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
+        if self.job_count_container: self.job_count_container.refresh()
     
     def handle_action(self, action: str, job):
         self.log(f"{action.capitalize()}: {job.name}")
@@ -802,10 +826,18 @@ class RenderApp:
             job.status = "paused"
         elif action == "retry":
             job.status = "queued"
-            job.progress = 0
             job.current_frame = 0
+            job.rendering_frame = 0
             job.error_message = ""
             job.accumulated_seconds = 0
+            job.elapsed_time = ""
+            job.current_sample = 0
+            job.total_samples = 0
+            # Reset progress to initial position based on where job starts in timeline
+            if job.is_animation and job.frame_end > 0 and job.original_start > 1:
+                job.progress = int(((job.original_start - 1) / job.frame_end) * 100)
+            else:
+                job.progress = 0
         elif action == "delete":
             if self.current_job and self.current_job.id == job.id:
                 engine = self.engine_registry.get(job.engine_type)
@@ -816,23 +848,44 @@ class RenderApp:
         self.save_config()
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
+        if self.job_count_container: self.job_count_container.refresh()
     
     def process_queue(self):
         """Called by timer - handles queue processing and UI updates"""
         now = datetime.now()
         
-        # Handle progress updates via JavaScript (no full UI refresh - smooth!)
+        # Always update elapsed time for current rendering job (real-time timer)
+        if self.current_job and self.current_job.status == "rendering" and self.render_start_time:
+            total_secs = self.current_job.accumulated_seconds
+            total_secs += int((now - self.render_start_time).total_seconds())
+            h, rem = divmod(total_secs, 3600)
+            m, s = divmod(rem, 60)
+            elapsed = f"{h}:{m:02d}:{s:02d}"
+            self.current_job.elapsed_time = elapsed
+            
+            # Push time update via JS (always, for real-time display)
+            try:
+                safe_frames = self.current_job.frames_display.replace('"', '\\"').replace("'", "\\'")
+                safe_samples = self.current_job.samples_display.replace('"', '\\"').replace("'", "\\'")
+                ui.run_javascript(f'''
+                    window.updateJobProgress && window.updateJobProgress("{self.current_job.id}", {self.current_job.progress}, "{elapsed}", "{safe_frames}", "{safe_samples}");
+                ''')
+            except:
+                pass
+        
+        # Handle additional progress updates via JavaScript (no full UI refresh - smooth!)
         if self._progress_updates:
             updates = self._progress_updates.copy()
             self._progress_updates.clear()
             
-            for job_id, progress, elapsed, frame, frames_display in updates:
+            for job_id, progress, elapsed, frame, frames_display, samples_display in updates:
                 # Update progress bar and label via JS - much smoother than full refresh
                 try:
-                    # Escape any quotes in frames_display
+                    # Escape any quotes in displays
                     safe_frames = frames_display.replace('"', '\\"').replace("'", "\\'")
+                    safe_samples = samples_display.replace('"', '\\"').replace("'", "\\'")
                     ui.run_javascript(f'''
-                        window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{safe_frames}");
+                        window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{safe_frames}", "{safe_samples}");
                     ''')
                 except:
                     pass
@@ -848,6 +901,9 @@ class RenderApp:
                     except: pass
                 if self.stats_container:
                     try: self.stats_container.refresh()
+                    except: pass
+                if self.job_count_container:
+                    try: self.job_count_container.refresh()
                     except: pass
         
         # Log updates - skip during active render to prevent UI flicker
@@ -875,6 +931,7 @@ class RenderApp:
             job.status = "failed"
             job.error_message = "Engine not found"
             if self.queue_container: self.queue_container.refresh()
+            if self.job_count_container: self.job_count_container.refresh()
             return
         
         self.current_job = job
@@ -888,6 +945,13 @@ class RenderApp:
         if job.original_start == 0:
             job.original_start = job.frame_start
         
+        # Set initial progress based on where we're starting in the timeline
+        if job.is_animation and job.frame_end > 0:
+            # Progress = (start_frame - 1) / total_frames
+            # e.g., starting at frame 526 of 1500 = 525/1500 = 35%
+            initial_frame = start_frame - 1 if start_frame > 1 else 0
+            job.progress = int((initial_frame / job.frame_end) * 100)
+        
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
         self.log(f"Starting: {job.name}")
@@ -897,27 +961,45 @@ class RenderApp:
         self._last_ui_update = datetime.now()
         
         def on_progress(frame, msg):
-            # Calculate progress based on frame completion for the entire job
+            # Always try to parse sample progress from output (for both animation and single frame)
+            sample_match = re.search(r'Sample (\d+)/(\d+)', msg)
+            if sample_match:
+                job.current_sample = int(sample_match.group(1))
+                job.total_samples = int(sample_match.group(2))
+            
+            # Calculate progress based on frame position in ENTIRE timeline
             if job.is_animation:
                 if frame > 0:
-                    job.current_frame = frame
-                    total = job.frame_end - job.original_start + 1
-                    done = frame - job.original_start + 1
-                    job.progress = min(int((done / total) * 100), 99)
+                    # Frame started - track it for display, but don't mark as complete yet
+                    job.rendering_frame = frame
+                
+                if frame == -1:
+                    # Frame saved/complete - NOW mark the rendering_frame as completed
+                    if job.rendering_frame > 0:
+                        job.current_frame = job.rendering_frame
+                        # Reset sample counter for next frame
+                        job.current_sample = 0
+                    # Progress = completed frame / total frames in timeline
+                    job.progress = min(int((job.current_frame / job.frame_end) * 100), 99)
+                elif job.rendering_frame > 0:
+                    # Update progress based on rendering_frame + sample progress
+                    # Use (rendering_frame - 1) as base since current frame isn't done yet
+                    frame_progress = 0
+                    if job.current_sample > 0 and job.total_samples > 0:
+                        frame_progress = job.current_sample / job.total_samples
+                    # Progress based on (frames_before_current + partial_current) / total_frames
+                    effective_frame = (job.rendering_frame - 1) + frame_progress
+                    job.progress = min(int((effective_frame / job.frame_end) * 100), 99)
             else:
                 # Single frame render - progress based on samples/status
                 if frame == -1:  # Saved/complete signal
                     job.progress = 99
+                elif sample_match:
+                    # Use sample progress for single frames
+                    job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
                 elif "Sample" in msg or "Path Tracing" in msg:
-                    # Try to parse sample progress from Blender output
-                    sample_match = re.search(r'Sample (\d+)/(\d+)', msg)
-                    if sample_match:
-                        current_sample = int(sample_match.group(1))
-                        total_samples = int(sample_match.group(2))
-                        job.progress = min(int((current_sample / total_samples) * 100), 99)
-                    else:
-                        # Increment gradually if we can't parse
-                        job.progress = min(job.progress + 1, 95)
+                    # Increment gradually if we can't parse
+                    job.progress = min(job.progress + 1, 95)
                 elif frame > 0:
                     job.progress = min(job.progress + 5, 95)
             
@@ -929,7 +1011,7 @@ class RenderApp:
             job.elapsed_time = f"{h}:{m:02d}:{s:02d}"
             
             # Queue JS update instead of full UI refresh (much smoother)
-            self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display))
+            self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display))
         
         def on_complete():
             job.status = "completed"
@@ -960,11 +1042,13 @@ class RenderApp:
             "status": j.status if j.status != "rendering" else "paused",
             "progress": j.progress, "is_animation": j.is_animation,
             "frame_start": j.frame_start, "frame_end": j.frame_end,
-            "current_frame": j.current_frame, "original_start": j.original_start,
+            "current_frame": j.current_frame, "rendering_frame": j.rendering_frame,
+            "original_start": j.original_start,
             "res_width": j.res_width, "res_height": j.res_height,
             "camera": j.camera, "engine_settings": j.engine_settings,
             "elapsed_time": j.elapsed_time, "accumulated_seconds": j.accumulated_seconds,
             "error_message": j.error_message,
+            "current_sample": j.current_sample, "total_samples": j.total_samples,
         } for j in self.jobs]}
         try:
             with open(self.CONFIG_FILE, 'w') as f:
@@ -985,11 +1069,13 @@ class RenderApp:
                         status=jd.get("status", "queued"), progress=jd.get("progress", 0),
                         is_animation=jd.get("is_animation", False),
                         frame_start=jd.get("frame_start", 1), frame_end=jd.get("frame_end", 250),
-                        current_frame=jd.get("current_frame", 0), original_start=jd.get("original_start", 0),
+                        current_frame=jd.get("current_frame", 0), rendering_frame=jd.get("rendering_frame", 0),
+                        original_start=jd.get("original_start", 0),
                         res_width=jd.get("res_width", 1920), res_height=jd.get("res_height", 1080),
                         camera=jd.get("camera", "Scene Default"), engine_settings=jd.get("engine_settings", {}),
                         elapsed_time=jd.get("elapsed_time", ""), accumulated_seconds=jd.get("accumulated_seconds", 0),
                         error_message=jd.get("error_message", ""),
+                        current_sample=jd.get("current_sample", 0), total_samples=jd.get("total_samples", 0),
                     ))
             except: pass
 
@@ -1003,45 +1089,68 @@ render_app = RenderApp()
 def create_stat_card(title, status, icon, color):
     count = sum(1 for j in render_app.jobs if j.status == status)
     with ui.row().classes('items-center gap-3'):
-        ui.icon(icon).classes(f'text-3xl text-{color}-500')
+        # Use white/gray icons for desaturated 2-tone look
+        ui.icon(icon).classes('text-3xl text-zinc-400')
         with ui.column().classes('gap-0'):
-            ui.label(title).classes('text-sm text-gray-400')
-            ui.label(str(count)).classes('text-2xl font-bold')
+            ui.label(title).classes('text-sm text-gray-500')
+            ui.label(str(count)).classes('text-2xl font-bold text-white')
 
 
 def create_job_card(job):
     config = STATUS_CONFIG.get(job.status, STATUS_CONFIG["queued"])
     engine = render_app.engine_registry.get(job.engine_type)
     engine_color = ENGINE_COLORS.get(job.engine_type, "#888")
+    engine_logo = ENGINE_LOGOS.get(job.engine_type)
     
     with ui.card().classes('w-full'):
         with ui.row().classes('w-full items-center gap-3'):
-            ui.icon(engine.icon if engine else 'help').classes('text-2xl').style(f'color: {engine_color}')
+            # Engine logo
+            if engine_logo:
+                ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-8 h-8 object-contain')
+            else:
+                ui.icon(engine.icon if engine else 'help').classes('text-2xl').style(f'color: {engine_color}')
             with ui.column().classes('flex-grow gap-0'):
                 ui.label(job.name or "Untitled").classes('font-bold')
                 ui.label(job.file_name).classes('text-sm text-gray-400')
             
-            with ui.element('div').classes(f'px-2 py-1 rounded bg-{config["bg"]} text-{config["color"]}-400 text-xs font-bold'):
-                ui.label(job.status.upper())
-            
+            # Status badge - engine color when rendering, neutral when paused, standard otherwise
             if job.status == "rendering":
-                ui.button(icon='pause', on_click=lambda j=job: render_app.handle_action('pause', j)).props('flat round dense').classes('text-yellow-500')
-            elif job.status in ["queued", "paused"]:
-                ui.button(icon='play_arrow', on_click=lambda j=job: render_app.handle_action('start', j)).props('flat round dense').classes('text-green-500')
-            elif job.status == "failed":
-                ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('text-yellow-500')
+                # Use engine-specific color for rendering status
+                with ui.element('div').classes(f'px-2 py-1 rounded text-xs font-bold status-badge status-badge-engine-{job.engine_type}').style(f'background-color: rgba(255,255,255,0.1); color: {engine_color};'):
+                    ui.label(job.status.upper())
+            elif job.status == "paused":
+                # Neutral gray for paused
+                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold status-badge').style('background-color: rgba(161,161,170,0.15); color: #a1a1aa;'):
+                    ui.label(job.status.upper())
+            else:
+                # Standard colors for queued, completed, failed
+                with ui.element('div').classes(f'px-2 py-1 rounded bg-{config["bg"]} text-{config["color"]}-400 text-xs font-bold status-badge'):
+                    ui.label(job.status.upper())
             
-            ui.button(icon='delete', on_click=lambda j=job: render_app.handle_action('delete', j)).props('flat round dense').classes('text-red-500')
+            # Action buttons - engine themed when rendering, neutral otherwise
+            if job.status == "rendering":
+                ui.button(icon='pause', on_click=lambda j=job: render_app.handle_action('pause', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
+            elif job.status in ["queued", "paused"]:
+                ui.button(icon='play_arrow', on_click=lambda j=job: render_app.handle_action('start', j)).props('flat round dense').classes('job-action-btn text-zinc-400')
+            elif job.status == "failed":
+                ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('job-action-btn text-zinc-400')
+            
+            # Delete button - engine themed when rendering, neutral otherwise
+            if job.status == "rendering":
+                ui.button(icon='delete', on_click=lambda j=job: render_app.handle_action('delete', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
+            else:
+                ui.button(icon='delete', on_click=lambda j=job: render_app.handle_action('delete', j)).props('flat round dense').classes('job-action-btn-danger text-zinc-500')
         
         if job.progress > 0 or job.status in ["rendering", "paused", "completed", "failed"]:
             # Custom HTML progress bar - full control, no unwanted text
             status_class = f'custom-progress-{job.status}'
+            engine_class = f'custom-progress-engine-{job.engine_type}'
             progress_width = max(1, job.progress)  # At least 1% width so it's visible
             
             # Set initial width inline AND data-target for JS animation
             # This prevents flash on refresh - bar starts at correct width
             ui.html(f'''
-                <div class="custom-progress-container {status_class}">
+                <div class="custom-progress-container {status_class} {engine_class}">
                     <div class="custom-progress-track">
                         <div class="custom-progress-fill" 
                              id="progress-fill-{job.id}" 
@@ -1053,13 +1162,22 @@ def create_job_card(job):
             ''', sanitize=False).classes('w-full mt-2')
         
         engine_name = engine.name if engine else job.engine_type
-        info_parts = [engine_name, f"Frames: {job.frames_display}", job.resolution_display]
+        info_parts = [engine_name, job.resolution_display]
         if job.elapsed_time:
             info_parts.append(f"Time: {job.elapsed_time}")
+        
+        # Build render progress info (frame/samples) - show when rendering OR paused with data
+        progress_parts = []
+        if job.is_animation and job.display_frame > 0:
+            progress_parts.append(f"Frame {job.display_frame}/{job.frame_end}")
+        if job.samples_display:
+            progress_parts.append(f"Sample {job.samples_display}")
+        render_progress = " | ".join(progress_parts)
+        
         # Use HTML with ID so we can update via JS
         ui.html(f'''
             <div id="job-info-{job.id}" class="text-sm text-gray-500 mt-2">
-                {" | ".join(info_parts)}
+                {" | ".join(info_parts)}<span id="job-render-progress-{job.id}">{(" | " + render_progress) if render_progress else ""}</span>
             </div>
         ''', sanitize=False)
 
@@ -1097,27 +1215,266 @@ async def show_add_job_dialog():
     status_label = None
     output_input = None
     name_input = None
-    engine_toggle = None
+    engine_buttons = {}
+    accent_elements = {}  # Elements that change color with engine selection
+    
+    # Engine-specific colors
+    ENGINE_ACCENT_COLORS = {
+        "blender": "#ea7600",
+        "marmoset": "#ef0343",
+    }
+    
+    def select_engine(eng_type):
+        """Update the engine selection, button styles, and accent colors with animation"""
+        form['engine_type'] = eng_type
+        accent_color = ENGINE_ACCENT_COLORS.get(eng_type, "#3b82f6")
+        
+        # Update engine selector buttons
+        for et, btn in engine_buttons.items():
+            if et == eng_type:
+                btn.classes(replace='px-3 py-2 rounded engine-btn-selected')
+                btn.style(f'''
+                    background-color: {ENGINE_ACCENT_COLORS.get(et, "#3b82f6")} !important;
+                    color: white !important;
+                    transition: all 0.3s ease;
+                ''')
+            else:
+                btn.classes(replace='px-3 py-2 rounded engine-btn-unselected')
+                btn.style(f'''
+                    background-color: transparent !important;
+                    color: #52525b !important;
+                    transition: all 0.3s ease;
+                ''')
+        
+        # Update header gradient bar
+        if 'header_bar' in accent_elements:
+            accent_elements['header_bar'].style(f'''
+                height: 3px;
+                background: linear-gradient(90deg, transparent 0%, {accent_color} 50%, transparent 100%);
+                transition: background 0.4s ease-in-out;
+            ''')
+        
+        # Update submit button with animated color transition
+        if 'submit_btn' in accent_elements:
+            accent_elements['submit_btn'].style(f'''
+                background-color: {accent_color} !important;
+                transition: all 0.4s ease-in-out !important;
+            ''')
+        
+        # Update CSS variable for all form elements (inputs, checkboxes, selects, etc.)
+        ui.run_javascript(f'''
+            const dialog = document.querySelector('.accent-dialog');
+            if (dialog) {{
+                dialog.style.setProperty('--q-primary', '{accent_color}');
+                
+                // Force repaint for transition
+                dialog.classList.add('accent-transition');
+                setTimeout(() => dialog.classList.remove('accent-transition'), 400);
+            }}
+        ''')
     
     with ui.dialog() as dialog, ui.card().style(
         'width: 600px; max-width: 95vw; padding: 0;'
-    ):
-        # Header
-        with ui.row().classes('w-full items-center justify-between p-4 border-b border-zinc-700'):
-            ui.label('Add Render Job').classes('text-lg font-bold')
-            ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
+    ).classes('accent-dialog'):
+        # Add CSS for dynamic accent colors on all form elements
+        ui.html(f'''
+            <style>
+                .accent-dialog {{
+                    --q-primary: {ENGINE_ACCENT_COLORS.get(form["engine_type"], "#ea7600")};
+                }}
+                
+                /* Engine selector button styles */
+                .accent-dialog .engine-btn-unselected {{
+                    background-color: transparent !important;
+                    transition: all 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-btn-unselected .q-btn__content,
+                .accent-dialog .engine-btn-unselected .q-btn__content * {{
+                    color: #52525b !important;
+                    background-color: transparent !important;
+                    transition: color 0.3s ease, opacity 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-btn-unselected img {{
+                    opacity: 0.4;
+                    transition: opacity 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-btn-unselected:hover {{
+                    background-color: rgba(255, 255, 255, 0.08) !important;
+                }}
+                
+                .accent-dialog .engine-btn-unselected:hover .q-btn__content,
+                .accent-dialog .engine-btn-unselected:hover .q-btn__content * {{
+                    color: #a1a1aa !important;
+                }}
+                
+                .accent-dialog .engine-btn-unselected:hover img {{
+                    opacity: 0.7;
+                }}
+                
+                .accent-dialog .engine-btn-selected {{
+                    transition: all 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-btn-selected .q-btn__content,
+                .accent-dialog .engine-btn-selected .q-btn__content * {{
+                    color: white !important;
+                    background-color: transparent !important;
+                    transition: color 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-btn-selected img {{
+                    opacity: 1;
+                    transition: opacity 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-btn-selected:hover {{
+                    filter: brightness(1.15);
+                }}
+                
+                /* Submit button hover */
+                .accent-dialog .engine-accent {{
+                    transition: all 0.3s ease;
+                }}
+                
+                .accent-dialog .engine-accent:hover {{
+                    filter: brightness(1.15);
+                    transform: translateY(-1px);
+                }}
+                
+                .accent-dialog .engine-accent:active {{
+                    filter: brightness(0.95);
+                    transform: translateY(0);
+                }}
+                
+                /* Input field styles */
+                .accent-dialog .q-field--focused .q-field__control:after {{
+                    border-color: var(--q-primary) !important;
+                }}
+                
+                .accent-dialog .q-field:hover:not(.q-field--focused) .q-field__control:before {{
+                    border-color: rgba(255, 255, 255, 0.3) !important;
+                }}
+                
+                .accent-dialog .q-field--focused .q-field__label {{
+                    color: var(--q-primary) !important;
+                    transition: color 0.4s ease-in-out;
+                }}
+                
+                /* Checkbox styles */
+                .accent-dialog .q-checkbox:hover .q-checkbox__bg {{
+                    border-color: var(--q-primary) !important;
+                }}
+                
+                .accent-dialog .q-checkbox__inner--truthy .q-checkbox__bg {{
+                    background-color: var(--q-primary) !important;
+                    border-color: var(--q-primary) !important;
+                    transition: background-color 0.4s ease-in-out, border-color 0.4s ease-in-out;
+                }}
+                
+                .accent-dialog .q-checkbox__bg {{
+                    transition: background-color 0.4s ease-in-out, border-color 0.4s ease-in-out;
+                }}
+                
+                /* Toggle styles */
+                .accent-dialog .q-toggle:hover .q-toggle__track {{
+                    opacity: 0.7;
+                }}
+                
+                .accent-dialog .q-toggle__inner--truthy .q-toggle__track {{
+                    background-color: var(--q-primary) !important;
+                    opacity: 0.5;
+                    transition: background-color 0.4s ease-in-out;
+                }}
+                
+                .accent-dialog .q-toggle__inner--truthy .q-toggle__thumb {{
+                    background-color: var(--q-primary) !important;
+                    transition: background-color 0.4s ease-in-out;
+                }}
+                
+                /* Select styles */
+                .accent-dialog .q-select:hover:not(.q-field--focused) .q-field__control:before {{
+                    border-color: rgba(255, 255, 255, 0.3) !important;
+                }}
+                
+                .accent-dialog .q-select--focused .q-field__control:after {{
+                    border-color: var(--q-primary) !important;
+                    transition: border-color 0.4s ease-in-out;
+                }}
+                
+                .accent-dialog .q-field__control:after {{
+                    transition: border-color 0.4s ease-in-out;
+                }}
+                
+                /* Flat button styles (Browse, icons) */
+                .accent-dialog .q-btn--flat {{
+                    color: var(--q-primary) !important;
+                    transition: all 0.3s ease-in-out;
+                }}
+                
+                .accent-dialog .q-btn--flat:hover {{
+                    background-color: rgba(255, 255, 255, 0.1) !important;
+                    filter: brightness(1.2);
+                }}
+                
+                /* Separator styles */
+                .accent-dialog .accent-separator {{
+                    background: linear-gradient(90deg, transparent, var(--q-primary), transparent);
+                    height: 1px;
+                    transition: background 0.4s ease-in-out;
+                }}
+            </style>
+        ''', sanitize=False)
         
-        # Form content
-        with ui.column().classes('w-full p-4 gap-3'):
+        # Header with accent gradient bar
+        with ui.column().classes('w-full'):
+            with ui.row().classes('w-full items-center justify-between p-4'):
+                ui.label('Add Render Job').classes('text-lg font-bold')
+                ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
+            # Accent gradient line under header
+            initial_color = ENGINE_ACCENT_COLORS.get(form["engine_type"], "#ea7600")
+            header_bar = ui.element('div').classes('w-full').style(f'''
+                height: 3px;
+                background: linear-gradient(90deg, transparent 0%, {initial_color} 50%, transparent 100%);
+                transition: background 0.4s ease-in-out;
+            ''')
+            accent_elements['header_bar'] = header_bar
+        
+        # Store dialog reference for CSS updates
+        accent_elements['dialog'] = dialog
+        
+        # Form content - let dialog handle scrolling naturally
+        with ui.column().classes('w-full p-4 gap-3').style('max-height: 70vh; overflow-y: auto;'):
             
-            # Engine selector
+            # Engine selector with logos
             with ui.row().classes('w-full items-center gap-2'):
                 ui.label('Engine:').classes('text-gray-400 w-20')
-                engine_toggle = ui.toggle(
-                    {e.engine_type: e.name for e in render_app.engine_registry.get_available()},
-                    value='blender'
-                ).props('dense no-caps size=sm')
-                engine_toggle.bind_value(form, 'engine_type')
+                
+                with ui.row().classes('gap-2'):
+                    for engine in render_app.engine_registry.get_available():
+                        engine_logo = ENGINE_LOGOS.get(engine.engine_type)
+                        
+                        is_selected = engine.engine_type == form['engine_type']
+                        
+                        # Capture engine type in closure
+                        eng_type = engine.engine_type
+                        accent_color = ENGINE_ACCENT_COLORS.get(eng_type, "#3b82f6")
+                        
+                        if is_selected:
+                            btn_class = 'px-3 py-2 rounded engine-btn-selected'
+                            btn_style = f'background-color: {accent_color} !important; color: white !important; transition: all 0.3s ease;'
+                        else:
+                            btn_class = 'px-3 py-2 rounded engine-btn-unselected'
+                            btn_style = 'background-color: transparent !important; color: #52525b !important; transition: all 0.3s ease;'
+                        
+                        with ui.button(on_click=lambda et=eng_type: select_engine(et)).props('flat dense').classes(btn_class).style(btn_style) as btn:
+                            with ui.row().classes('items-center gap-2'):
+                                if engine_logo:
+                                    ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-5 h-5 object-contain')
+                                ui.label(engine.name).classes('text-sm')
+                        engine_buttons[engine.engine_type] = btn
             
             # Job name
             name_input = ui.input('Job Name', placeholder='Enter job name').classes('w-full')
@@ -1203,7 +1560,7 @@ async def show_add_job_dialog():
                             name_input.value = os.path.splitext(os.path.basename(result))[0]
                         detected = render_app.engine_registry.detect_engine_for_file(result)
                         if detected:
-                            engine_toggle.value = detected.engine_type
+                            select_engine(detected.engine_type)
                         if not form['output_folder']:
                             output_input.value = os.path.dirname(result)
                         # Auto-load scene data
@@ -1221,7 +1578,7 @@ async def show_add_job_dialog():
                         name_input.value = os.path.splitext(os.path.basename(path))[0]
                     detected = render_app.engine_registry.detect_engine_for_file(path)
                     if detected:
-                        engine_toggle.value = detected.engine_type
+                        select_engine(detected.engine_type)
                     if not form['output_folder']:
                         output_input.value = os.path.dirname(path)
                     # Auto-load scene data
@@ -1229,7 +1586,8 @@ async def show_add_job_dialog():
             
             file_input.on('blur', on_file_blur)
             
-            ui.separator()
+            # Accent separator
+            ui.element('div').classes('accent-separator w-full my-2')
             
             # Output folder with browse button
             ui.label('Output Folder:').classes('text-sm text-gray-400')
@@ -1266,7 +1624,7 @@ async def show_add_job_dialog():
             
             # Animation
             with ui.row().classes('w-full items-center gap-3'):
-                anim_checkbox = ui.checkbox('Animation')
+                anim_checkbox = ui.checkbox('Animation').props('dense')
                 anim_checkbox.bind_value(form, 'is_animation')
                 frame_start_input = ui.number('Start', value=1, min=1).classes('w-20')
                 frame_start_input.bind_value(form, 'frame_start')
@@ -1274,10 +1632,11 @@ async def show_add_job_dialog():
                 frame_end_input = ui.number('End', value=250, min=1).classes('w-20')
                 frame_end_input.bind_value(form, 'frame_end')
             
-            ui.separator()
+            # Accent separator
+            ui.element('div').classes('accent-separator w-full my-2')
             
             # Submit paused
-            ui.checkbox('Submit as Paused').bind_value(form, 'submit_paused')
+            ui.checkbox('Submit as Paused').props('dense').bind_value(form, 'submit_paused')
         
         # Footer
         with ui.row().classes('w-full justify-end gap-2 p-4 border-t border-zinc-700'):
@@ -1308,35 +1667,46 @@ async def show_add_job_dialog():
                     status='paused' if form['submit_paused'] else 'queued',
                     engine_settings={"use_scene_settings": True, "samples": 128},
                 )
+                # Set initial progress based on frame range position in timeline
+                if job.is_animation and job.frame_end > 0 and job.frame_start > 1:
+                    job.progress = int(((job.frame_start - 1) / job.frame_end) * 100)
                 render_app.add_job(job)
                 dialog.close()
             
-            ui.button('Submit Job', on_click=submit).props('color=primary')
+            initial_accent = ENGINE_ACCENT_COLORS.get(form['engine_type'], "#ea7600")
+            submit_btn = ui.button('Submit Job', on_click=submit).classes('engine-accent').style(f'''
+                background-color: {initial_accent} !important;
+                transition: background-color 0.4s ease-in-out, transform 0.2s ease !important;
+            ''')
+            accent_elements['submit_btn'] = submit_btn
     
     dialog.open()
 
 
 async def show_settings_dialog():
-    with ui.dialog() as dialog, ui.card().style('width: 550px; max-width: 95vw; padding: 0;'):
+    with ui.dialog() as dialog, ui.card().style('width: 550px; max-width: 95vw; padding: 0;').classes('settings-dialog'):
         # Header
         with ui.row().classes('w-full items-center justify-between p-4 border-b border-zinc-700'):
             ui.label('Settings').classes('text-lg font-bold')
-            ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
+            ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm').classes('text-zinc-400 settings-close-btn')
         
         # Content
         with ui.column().classes('w-full p-4 gap-4'):
             for engine in render_app.engine_registry.get_all():
-                with ui.card().classes('w-full p-3'):
+                engine_logo = ENGINE_LOGOS.get(engine.engine_type)
+                with ui.card().classes('w-full p-3 settings-engine-card'):
                     with ui.row().classes('items-center gap-2 mb-2'):
-                        ui.label(f'{engine.icon} {engine.name}').classes('font-bold')
+                        if engine_logo:
+                            ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-6 h-6 object-contain')
+                        ui.label(engine.name).classes('font-bold')
                         status = "✓ Available" if engine.is_available else "✗ Not Found"
-                        color = "text-green-500" if engine.is_available else "text-red-500"
+                        color = "text-zinc-400" if engine.is_available else "text-zinc-600"
                         ui.label(status).classes(f'{color} text-sm')
                     
                     if engine.installed_versions:
                         for v, p in sorted(engine.installed_versions.items(), reverse=True):
                             with ui.row().classes('items-center gap-2 mb-1'):
-                                ui.badge(v, color='primary')
+                                ui.badge(v).classes('version-badge').style('background-color: #3f3f46 !important; color: #e4e4e7 !important;')
                                 ui.label(p).classes('text-xs text-gray-500 truncate').style('max-width: 350px')
                     else:
                         ui.label('No installations detected').classes('text-sm text-gray-500 mb-2')
@@ -1367,12 +1737,12 @@ async def show_settings_dialog():
                             else:
                                 print(f"Path not found: {path}")
                         
-                        ui.button('Browse', icon='folder_open', on_click=lambda e=engine, i=path_input: browse_exe(e, i)).props('flat dense size=sm')
-                        ui.button('Add', icon='add', on_click=lambda e=engine, i=path_input: add_custom(e, i)).props('flat dense size=sm')
+                        ui.button('Browse', icon='folder_open', on_click=lambda e=engine, i=path_input: browse_exe(e, i)).props('flat dense size=sm').classes('settings-action-btn')
+                        ui.button('Add', icon='add', on_click=lambda e=engine, i=path_input: add_custom(e, i)).props('flat dense size=sm').classes('settings-action-btn')
         
         # Footer
         with ui.row().classes('w-full justify-end p-4 border-t border-zinc-700'):
-            ui.button('Close', on_click=dialog.close).props('flat')
+            ui.button('Close', on_click=dialog.close).props('flat').classes('settings-close-btn-footer')
     
     dialog.open()
 
@@ -1406,6 +1776,216 @@ def main_page():
         }
         .job-card {
             width: 100%;
+        }
+        
+        /* ========== MAIN WINDOW DESATURATED THEME ========== */
+        /* Header buttons - white/gray desaturated style */
+        .header-btn,
+        .header-btn.q-btn {
+            color: #a1a1aa !important;
+            background-color: transparent !important;
+            transition: all 0.2s ease !important;
+        }
+        .header-btn .q-icon,
+        .header-btn.q-btn .q-icon {
+            color: #a1a1aa !important;
+        }
+        .header-btn:hover,
+        .header-btn.q-btn:hover {
+            color: #ffffff !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        .header-btn:hover .q-icon,
+        .header-btn.q-btn:hover .q-icon {
+            color: #ffffff !important;
+        }
+        
+        .header-btn-primary,
+        .header-btn-primary.q-btn {
+            background-color: #3f3f46 !important;
+            color: #ffffff !important;
+            transition: all 0.2s ease !important;
+        }
+        .header-btn-primary .q-icon,
+        .header-btn-primary.q-btn .q-icon {
+            color: #ffffff !important;
+        }
+        .header-btn-primary:hover,
+        .header-btn-primary.q-btn:hover {
+            background-color: #52525b !important;
+        }
+        .header-btn-primary:active {
+            background-color: #3f3f46 !important;
+        }
+        
+        /* Job action buttons - desaturated with hover effects */
+        .job-action-btn {
+            transition: all 0.2s ease !important;
+        }
+        .job-action-btn:hover {
+            color: #ffffff !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        
+        .job-action-btn-danger {
+            transition: all 0.2s ease !important;
+        }
+        .job-action-btn-danger:hover {
+            color: #f87171 !important;
+            background-color: rgba(239, 68, 68, 0.15) !important;
+        }
+        
+        /* Engine-specific action buttons (when rendering) */
+        .job-action-btn-engine {
+            color: #a1a1aa !important;
+            transition: all 0.2s ease !important;
+        }
+        
+        /* Blender themed buttons */
+        .job-action-btn-engine-blender {
+            color: #ea7600 !important;
+        }
+        .job-action-btn-engine-blender:hover {
+            color: #ffffff !important;
+            background-color: rgba(234, 118, 0, 0.2) !important;
+        }
+        
+        /* Marmoset themed buttons */
+        .job-action-btn-engine-marmoset {
+            color: #ef0343 !important;
+        }
+        .job-action-btn-engine-marmoset:hover {
+            color: #ffffff !important;
+            background-color: rgba(239, 3, 67, 0.2) !important;
+        }
+        
+        /* Status badge - no hover */
+        .status-badge {
+            /* Static - no hover effect */
+        }
+        
+        /* Job cards - no hover effect on the card itself */
+        /* Hover effects are only on action buttons within */
+        
+        /* Settings dialog cards (engine sections) */
+        .settings-engine-card,
+        .settings-engine-card.q-card {
+            transition: all 0.2s ease;
+            background-color: #18181b !important;
+        }
+        .settings-engine-card:hover,
+        .settings-engine-card.q-card:hover {
+            background-color: #27272a !important;
+        }
+        
+        /* Settings dialog - fully desaturated */
+        .settings-dialog,
+        .settings-dialog .q-card {
+            background-color: #18181b !important;
+        }
+        
+        /* Settings dialog buttons */
+        .settings-action-btn,
+        .settings-action-btn.q-btn {
+            color: #a1a1aa !important;
+            background-color: transparent !important;
+            transition: all 0.2s ease !important;
+        }
+        .settings-action-btn:hover,
+        .settings-action-btn.q-btn:hover {
+            color: #ffffff !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        
+        .settings-close-btn,
+        .settings-close-btn.q-btn {
+            color: #71717a !important;
+            transition: all 0.2s ease !important;
+        }
+        .settings-close-btn:hover,
+        .settings-close-btn.q-btn:hover {
+            color: #ffffff !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        
+        .settings-close-btn-footer,
+        .settings-close-btn-footer.q-btn {
+            color: #a1a1aa !important;
+            background-color: #3f3f46 !important;
+            transition: all 0.2s ease !important;
+        }
+        .settings-close-btn-footer:hover,
+        .settings-close-btn-footer.q-btn:hover {
+            color: #ffffff !important;
+            background-color: #52525b !important;
+        }
+        
+        /* Settings dialog input fields - gray focus */
+        .settings-dialog .q-field--focused .q-field__control:after {
+            border-color: #71717a !important;
+        }
+        .settings-dialog .q-field:hover .q-field__control:before {
+            border-color: #52525b !important;
+        }
+        
+        /* Version badge styling */
+        .version-badge .q-badge,
+        .settings-dialog .q-badge {
+            background-color: #3f3f46 !important;
+            color: #e4e4e7 !important;
+        }
+        
+        /* ========== EXPANSION PANELS ========== */
+        .log-expansion .q-expansion-item__container {
+            background-color: #18181b !important;
+            transition: all 0.2s ease;
+        }
+        .log-expansion .q-item {
+            color: #a1a1aa !important;
+            transition: all 0.2s ease;
+        }
+        .log-expansion .q-item:hover {
+            color: #ffffff !important;
+            background-color: rgba(255, 255, 255, 0.05) !important;
+        }
+        .log-expansion .q-item__section--avatar {
+            color: #71717a !important;
+        }
+        
+        /* ========== GLOBAL INTERACTIVE HOVER ========== */
+        /* All flat buttons in main window */
+        .q-btn--flat:not(.accent-dialog .q-btn--flat):not(.header-btn):not(.header-btn-primary):not(.job-action-btn):not(.job-action-btn-danger):not(.settings-action-btn):not(.settings-close-btn):not(.settings-close-btn-footer) {
+            color: #a1a1aa !important;
+            transition: all 0.2s ease !important;
+        }
+        .q-btn--flat:not(.accent-dialog .q-btn--flat):not(.header-btn):not(.header-btn-primary):not(.job-action-btn):not(.job-action-btn-danger):not(.settings-action-btn):not(.settings-close-btn):not(.settings-close-btn-footer):hover {
+            color: #ffffff !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        
+        /* Input fields in main window - desaturated focus */
+        .q-field:not(.accent-dialog .q-field) .q-field__control:after {
+            border-color: #52525b !important;
+        }
+        .q-field:not(.accent-dialog .q-field):hover .q-field__control:before {
+            border-color: #71717a !important;
+        }
+        .q-field--focused:not(.accent-dialog .q-field--focused) .q-field__control:after {
+            border-color: #a1a1aa !important;
+        }
+        
+        /* ========== ENGINE LOGO STYLING ========== */
+        /* Invert dark logos for visibility on dark theme */
+        img[src*="marmoset_logo"],
+        img[src*="wain_logo"] {
+            filter: invert(1);
+        }
+        
+        /* Rounded corners for wain logo in header */
+        .header img[src*="wain_logo"],
+        img[src*="wain_logo"].rounded-lg {
+            border-radius: 8px;
+            overflow: hidden;
         }
         
         /* ========== SCROLLBAR STYLING ========== */
@@ -1499,14 +2079,57 @@ def main_page():
         }
         
         /* ========== CHECKBOX/RADIO/TOGGLE FIXES ========== */
-        /* Prevent animation freezing by using instant state changes */
-        .q-checkbox__bg,
-        .q-radio__bg,
-        .q-toggle__inner {
-            transition: none !important;
+        /* Completely disable ripple/focus circle that gets stuck */
+        .q-checkbox .q-checkbox__inner::before,
+        .q-radio .q-radio__inner::before,
+        .q-toggle .q-toggle__inner::before,
+        .q-checkbox__bg::before,
+        .q-radio__bg::before,
+        .q-focus-helper,
+        .q-checkbox .q-focus-helper,
+        .q-radio .q-focus-helper,
+        .q-toggle .q-focus-helper,
+        .q-checkbox__focus-helper,
+        .q-radio__focus-helper,
+        .q-toggle__focus-helper {
+            display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            transform: scale(0) !important;
+            width: 0 !important;
+            height: 0 !important;
         }
         
-        /* Checkmark/dot appearance - instant */
+        /* Remove the circular highlight/ripple on all states */
+        .q-checkbox__inner,
+        .q-radio__inner,
+        .q-toggle__inner {
+            background: transparent !important;
+        }
+        
+        /* Kill all pseudo-elements that could show the circle */
+        .q-checkbox__inner::before,
+        .q-checkbox__inner::after,
+        .q-radio__inner::before,
+        .q-radio__inner::after,
+        .q-toggle__inner::before,
+        .q-toggle__inner::after,
+        .q-checkbox__bg::after,
+        .q-radio__bg::after {
+            display: none !important;
+            content: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            background: transparent !important;
+            transform: scale(0) !important;
+        }
+        
+        /* Disable all transitions to prevent stuck states */
+        .q-checkbox__bg,
+        .q-radio__bg,
+        .q-toggle__inner,
         .q-checkbox__svg,
         .q-radio__check,
         .q-toggle__track,
@@ -1514,12 +2137,32 @@ def main_page():
             transition: none !important;
         }
         
-        /* Color changes can be smooth since they don't affect layout */
-        .q-checkbox__inner,
-        .q-radio__inner,
-        .q-toggle__inner--truthy,
-        .q-toggle__inner--falsy {
-            transition: color 0.1s ease, background-color 0.1s ease !important;
+        /* Style the checkbox box itself */
+        .q-checkbox__bg {
+            border-radius: 4px !important;
+            border: 2px solid #71717a !important;
+            background: transparent !important;
+        }
+        
+        /* Checked state */
+        .q-checkbox--truthy .q-checkbox__bg {
+            border-color: #3b82f6 !important;
+            background: #3b82f6 !important;
+        }
+        
+        /* Hover effect on checkbox */
+        .q-checkbox:hover .q-checkbox__bg {
+            border-color: #a1a1aa !important;
+        }
+        
+        .q-checkbox--truthy:hover .q-checkbox__bg {
+            border-color: #60a5fa !important;
+            background: #60a5fa !important;
+        }
+        
+        /* Checkmark color */
+        .q-checkbox__svg {
+            color: white !important;
         }
         
         /* Button toggle group */
@@ -1527,9 +2170,42 @@ def main_page():
             transition: background-color 0.1s ease, color 0.1s ease !important;
         }
         
-        /* Ripple effect - disable to prevent stuck animations */
-        .q-ripple {
+        /* Ripple effect - completely disable everywhere */
+        .q-ripple,
+        [class*="q-ripple"],
+        .q-btn .q-ripple,
+        .q-checkbox .q-ripple,
+        .q-radio .q-ripple,
+        .q-toggle .q-ripple {
             display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+        
+        /* ===== NUKE THE FOCUS CIRCLE COMPLETELY ===== */
+        /* This is the semi-transparent circle that gets stuck */
+        .q-checkbox__inner--truthy::before,
+        .q-checkbox__inner--falsy::before,
+        .q-checkbox__inner::before,
+        .q-checkbox .q-checkbox__inner::before,
+        .q-radio__inner--truthy::before,
+        .q-radio__inner--falsy::before,
+        .q-radio__inner::before,
+        .q-toggle__inner--truthy::before,
+        .q-toggle__inner--falsy::before,
+        .q-toggle__inner::before {
+            display: none !important;
+            content: '' !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            background: transparent !important;
+            background-color: transparent !important;
+            transform: scale(0) !important;
+            width: 0 !important;
+            height: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
         }
         
         /* ========== CUSTOM PROGRESS BAR ========== */
@@ -1570,8 +2246,36 @@ def main_page():
         }
         
         /* ===== RENDERING - Blue with shimmer ===== */
+        /* ===== RENDERING - Engine-specific colors ===== */
         .custom-progress-rendering .custom-progress-fill {
-            background: #3b82f6;
+            background: #a1a1aa;  /* Default gray if no engine match */
+            transition: background 0.3s ease;
+        }
+        
+        /* Blender - Orange */
+        .custom-progress-rendering.custom-progress-engine-blender .custom-progress-fill {
+            background: #ea7600;
+        }
+        .custom-progress-rendering.custom-progress-engine-blender .custom-progress-track {
+            box-shadow: 0 0 8px rgba(234, 118, 0, 0.4);
+            animation: render-glow-blender 2s ease-in-out infinite;
+        }
+        @keyframes render-glow-blender {
+            0%, 100% { box-shadow: 0 0 4px rgba(234, 118, 0, 0.3); }
+            50% { box-shadow: 0 0 12px rgba(234, 118, 0, 0.6); }
+        }
+        
+        /* Marmoset - Red/Pink */
+        .custom-progress-rendering.custom-progress-engine-marmoset .custom-progress-fill {
+            background: #ef0343;
+        }
+        .custom-progress-rendering.custom-progress-engine-marmoset .custom-progress-track {
+            box-shadow: 0 0 8px rgba(239, 3, 67, 0.4);
+            animation: render-glow-marmoset 2s ease-in-out infinite;
+        }
+        @keyframes render-glow-marmoset {
+            0%, 100% { box-shadow: 0 0 4px rgba(239, 3, 67, 0.3); }
+            50% { box-shadow: 0 0 12px rgba(239, 3, 67, 0.6); }
         }
         
         .custom-progress-rendering .custom-progress-fill::after {
@@ -1587,42 +2291,33 @@ def main_page():
                 rgba(255, 255, 255, 0.4) 50%,
                 transparent 100%
             );
-            animation: shimmer 1.5s ease-in-out infinite;
-        }
-        
-        .custom-progress-rendering .custom-progress-track {
-            box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
-            animation: render-glow 2s ease-in-out infinite;
+            animation: shimmer 2s ease-in-out infinite;
         }
         
         @keyframes shimmer {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(200%); }
+            0% { transform: translateX(-100%); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateX(200%); opacity: 0; }
         }
         
-        @keyframes render-glow {
-            0%, 100% { box-shadow: 0 0 4px rgba(59, 130, 246, 0.3); }
-            50% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.6); }
-        }
-        
-        /* ===== QUEUED - Yellow ===== */
+        /* ===== QUEUED - Neutral gray ===== */
         .custom-progress-queued .custom-progress-fill {
-            background: #eab308;
+            background: #52525b;
         }
         
-        /* ===== PAUSED - Orange with glow ===== */
+        /* ===== PAUSED - Neutral white/gray with subtle glow ===== */
         .custom-progress-paused .custom-progress-fill {
-            background: #f97316;
+            background: #a1a1aa;
         }
         
         .custom-progress-paused .custom-progress-track {
-            box-shadow: 0 0 8px rgba(249, 115, 22, 0.4);
+            box-shadow: 0 0 8px rgba(161, 161, 170, 0.3);
             animation: paused-glow 2s ease-in-out infinite;
         }
         
         @keyframes paused-glow {
-            0%, 100% { box-shadow: 0 0 4px rgba(249, 115, 22, 0.3); }
-            50% { box-shadow: 0 0 12px rgba(249, 115, 22, 0.6); }
+            0%, 100% { box-shadow: 0 0 4px rgba(161, 161, 170, 0.2); }
+            50% { box-shadow: 0 0 10px rgba(161, 161, 170, 0.4); }
         }
         
         /* ===== COMPLETED - Green with shine ===== */
@@ -1774,8 +2469,9 @@ def main_page():
                 }
             }, 100);
             
-            // MutationObserver to immediately remove any notifications
+            // MutationObserver to immediately remove any notifications and stuck checkbox effects
             const observer = new MutationObserver(function(mutations) {
+                // Remove notifications
                 const notifications = document.querySelectorAll(
                     '.q-notification, .q-notifications, [class*="q-notification"]'
                 );
@@ -1783,9 +2479,49 @@ def main_page():
                     n.style.display = 'none';
                     n.remove();
                 });
+                
+                // Clean up stuck checkbox/radio/toggle ripple and focus effects
+                document.querySelectorAll('.q-focus-helper, .q-ripple, [class*="focus-helper"]').forEach(el => {
+                    el.style.cssText = 'display:none!important;opacity:0!important;visibility:hidden!important;transform:scale(0)!important;';
+                    try { el.remove(); } catch(e) {}
+                });
             });
             
             observer.observe(document.body, { childList: true, subtree: true });
+            
+            // Clean up checkbox/toggle stuck states on any click
+            document.addEventListener('click', function(e) {
+                // Immediate cleanup
+                cleanupCheckboxEffects();
+                // Also cleanup after Quasar animations
+                setTimeout(cleanupCheckboxEffects, 50);
+                setTimeout(cleanupCheckboxEffects, 150);
+                setTimeout(cleanupCheckboxEffects, 300);
+            }, true);
+            
+            // Clean up on mouseup too (catches drag releases)
+            document.addEventListener('mouseup', function(e) {
+                setTimeout(cleanupCheckboxEffects, 50);
+            }, true);
+            
+            // Aggressive cleanup function
+            function cleanupCheckboxEffects() {
+                // Hide all focus helpers and ripples
+                document.querySelectorAll('.q-focus-helper, .q-ripple, [class*="focus-helper"]').forEach(el => {
+                    el.style.cssText = 'display:none!important;opacity:0!important;visibility:hidden!important;transform:scale(0)!important;';
+                });
+                // Reset inner element backgrounds
+                document.querySelectorAll('.q-checkbox__inner, .q-radio__inner, .q-toggle__inner').forEach(el => {
+                    el.style.background = 'transparent';
+                });
+                // Force hide any pseudo-element circles by setting the parent overflow
+                document.querySelectorAll('.q-checkbox, .q-radio, .q-toggle').forEach(el => {
+                    el.style.overflow = 'visible';
+                });
+            }
+            
+            // Run cleanup periodically as a safety net
+            setInterval(cleanupCheckboxEffects, 500);
             
             // ========== SMOOTH PROGRESS BAR ANIMATION ==========
             // Track current animated widths for each progress bar
@@ -1794,10 +2530,11 @@ def main_page():
             const MIN_STEP = 0.15; // Minimum step per frame for visible movement
             
             // Global function to update progress without UI refresh
-            window.updateJobProgress = function(jobId, progress, elapsed, framesDisplay) {
+            window.updateJobProgress = function(jobId, progress, elapsed, framesDisplay, samplesDisplay) {
                 const fill = document.getElementById('progress-fill-' + jobId);
                 const label = document.getElementById('progress-label-' + jobId);
                 const info = document.getElementById('job-info-' + jobId);
+                const renderProgress = document.getElementById('job-render-progress-' + jobId);
                 
                 if (fill) {
                     fill.dataset.target = progress;
@@ -1806,19 +2543,32 @@ def main_page():
                     label.textContent = progress + '%';
                 }
                 if (info && elapsed) {
-                    // Update elapsed time in info label
-                    var text = info.textContent;
-                    // Replace or add time
-                    if (text.includes('Time:')) {
-                        text = text.replace(/Time: [0-9:]+/, 'Time: ' + elapsed);
+                    // Get the base text without the render progress span
+                    var baseText = info.textContent;
+                    if (renderProgress) {
+                        baseText = baseText.replace(renderProgress.textContent, '').trim();
+                    }
+                    
+                    // Update elapsed time
+                    if (baseText.includes('Time:')) {
+                        baseText = baseText.replace(/Time: [0-9:]+/, 'Time: ' + elapsed);
                     } else {
-                        text = text + ' | Time: ' + elapsed;
+                        baseText = baseText + ' | Time: ' + elapsed;
                     }
-                    // Update frames display if provided
-                    if (framesDisplay) {
-                        text = text.replace(/Frames: [^|]+/, 'Frames: ' + framesDisplay + ' ');
+                    
+                    // Build render progress string (frame/samples)
+                    var progressParts = [];
+                    // For animations, show current/total frame
+                    if (framesDisplay && framesDisplay.includes('/')) {
+                        progressParts.push('Frame ' + framesDisplay);
                     }
-                    info.textContent = text;
+                    if (samplesDisplay) {
+                        progressParts.push('Sample ' + samplesDisplay);
+                    }
+                    var progressText = progressParts.length > 0 ? ' | ' + progressParts.join(' | ') : '';
+                    
+                    // Reconstruct the HTML (same gray color, no special styling)
+                    info.innerHTML = baseText + '<span id="job-render-progress-' + jobId + '">' + progressText + '</span>';
                 }
             };
             
@@ -1893,16 +2643,13 @@ def main_page():
     </script>
     ''')
     
-    with ui.header().classes('items-center justify-between px-4 md:px-6 py-3 bg-zinc-900'):
+    with ui.header().classes('items-center justify-between px-4 md:px-6 py-3 bg-zinc-900 header-main'):
         with ui.row().classes('items-center gap-4'):
-            ui.icon('movie').classes('text-3xl text-blue-500')
-            with ui.column().classes('gap-0'):
-                ui.label('Render Manager').classes('text-xl font-bold')
-                ui.label('NiceGUI Desktop').classes('text-sm text-gray-400')
+            ui.image(f'/logos/wain_logo.png?{ASSET_VERSION}').classes('w-10 h-10 object-contain rounded-lg')
         
         with ui.row().classes('gap-2'):
-            ui.button('Settings', icon='settings', on_click=show_settings_dialog).props('flat')
-            ui.button('Add Job', icon='add', on_click=show_add_job_dialog, color='primary')
+            ui.button('Settings', icon='settings', on_click=show_settings_dialog).props('flat').classes('header-btn text-zinc-400')
+            ui.button('Add Job', icon='add', on_click=show_add_job_dialog).props('flat').classes('header-btn-primary')
     
     with ui.column().classes('responsive-container gap-4'):
         @ui.refreshable
@@ -1921,6 +2668,7 @@ def main_page():
             @ui.refreshable
             def job_count():
                 ui.label(f'{len(render_app.jobs)} jobs').classes('text-gray-400')
+            render_app.job_count_container = job_count
             job_count()
         
         @ui.refreshable
@@ -1938,7 +2686,7 @@ def main_page():
         render_app.queue_container = queue_list
         queue_list()
         
-        with ui.expansion('Log', icon='terminal').classes('w-full'):
+        with ui.expansion('Log', icon='terminal').classes('w-full log-expansion'):
             @ui.refreshable
             def log_display():
                 # Use scroll_area with scroll-to-bottom behavior
@@ -1961,8 +2709,8 @@ def main_page():
             render_app.log_container = log_display
             log_display()
     
-    # Timer for queue processing and UI updates (every 500ms for smoother progress)
-    ui.timer(0.5, render_app.process_queue)
+    # Timer for queue processing and UI updates (every 250ms for real-time progress)
+    ui.timer(0.25, render_app.process_queue)
     
     for engine in render_app.engine_registry.get_all():
         if engine.is_available:
@@ -1976,10 +2724,71 @@ def main_page():
 # RUN
 # ============================================================================
 if __name__ in {"__main__", "__mp_main__"}:
-    print("Starting Render Manager (Desktop Mode)...")
+    print("Starting Wain (Desktop Mode)...")
     print("Using NiceGUI with PyQt6/pywebview backend")
+    
+    # Serve logo/asset files from assets subfolder
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_dir = os.path.join(script_dir, 'assets')
+    
+    # Create assets folder if it doesn't exist
+    if not os.path.exists(assets_dir):
+        os.makedirs(assets_dir)
+    
+    # Clear Qt WebEngine cache to ensure fresh assets load
+    # This fixes issues where old images are cached by the webview
+    def clear_webview_cache():
+        """Clear Qt WebEngine cache directories."""
+        import shutil
+        cache_dirs = []
+        
+        # Windows cache locations
+        if os.name == 'nt':
+            local_appdata = os.environ.get('LOCALAPPDATA', '')
+            appdata = os.environ.get('APPDATA', '')
+            if local_appdata:
+                cache_dirs.append(os.path.join(local_appdata, 'nicegui'))
+                cache_dirs.append(os.path.join(local_appdata, 'pywebview'))
+            if appdata:
+                cache_dirs.append(os.path.join(appdata, 'nicegui'))
+                cache_dirs.append(os.path.join(appdata, 'pywebview'))
+        else:
+            # Linux/Mac
+            home = os.path.expanduser('~')
+            cache_dirs.append(os.path.join(home, '.local', 'share', 'nicegui'))
+            cache_dirs.append(os.path.join(home, '.cache', 'nicegui'))
+        
+        for cache_dir in cache_dirs:
+            if os.path.exists(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                    print(f"Cleared cache: {cache_dir}")
+                except Exception as e:
+                    print(f"Could not clear cache {cache_dir}: {e}")
+    
+    # Clear cache on startup to ensure fresh assets
+    clear_webview_cache()
+    
+    app.add_static_files('/logos', assets_dir)
+    
+    # Set window icon path - prefer .ico for Windows compatibility
+    icon_ico = os.path.join(assets_dir, 'wain_icon.ico')
+    icon_png = os.path.join(assets_dir, 'wain_logo.png')
+    
+    # Use ICO for native window icon (Windows), PNG as fallback for favicon
+    if os.path.exists(icon_ico):
+        favicon_path = icon_ico
+    elif os.path.exists(icon_png):
+        favicon_path = icon_png
+    else:
+        favicon_path = None
+    
+    # Configure native window settings for pywebview
+    app.native.window_args['title'] = 'Wain'
+    
     ui.run(
-        title='Render Manager',
+        title='Wain',
+        favicon=favicon_path,     # Window/tab icon
         dark=True,
         reload=False,
         native=True,              # Desktop window instead of browser

@@ -18,7 +18,7 @@ python wain.py                 # Run directly (if deps installed)
 
 ## Requirements
 
-- **Python 3.10 or higher**
+- **Python 3.10 or higher** (3.10 - 3.14 tested)
   - Download from: https://www.python.org/downloads/
   - ⚠️ Check "Add Python to PATH" during installation
 
@@ -47,6 +47,7 @@ Wain/
 - **Queue Management**: Queue multiple jobs, auto-process
 - **Scene Probing**: Auto-detects settings from scene files
 - **Native Desktop App**: Runs as a proper Windows application
+- **Browser Fallback**: Works in browser if native packages unavailable
 
 ## Supported Render Engines
 
@@ -76,7 +77,9 @@ Settings are saved to `wain_config.json` in the same folder.
 ### Package Installation Fails
 Try installing manually:
 ```bash
-pip install nicegui pywebview PyQt6
+pip install nicegui PyQt6
+pip install pywebview --no-deps
+pip install proxy-tools bottle
 ```
 
 ### App Won't Start

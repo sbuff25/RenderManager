@@ -27,12 +27,16 @@ MAIN_SCRIPT = "wain.py"
 
 # Required Python version
 MIN_PYTHON_VERSION = (3, 10)
+MAX_PYTHON_VERSION = (3, 14)  # Now supports 3.13+ with special pywebview handling
+RECOMMENDED_PYTHON = "3.10, 3.11, 3.12, or 3.13"
 
-# Required packages: (import_name, pip_name, description)
+# Required packages: (import_name, pip_name, description, optional)
+# optional=True means app can run without it (with reduced functionality)
+# ORDER MATTERS: PyQt6 must install before pywebview so Qt backend is available
 REQUIRED_PACKAGES = [
-    ('nicegui', 'nicegui', 'NiceGUI web framework'),
-    ('webview', 'pywebview', 'Native window support'),
-    ('PyQt6', 'PyQt6', 'Qt6 backend for native windows'),
+    ('nicegui', 'nicegui', 'NiceGUI web framework', False),
+    ('PyQt6', 'PyQt6', 'Qt6 backend for native windows', False),  # Install first!
+    ('webview', 'pywebview', 'Native window support', False),     # Needs PyQt6
 ]
 
 # Required asset files (in assets/ subfolder)
@@ -111,14 +115,19 @@ def print_info(message):
 def check_python_version():
     """Check if Python version meets requirements"""
     current = sys.version_info[:2]
-    required = MIN_PYTHON_VERSION
+    min_ver = MIN_PYTHON_VERSION
+    max_ver = MAX_PYTHON_VERSION
     
-    if current >= required:
-        print_success(f"Python {current[0]}.{current[1]} (required: {required[0]}.{required[1]}+)")
-        return True
+    if current < min_ver:
+        print_error(f"Python {current[0]}.{current[1]} - requires {min_ver[0]}.{min_ver[1]}+")
+        return False, "too_old"
+    elif current > max_ver:
+        print_warning(f"Python {current[0]}.{current[1]} - may have compatibility issues")
+        print_info(f"Recommended: Python {RECOMMENDED_PYTHON}")
+        return True, "too_new"
     else:
-        print_error(f"Python {current[0]}.{current[1]} - requires {required[0]}.{required[1]}+")
-        return False
+        print_success(f"Python {current[0]}.{current[1]} (required: {min_ver[0]}.{min_ver[1]}+)")
+        return True, "ok"
 
 
 def check_package(import_name, pip_name, description):
@@ -136,7 +145,31 @@ def install_package(pip_name, description):
     """Install a package using pip"""
     print_info(f"Installing {description}...")
     try:
-        # Use subprocess to install
+        # Special handling for pywebview on Python 3.13+
+        # pythonnet dependency fails to compile, but we can use Qt backend instead
+        if pip_name == 'pywebview' and sys.version_info >= (3, 13):
+            print_info("Python 3.13+ detected - installing pywebview without pythonnet...")
+            # Install without dependencies to skip pythonnet
+            result = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', pip_name, '--no-deps', '--quiet'],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                # Install proxy-tools and other light dependencies pywebview needs
+                subprocess.run(
+                    [sys.executable, '-m', 'pip', 'install', 'proxy-tools', 'bottle', '--quiet'],
+                    capture_output=True
+                )
+                print_success(f"Installed {pip_name} (Qt backend only)")
+                return True
+            else:
+                print_error(f"Failed to install {pip_name}")
+                if result.stderr:
+                    print_info(result.stderr.strip()[:200])
+                return False
+        
+        # Standard installation
         result = subprocess.run(
             [sys.executable, '-m', 'pip', 'install', pip_name, '--quiet'],
             capture_output=True,
@@ -199,12 +232,13 @@ def run_checks_only():
     
     # Check Python
     print_step(1, 4, "Python Version")
-    if not check_python_version():
+    version_ok, version_status = check_python_version()
+    if not version_ok:
         all_good = False
     
     # Check packages
     print_step(2, 4, "Required Packages")
-    for import_name, pip_name, description in REQUIRED_PACKAGES:
+    for import_name, pip_name, description, optional in REQUIRED_PACKAGES:
         if not check_package(import_name, pip_name, description):
             all_good = False
     
@@ -239,7 +273,8 @@ def install_and_launch():
     
     # Step 1: Check Python version
     print_step(1, 4, "Checking Python Version")
-    if not check_python_version():
+    version_ok, version_status = check_python_version()
+    if not version_ok:
         print(f"\n{Colors.RED}Error: Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}+ is required.{Colors.RESET}")
         print(f"Download from: https://www.python.org/downloads/")
         input("\nPress Enter to exit...")
@@ -249,7 +284,7 @@ def install_and_launch():
     print_step(2, 4, "Installing Dependencies")
     
     packages_to_install = []
-    for import_name, pip_name, description in REQUIRED_PACKAGES:
+    for import_name, pip_name, description, optional in REQUIRED_PACKAGES:
         if not check_package(import_name, pip_name, description):
             packages_to_install.append((pip_name, description))
     
@@ -264,14 +299,21 @@ def install_and_launch():
         
         # Install missing packages
         failed = []
+        
         for pip_name, description in packages_to_install:
             if not install_package(pip_name, description):
                 failed.append(pip_name)
         
+        # Handle failures
         if failed:
             print(f"\n{Colors.RED}Error: Failed to install: {', '.join(failed)}{Colors.RESET}")
-            print("Try running manually:")
-            print(f"  {sys.executable} -m pip install {' '.join(failed)}")
+            print("\nTry running manually:")
+            if 'pywebview' in failed:
+                print(f"  {sys.executable} -m pip install PyQt6")
+                print(f"  {sys.executable} -m pip install pywebview --no-deps")
+                print(f"  {sys.executable} -m pip install proxy-tools bottle")
+            else:
+                print(f"  {sys.executable} -m pip install {' '.join(failed)}")
             input("\nPress Enter to exit...")
             sys.exit(1)
     else:
@@ -331,7 +373,7 @@ def show_help():
     python launch_wain.py --help   Show this help message
 
 {Colors.BOLD}Requirements:{Colors.RESET}
-    • Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} or higher
+    • Python 3.10 or higher (3.10 - 3.14 supported)
     • Windows 10/11 (recommended) or Linux/macOS
 
 {Colors.BOLD}Files:{Colors.RESET}
@@ -345,8 +387,8 @@ def show_help():
 
 {Colors.BOLD}Installed Packages:{Colors.RESET}
     • nicegui   - Web-based UI framework
-    • pywebview - Native desktop window wrapper
     • PyQt6     - Qt backend for native rendering
+    • pywebview - Native desktop window wrapper
 """)
 
 

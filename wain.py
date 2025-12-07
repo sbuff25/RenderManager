@@ -6,7 +6,7 @@ Queue-based render management with pause/resume support
 Supports: Blender, Marmoset Toolbag
 
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
-Works on Python 3.10+
+Works on Python 3.10+ (including 3.13 and 3.14)
 """
 
 # ============================================================================
@@ -20,40 +20,85 @@ def _check_and_install_dependencies():
     import subprocess
     import sys
     
+    # (import_name, pip_name, required)
+    # ORDER MATTERS: PyQt6 must install before pywebview so Qt backend is available
     REQUIRED_PACKAGES = [
-        ('nicegui', 'nicegui'),
-        ('webview', 'pywebview'),
-        ('PyQt6', 'PyQt6'),
+        ('nicegui', 'nicegui', True),      # Required - the UI framework
+        ('PyQt6', 'PyQt6', True),          # Required - Qt backend (install before pywebview!)
+        ('PyQt6.QtWebEngineWidgets', 'PyQt6-WebEngine', True),  # Required for native window
+        ('qtpy', 'qtpy', True),            # Required - Qt compatibility layer for pywebview
+        ('webview', 'pywebview', True),    # Required - native window
     ]
     
-    missing = []
+    missing_required = []
+    missing_optional = []
     
-    for import_name, pip_name in REQUIRED_PACKAGES:
+    for import_name, pip_name, required in REQUIRED_PACKAGES:
         try:
             __import__(import_name)
         except ImportError:
-            missing.append(pip_name)
+            if required:
+                missing_required.append(pip_name)
+            else:
+                missing_optional.append(pip_name)
     
-    if missing:
+    all_missing = missing_required + missing_optional
+    
+    if all_missing:
         print("=" * 60)
         print("Wain - First Run Setup")
         print("=" * 60)
-        print(f"\nInstalling required packages: {', '.join(missing)}")
+        print(f"\nInstalling packages: {', '.join(all_missing)}")
         print("This only happens once...\n")
         
-        for package in missing:
+        failed_required = []
+        failed_optional = []
+        
+        for package in all_missing:
             print(f"  Installing {package}...")
             try:
-                subprocess.check_call(
-                    [sys.executable, '-m', 'pip', 'install', package],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT
-                )
+                # Special handling for pywebview on Python 3.13+
+                # pythonnet dependency fails to compile, but we can use Qt backend
+                if package == 'pywebview' and sys.version_info >= (3, 13):
+                    print(f"  (Python 3.13+ - using Qt backend only)")
+                    # Install without dependencies to skip pythonnet
+                    subprocess.check_call(
+                        [sys.executable, '-m', 'pip', 'install', package, '--no-deps'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT
+                    )
+                    # Install light dependencies pywebview needs
+                    subprocess.check_call(
+                        [sys.executable, '-m', 'pip', 'install', 'proxy-tools', 'bottle'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT
+                    )
+                else:
+                    subprocess.check_call(
+                        [sys.executable, '-m', 'pip', 'install', package],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT
+                    )
                 print(f"  ✓ {package} installed successfully")
             except subprocess.CalledProcessError as e:
-                print(f"  ✗ Failed to install {package}")
-                print(f"    Please run: pip install {package}")
-                sys.exit(1)
+                is_required = package in missing_required
+                if is_required:
+                    failed_required.append(package)
+                    print(f"  ✗ Failed to install {package} (required)")
+                else:
+                    failed_optional.append(package)
+                    print(f"  ⚠ Failed to install {package} (optional)")
+        
+        if failed_required:
+            print(f"\n✗ Failed to install required packages: {', '.join(failed_required)}")
+            print(f"\nPlease try:")
+            print(f"  {sys.executable} -m pip install {' '.join(failed_required)}")
+            print(f"\nNote: Python 3.10-3.12 recommended for best compatibility")
+            sys.exit(1)
+        
+        if failed_optional:
+            print(f"\n⚠ Optional packages not installed: {', '.join(failed_optional)}")
+            print("  Wain will run in browser mode instead of native window")
         
         print("\n" + "=" * 60)
         print("Setup complete! Starting Wain...")
@@ -67,8 +112,24 @@ _check_and_install_dependencies()
 # ============================================================================
 # CRITICAL: Set these BEFORE any other imports!
 import os
-os.environ['QT_API'] = 'pyqt6'           # Tell qtpy to use PyQt6
-os.environ['PYWEBVIEW_GUI'] = 'qt'       # Tell pywebview to use Qt backend
+import sys
+
+# Check if native mode is available (pywebview + PyQt6 + WebEngine + qtpy)
+HAS_NATIVE_MODE = False
+try:
+    # Set environment variables FIRST
+    os.environ['QT_API'] = 'pyqt6'
+    os.environ['PYWEBVIEW_GUI'] = 'qt'
+    
+    import PyQt6
+    from PyQt6 import QtWebEngineWidgets  # This is what pywebview Qt backend needs
+    import qtpy  # Qt compatibility layer - required by pywebview
+    import webview
+    
+    HAS_NATIVE_MODE = True
+    print("Native mode: PyQt6 + WebEngine + qtpy available")
+except ImportError as e:
+    print(f"Native mode unavailable ({e}) - will use browser mode")
 
 import subprocess
 import threading
@@ -2724,8 +2785,15 @@ def main_page():
 # RUN
 # ============================================================================
 if __name__ in {"__main__", "__mp_main__"}:
-    print("Starting Wain (Desktop Mode)...")
-    print("Using NiceGUI with PyQt6/pywebview backend")
+    mode = "Desktop (Native)" if HAS_NATIVE_MODE else "Browser"
+    print(f"Starting Wain ({mode} Mode)...")
+    print(f"Python: {sys.version}")
+    
+    if HAS_NATIVE_MODE:
+        print("Using NiceGUI with PyQt6/pywebview backend")
+    else:
+        print("Running in browser mode")
+        print("Open http://localhost:8080 if browser doesn't open automatically")
     
     # Serve logo/asset files from assets subfolder
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2735,39 +2803,40 @@ if __name__ in {"__main__", "__mp_main__"}:
     if not os.path.exists(assets_dir):
         os.makedirs(assets_dir)
     
-    # Clear Qt WebEngine cache to ensure fresh assets load
+    # Clear Qt WebEngine cache to ensure fresh assets load (native mode only)
     # This fixes issues where old images are cached by the webview
-    def clear_webview_cache():
-        """Clear Qt WebEngine cache directories."""
-        import shutil
-        cache_dirs = []
+    if HAS_NATIVE_MODE:
+        def clear_webview_cache():
+            """Clear Qt WebEngine cache directories."""
+            import shutil
+            cache_dirs = []
+            
+            # Windows cache locations
+            if os.name == 'nt':
+                local_appdata = os.environ.get('LOCALAPPDATA', '')
+                appdata = os.environ.get('APPDATA', '')
+                if local_appdata:
+                    cache_dirs.append(os.path.join(local_appdata, 'nicegui'))
+                    cache_dirs.append(os.path.join(local_appdata, 'pywebview'))
+                if appdata:
+                    cache_dirs.append(os.path.join(appdata, 'nicegui'))
+                    cache_dirs.append(os.path.join(appdata, 'pywebview'))
+            else:
+                # Linux/Mac
+                home = os.path.expanduser('~')
+                cache_dirs.append(os.path.join(home, '.local', 'share', 'nicegui'))
+                cache_dirs.append(os.path.join(home, '.cache', 'nicegui'))
+            
+            for cache_dir in cache_dirs:
+                if os.path.exists(cache_dir):
+                    try:
+                        shutil.rmtree(cache_dir)
+                        print(f"Cleared cache: {cache_dir}")
+                    except Exception as e:
+                        print(f"Could not clear cache {cache_dir}: {e}")
         
-        # Windows cache locations
-        if os.name == 'nt':
-            local_appdata = os.environ.get('LOCALAPPDATA', '')
-            appdata = os.environ.get('APPDATA', '')
-            if local_appdata:
-                cache_dirs.append(os.path.join(local_appdata, 'nicegui'))
-                cache_dirs.append(os.path.join(local_appdata, 'pywebview'))
-            if appdata:
-                cache_dirs.append(os.path.join(appdata, 'nicegui'))
-                cache_dirs.append(os.path.join(appdata, 'pywebview'))
-        else:
-            # Linux/Mac
-            home = os.path.expanduser('~')
-            cache_dirs.append(os.path.join(home, '.local', 'share', 'nicegui'))
-            cache_dirs.append(os.path.join(home, '.cache', 'nicegui'))
-        
-        for cache_dir in cache_dirs:
-            if os.path.exists(cache_dir):
-                try:
-                    shutil.rmtree(cache_dir)
-                    print(f"Cleared cache: {cache_dir}")
-                except Exception as e:
-                    print(f"Could not clear cache {cache_dir}: {e}")
-    
-    # Clear cache on startup to ensure fresh assets
-    clear_webview_cache()
+        # Clear cache on startup to ensure fresh assets
+        clear_webview_cache()
     
     app.add_static_files('/logos', assets_dir)
     
@@ -2783,17 +2852,32 @@ if __name__ in {"__main__", "__mp_main__"}:
     else:
         favicon_path = None
     
-    # Configure native window settings for pywebview
-    app.native.window_args['title'] = 'Wain'
-    
-    ui.run(
-        title='Wain',
-        favicon=favicon_path,     # Window/tab icon
-        dark=True,
-        reload=False,
-        native=True,              # Desktop window instead of browser
-        window_size=(1200, 850),
-        fullscreen=False,
-        reconnect_timeout=0,      # Disable reconnection attempts (desktop app)
-        show=True,                # Show window immediately
-    )
+    if HAS_NATIVE_MODE:
+        # Configure native window settings for pywebview
+        print("Configuring native window...")
+        app.native.window_args['title'] = 'Wain'
+        
+        print("Starting UI (native mode)...")
+        ui.run(
+            title='Wain',
+            favicon=favicon_path,     # Window/tab icon
+            dark=True,
+            reload=False,
+            native=True,              # Desktop window instead of browser
+            window_size=(1200, 850),
+            fullscreen=False,
+            reconnect_timeout=0,      # Disable reconnection attempts (desktop app)
+            show=True,                # Show window immediately
+        )
+    else:
+        # Browser mode - open in default browser
+        print("Starting UI (browser mode)...")
+        ui.run(
+            title='Wain',
+            favicon=favicon_path,     # Tab icon
+            dark=True,
+            reload=False,
+            native=False,             # Run in browser
+            port=8080,                # Fixed port for browser mode
+            show=True,                # Auto-open browser
+        )

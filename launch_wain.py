@@ -39,6 +39,7 @@ REQUIRED_PACKAGES = [
     ('PyQt6.QtWebEngineWidgets', 'PyQt6-WebEngine', 'Qt6 WebEngine (for native window)', False),
     ('qtpy', 'qtpy', 'Qt compatibility layer', False),  # Required for pywebview Qt backend
     ('webview', 'pywebview', 'Native window support', False),     # Needs PyQt6 + qtpy
+    ('PIL', 'Pillow', 'Image processing (icons/splash)', False),  # For splash screen and taskbar icons
 ]
 
 # Required asset files (in assets/ subfolder)
@@ -74,12 +75,12 @@ def print_header():
     """Print the Wain ASCII header"""
     print(f"""
 {Colors.CYAN}{Colors.BOLD}
- ██╗    ██╗ █████╗ ██╗███╗   ██╗
- ██║    ██║██╔══██╗██║████╗  ██║
- ██║ █╗ ██║███████║██║██╔██╗ ██║
- ██║███╗██║██╔══██║██║██║╚██╗██║
- ╚███╔███╔╝██║  ██║██║██║ ╚████║
-  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝
+ â–ˆâ–ˆâ•—    â–ˆâ–ˆâ•— â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•— â–ˆâ–ˆâ•—â–ˆâ–ˆâ–ˆâ•—   â–ˆâ–ˆâ•—
+ â–ˆâ–ˆâ•‘    â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•—â–ˆâ–ˆâ•‘â–ˆâ–ˆâ–ˆâ–ˆâ•—  â–ˆâ–ˆâ•‘
+ â–ˆâ–ˆâ•‘ â–ˆâ•— â–ˆâ–ˆâ•‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â–ˆâ–ˆâ•— â–ˆâ–ˆâ•‘
+ â–ˆâ–ˆâ•‘â–ˆâ–ˆâ–ˆâ•—â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•”â•â•â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘â•šâ–ˆâ–ˆâ•—â–ˆâ–ˆâ•‘
+ â•šâ–ˆâ–ˆâ–ˆâ•”â–ˆâ–ˆâ–ˆâ•”â•â–ˆâ–ˆâ•‘  â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘â–ˆâ–ˆâ•‘ â•šâ–ˆâ–ˆâ–ˆâ–ˆâ•‘
+  â•šâ•â•â•â•šâ•â•â• â•šâ•â•  â•šâ•â•â•šâ•â•â•šâ•â•  â•šâ•â•â•â•
 {Colors.RESET}
 {Colors.DIM}  Render Queue Manager v{APP_VERSION}{Colors.RESET}
 """)
@@ -92,22 +93,22 @@ def print_step(step_num, total, message):
 
 def print_success(message):
     """Print a success message"""
-    print(f"    {Colors.GREEN}✓{Colors.RESET} {message}")
+    print(f"    {Colors.GREEN}âœ“{Colors.RESET} {message}")
 
 
 def print_warning(message):
     """Print a warning message"""
-    print(f"    {Colors.YELLOW}⚠{Colors.RESET} {message}")
+    print(f"    {Colors.YELLOW}âš {Colors.RESET} {message}")
 
 
 def print_error(message):
     """Print an error message"""
-    print(f"    {Colors.RED}✗{Colors.RESET} {message}")
+    print(f"    {Colors.RED}âœ—{Colors.RESET} {message}")
 
 
 def print_info(message):
     """Print an info message"""
-    print(f"    {Colors.DIM}→{Colors.RESET} {message}")
+    print(f"    {Colors.DIM}â†’{Colors.RESET} {message}")
 
 
 # ============================================================================
@@ -340,9 +341,9 @@ def install_and_launch():
         print_info("App will use fallback icons")
     
     # Launch!
-    print(f"\n{Colors.GREEN}{Colors.BOLD}✓ Setup complete!{Colors.RESET}")
+    print(f"\n{Colors.GREEN}{Colors.BOLD}âœ“ Setup complete!{Colors.RESET}")
     print(f"\n{Colors.CYAN}Launching Wain...{Colors.RESET}\n")
-    print("─" * 50)
+    print("â”€" * 50)
     
     # Run the main application using subprocess (more reliable)
     os.chdir(script_dir)
@@ -375,24 +376,24 @@ def show_help():
     python launch_wain.py --help   Show this help message
 
 {Colors.BOLD}Requirements:{Colors.RESET}
-    • Python 3.10 or higher (3.10 - 3.14 supported)
-    • Windows 10/11 (recommended) or Linux/macOS
+    â€¢ Python 3.10 or higher (3.10 - 3.14 supported)
+    â€¢ Windows 10/11 (recommended) or Linux/macOS
 
 {Colors.BOLD}Files:{Colors.RESET}
     Wain/
-    ├── launch_wain.py        (this launcher)
-    ├── wain.py               (main application)
-    └── assets/
-        ├── wain_logo.png     (app logo)
-        ├── blender_logo.png  (Blender engine icon)
-        └── marmoset_logo.png (Marmoset engine icon)
+    â”œâ”€â”€ launch_wain.py        (this launcher)
+    â”œâ”€â”€ wain.py               (main application)
+    â””â”€â”€ assets/
+        â”œâ”€â”€ wain_logo.png     (app logo)
+        â”œâ”€â”€ blender_logo.png  (Blender engine icon)
+        â””â”€â”€ marmoset_logo.png (Marmoset engine icon)
 
 {Colors.BOLD}Installed Packages:{Colors.RESET}
-    • nicegui        - Web-based UI framework
-    • PyQt6          - Qt6 framework
-    • PyQt6-WebEngine - Qt6 web browser engine
-    • qtpy           - Qt compatibility layer
-    • pywebview      - Native desktop window wrapper
+    â€¢ nicegui        - Web-based UI framework
+    â€¢ PyQt6          - Qt6 framework
+    â€¢ PyQt6-WebEngine - Qt6 web browser engine
+    â€¢ qtpy           - Qt compatibility layer
+    â€¢ pywebview      - Native desktop window wrapper
 """)
 
 

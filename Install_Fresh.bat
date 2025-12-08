@@ -67,7 +67,16 @@ if errorlevel 1 (
 )
 
 echo.
-echo [Step 6/6] Installing NiceGUI (last)...
+echo [Step 6/7] Installing Pillow (image processing)...
+pip install Pillow
+if errorlevel 1 (
+    echo ERROR: Failed to install Pillow
+    pause
+    exit /b 1
+)
+
+echo.
+echo [Step 7/7] Installing NiceGUI (last)...
 pip install nicegui
 if errorlevel 1 (
     echo ERROR: Failed to install nicegui
@@ -85,6 +94,7 @@ echo.
 python -c "import PyQt6; print('PyQt6: OK')"
 python -c "from PyQt6 import QtWebEngineWidgets; print('PyQt6-WebEngine: OK')"
 python -c "import webview; print('pywebview: OK')"
+python -c "from PIL import Image; print('Pillow: OK')"
 python -c "import nicegui; print('nicegui:', nicegui.__version__)"
 echo.
 echo Now run Test_Dependencies.bat to verify everything works.

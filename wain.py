@@ -7,6 +7,8 @@ Supports: Blender, Marmoset Toolbag
 
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
+
+Note: Use wain_launcher.pyw for splash screen and no console window.
 """
 
 # ============================================================================
@@ -28,6 +30,7 @@ def _check_and_install_dependencies():
         ('PyQt6.QtWebEngineWidgets', 'PyQt6-WebEngine', True),  # Required for native window
         ('qtpy', 'qtpy', True),            # Required - Qt compatibility layer for pywebview
         ('webview', 'pywebview', True),    # Required - native window
+        ('PIL', 'Pillow', True),           # Required - image processing for icons/splash
     ]
     
     missing_required = []
@@ -79,25 +82,25 @@ def _check_and_install_dependencies():
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.STDOUT
                     )
-                print(f"  ✓ {package} installed successfully")
+                print(f"  [OK] {package} installed successfully")
             except subprocess.CalledProcessError as e:
                 is_required = package in missing_required
                 if is_required:
                     failed_required.append(package)
-                    print(f"  ✗ Failed to install {package} (required)")
+                    print(f"  [X] Failed to install {package} (required)")
                 else:
                     failed_optional.append(package)
-                    print(f"  ⚠ Failed to install {package} (optional)")
+                    print(f"  [!] Failed to install {package} (optional)")
         
         if failed_required:
-            print(f"\n✗ Failed to install required packages: {', '.join(failed_required)}")
+            print(f"\n[X] Failed to install required packages: {', '.join(failed_required)}")
             print(f"\nPlease try:")
             print(f"  {sys.executable} -m pip install {' '.join(failed_required)}")
             print(f"\nNote: Python 3.10-3.12 recommended for best compatibility")
             sys.exit(1)
         
         if failed_optional:
-            print(f"\n⚠ Optional packages not installed: {', '.join(failed_optional)}")
+            print(f"\n[!] Optional packages not installed: {', '.join(failed_optional)}")
             print("  Wain will run in browser mode instead of native window")
         
         print("\n" + "=" * 60)
@@ -766,36 +769,992 @@ print("INFO_END")
 
 
 # ============================================================================
-# MARMOSET ENGINE (Stub)
+# MARMOSET ENGINE - Full Implementation
 # ============================================================================
 class MarmosetEngine(RenderEngine):
+    """
+    Marmoset Toolbag render engine integration.
+    
+    Supports:
+    - Still image renders (beauty shots)
+    - Turntable (360 deg rotation) renders
+    - Animation sequence renders
+    - Full render settings control (renderer, samples, shadows, denoising)
+    - File-based progress tracking
+    """
+    
     name = "Marmoset Toolbag"
     engine_type = "marmoset"
     file_extensions = [".tbscene"]
     icon = "diamond"
-    color = "#06b6d4"
+    color = "#ef0343"  # Marmoset red
+    
+    # Installation paths to search
+    SEARCH_PATHS = [
+        r"C:\Program Files\Marmoset\Toolbag 5\toolbag.exe",
+        r"C:\Program Files\Marmoset\Toolbag 4\toolbag.exe",
+        r"C:\Program Files (x86)\Marmoset\Toolbag 5\toolbag.exe",
+        r"C:\Program Files (x86)\Marmoset\Toolbag 4\toolbag.exe",
+    ]
+    
+    # Output formats for still images
+    OUTPUT_FORMATS = {
+        "PNG": "PNG",
+        "JPEG": "JPEG",
+        "TGA": "TGA",
+        "PSD": "PSD",
+        "PSD (16-bit)": "PSD (16-bit)",
+        "EXR (16-bit)": "EXR (16-bit)",
+        "EXR (32-bit)": "EXR (32-bit)",
+    }
+    
+    # Video/sequence formats
+    VIDEO_FORMATS = {
+        "MP4": "MPEG4",
+        "PNG Sequence": "PNG",
+        "JPEG Sequence": "JPEG",
+        "TGA Sequence": "TGA",
+    }
+    
+    # Renderer modes
+    RENDERERS = ["Ray Tracing", "Hybrid", "Raster"]
+    
+    # Shadow quality options
+    SHADOW_QUALITY = ["Low", "High", "Mega"]
+    
+    # Denoising options
+    DENOISE_MODES = ["off", "cpu", "gpu"]
+    DENOISE_QUALITY = ["low", "medium", "high"]
+    
+    # Render types for the UI
+    RENDER_TYPES = {
+        "still": "Still Image",
+        "turntable": "Turntable (360 deg)",
+        "animation": "Animation",
+    }
     
     def __init__(self):
         super().__init__()
+        self._temp_script_path: Optional[str] = None
+        self._progress_file_path: Optional[str] = None
+        self._progress_monitor_thread: Optional[threading.Thread] = None
+        self._monitoring = False
+        self._last_message = ""
         self.scan_installed_versions()
     
     def scan_installed_versions(self):
+        """Scan for Toolbag installations."""
         self.installed_versions = {}
-        paths = [r"C:\Program Files\Marmoset\Toolbag 5\toolbag.exe", r"C:\Program Files\Marmoset\Toolbag 4\toolbag.exe"]
-        for p in paths:
-            if os.path.exists(p):
-                version = "5.0" if "5" in p else "4.0"
-                self.installed_versions[version] = p
+        for path in self.SEARCH_PATHS:
+            if os.path.isfile(path):
+                if "Toolbag 5" in path:
+                    version = "5.0"
+                elif "Toolbag 4" in path:
+                    version = "4.0"
+                else:
+                    version = "Unknown"
+                self.installed_versions[version] = path
     
-    def add_custom_path(self, path): return None
-    def get_scene_info(self, file_path): return {"cameras": ["Main Camera"], "resolution_x": 1920, "resolution_y": 1080, "frame_start": 1, "frame_end": 1}
-    def get_output_formats(self): return {"PNG": "PNG", "JPEG": "JPEG"}
-    def get_default_settings(self): return {"renderer": "Ray Tracing", "samples": 256}
-    def start_render(self, job, start_frame, on_progress, on_complete, on_error, on_log=None): on_error("Marmoset not implemented")
-    def cancel_render(self): self.is_cancelling = True
-    def open_file_in_app(self, file_path, version=None):
-        if self.installed_versions:
-            subprocess.Popen([list(self.installed_versions.values())[0], file_path], creationflags=subprocess.DETACHED_PROCESS)
+    def add_custom_path(self, path: str) -> Optional[str]:
+        """Add a custom Toolbag executable path."""
+        if os.path.isfile(path) and path.lower().endswith('.exe'):
+            if "5" in os.path.basename(os.path.dirname(path)):
+                version = "5.x (Custom)"
+            elif "4" in os.path.basename(os.path.dirname(path)):
+                version = "4.x (Custom)"
+            else:
+                version = "Custom"
+            self.installed_versions[version] = path
+            return version
+        return None
+    
+    def get_best_toolbag(self) -> Optional[str]:
+        """Get the best available Toolbag executable (prefer newest)."""
+        if not self.installed_versions:
+            return None
+        newest = sorted(self.installed_versions.keys(), reverse=True)[0]
+        return self.installed_versions[newest]
+    
+    def get_output_formats(self) -> Dict[str, str]:
+        """Return available output formats."""
+        return self.OUTPUT_FORMATS
+    
+    def get_video_formats(self) -> Dict[str, str]:
+        """Return available video/sequence formats."""
+        return self.VIDEO_FORMATS
+    
+    def get_default_settings(self) -> Dict[str, Any]:
+        """Return default engine settings for Marmoset jobs."""
+        return {
+            "render_type": "still",           # still, turntable, animation
+            "renderer": "Ray Tracing",        # Ray Tracing, Hybrid, Raster
+            "samples": 256,                   # Render samples
+            "shadow_quality": "High",         # Low, High, Mega
+            "use_transparency": False,        # Transparent background
+            "denoise_mode": "gpu",            # off, cpu, gpu
+            "denoise_quality": "high",        # low, medium, high
+            "denoise_strength": 1.0,          # 0.0 - 1.0
+            "ray_trace_bounces": 4,           # 1-16
+            # Turntable specific
+            "turntable_frames": 120,          # Number of frames for 360 deg
+            "turntable_clockwise": True,      # Rotation direction
+            # Video format (for turntable/animation)
+            "video_format": "PNG Sequence",   # Output format for sequences
+        }
+    
+    def get_file_dialog_filter(self) -> List[tuple]:
+        """Return file dialog filter for Toolbag scenes."""
+        return [("Marmoset Toolbag Scenes", "*.tbscene")]
+    
+    def open_file_in_app(self, file_path: str, version: str = None):
+        """Open a scene file in Toolbag."""
+        toolbag_exe = self.get_best_toolbag()
+        if toolbag_exe and os.path.exists(file_path):
+            try:
+                creation_flags = subprocess.DETACHED_PROCESS if sys.platform == 'win32' else 0
+                subprocess.Popen([toolbag_exe, file_path], creationflags=creation_flags)
+            except Exception as e:
+                print(f"Failed to open in Toolbag: {e}")
+    
+    # ========================================================================
+    # SCENE PROBING
+    # ========================================================================
+    
+    def get_scene_info(self, file_path: str) -> Dict[str, Any]:
+        """
+        Probe a Toolbag scene file to extract information.
+        Runs Toolbag with a probe script that writes JSON output.
+        """
+        default_info = {
+            "cameras": ["Main Camera"],
+            "active_camera": "Main Camera",
+            "resolution_x": 1920,
+            "resolution_y": 1080,
+            "renderer": "Ray Tracing",
+            "samples": 256,
+            "frame_start": 1,
+            "frame_end": 1,
+            "total_frames": 1,
+            "has_animation": False,
+            "has_turntable": False,
+        }
+        
+        toolbag_exe = self.get_best_toolbag()
+        if not toolbag_exe or not os.path.exists(file_path):
+            return default_info
+        
+        # Create temp files for probe script and output
+        script_dir = os.path.dirname(file_path) or tempfile.gettempdir()
+        probe_script = os.path.join(script_dir, "_wane_probe.py")
+        output_json = os.path.join(script_dir, "_wane_probe_result.json")
+        
+        # Generate probe script
+        probe_code = self._generate_probe_script(file_path, output_json)
+        
+        try:
+            with open(probe_script, 'w', encoding='utf-8') as f:
+                f.write(probe_code)
+            
+            startupinfo = None
+            if sys.platform == 'win32':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+            result = subprocess.run(
+                [toolbag_exe, probe_script],
+                capture_output=True,
+                timeout=60,
+                startupinfo=startupinfo
+            )
+            
+            if os.path.exists(output_json):
+                with open(output_json, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                return info
+            else:
+                print(f"Probe output not found")
+                return default_info
+                
+        except subprocess.TimeoutExpired:
+            print("Toolbag probe timed out")
+            return default_info
+        except Exception as e:
+            print(f"Scene probe error: {e}")
+            return default_info
+        finally:
+            for f in [probe_script, output_json]:
+                if os.path.exists(f):
+                    try:
+                        os.unlink(f)
+                    except:
+                        pass
+    
+    def _generate_probe_script(self, scene_path: str, output_path: str) -> str:
+        """Generate Python script that probes scene and writes JSON."""
+        scene_path_escaped = scene_path.replace('\\', '\\\\')
+        output_path_escaped = output_path.replace('\\', '\\\\')
+        
+        return f'''# Wane Scene Probe Script for Marmoset Toolbag
+import mset
+import json
+
+def probe_scene():
+    result = {{
+        "cameras": [],
+        "active_camera": "Main Camera",
+        "resolution_x": 1920,
+        "resolution_y": 1080,
+        "renderer": "Ray Tracing",
+        "samples": 256,
+        "frame_start": 1,
+        "frame_end": 1,
+        "total_frames": 1,
+        "has_animation": False,
+        "has_turntable": False,
+    }}
+    
+    try:
+        mset.loadScene(r"{scene_path_escaped}")
+        
+        # Get all cameras and turntable info
+        cameras = []
+        turntable_obj = None
+        for obj in mset.getAllObjects():
+            obj_name = obj.name if hasattr(obj, 'name') else str(obj)
+            obj_type = type(obj).__name__
+            if hasattr(obj, 'fov') or 'Camera' in obj_type:
+                cameras.append(obj_name)
+            if 'Turntable' in obj_type:
+                turntable_obj = obj
+                if hasattr(obj, 'enabled') and obj.enabled:
+                    result["has_turntable"] = True
+                # Get turntable spin rate for frame calculation
+                if hasattr(obj, 'spinRate'):
+                    result["turntable_spin_rate"] = abs(obj.spinRate)
+        
+        if cameras:
+            result["cameras"] = cameras
+            try:
+                active_cam = mset.getCamera()
+                if active_cam and hasattr(active_cam, 'name'):
+                    result["active_camera"] = active_cam.name
+                elif cameras:
+                    result["active_camera"] = cameras[0]
+            except:
+                if cameras:
+                    result["active_camera"] = cameras[0]
+        
+        # Get render settings from Render object
+        try:
+            render_obj = None
+            for obj in mset.getAllObjects():
+                if type(obj).__name__ == 'RenderObject':
+                    render_obj = obj
+                    break
+            
+            if render_obj:
+                # Get image output settings (for still renders)
+                if hasattr(render_obj, 'images'):
+                    img = render_obj.images
+                    if hasattr(img, 'width'):
+                        result["resolution_x"] = img.width
+                    if hasattr(img, 'height'):
+                        result["resolution_y"] = img.height
+                    if hasattr(img, 'samples'):
+                        result["samples"] = img.samples
+                
+                # Get VIDEO output settings (for turntable/animation)
+                # This is where Toolbag 5.02+ stores the frame count
+                if hasattr(render_obj, 'videos'):
+                    vid = render_obj.videos
+                    if hasattr(vid, 'width') and vid.width > 0:
+                        result["video_width"] = vid.width
+                    if hasattr(vid, 'height') and vid.height > 0:
+                        result["video_height"] = vid.height
+                    if hasattr(vid, 'samples'):
+                        result["video_samples"] = vid.samples
+                    if hasattr(vid, 'format'):
+                        result["video_format"] = vid.format
+                    # Get frame count from video settings
+                    if hasattr(vid, 'frameCount') and vid.frameCount > 0:
+                        result["turntable_frames"] = vid.frameCount
+                        result["frame_end"] = vid.frameCount
+                        result["total_frames"] = vid.frameCount
+                
+                if hasattr(render_obj, 'options'):
+                    opts = render_obj.options
+                    if hasattr(opts, 'renderer'):
+                        result["renderer"] = opts.renderer
+        except Exception as e:
+            print(f"Render settings error: {{e}}")
+        
+        # Get timeline info (for animations with keyframes)
+        try:
+            timeline = mset.getTimeline()
+            if timeline:
+                if hasattr(timeline, 'totalFrames'):
+                    tl_frames = timeline.totalFrames
+                    if tl_frames > 1:
+                        result["timeline_frames"] = tl_frames
+                        # Only use timeline frames if not already set by video settings
+                        if result.get("total_frames", 1) <= 1:
+                            result["total_frames"] = tl_frames
+                            result["frame_end"] = tl_frames
+                if hasattr(timeline, 'selectionStart'):
+                    result["frame_start"] = max(1, timeline.selectionStart)
+                if hasattr(timeline, 'selectionEnd') and timeline.selectionEnd > 0:
+                    result["timeline_selection_end"] = timeline.selectionEnd
+                if hasattr(timeline, 'frameRate'):
+                    result["frame_rate"] = timeline.frameRate
+                if result.get("timeline_frames", 1) > 1:
+                    result["has_animation"] = True
+        except Exception as e:
+            print(f"Timeline error: {{e}}")
+        
+    except Exception as e:
+        print(f"Scene probe error: {{e}}")
+    
+    with open(r"{output_path_escaped}", 'w', encoding='utf-8') as f:
+        json.dump(result, f, indent=2)
+    
+    mset.quit()
+
+probe_scene()
+'''
+    
+    # ========================================================================
+    # RENDERING
+    # ========================================================================
+    
+    def start_render(self, job, start_frame: int, on_progress, on_complete, on_error, on_log=None):
+        """Start a Marmoset Toolbag render job."""
+        toolbag_exe = self.get_best_toolbag()
+        if not toolbag_exe:
+            on_error("No Marmoset Toolbag installation found")
+            return
+        
+        if not os.path.exists(job.file_path):
+            on_error(f"Scene file not found: {job.file_path}")
+            return
+        
+        self.is_cancelling = False
+        os.makedirs(job.output_folder, exist_ok=True)
+        
+        render_type = job.get_setting("render_type", "still")
+        
+        script_dir = os.path.dirname(job.file_path) or tempfile.gettempdir()
+        self._temp_script_path = os.path.join(script_dir, f"_wane_render_{job.id}.py")
+        self._progress_file_path = os.path.join(script_dir, f"_wane_progress_{job.id}.json")
+        
+        if render_type == "turntable":
+            script_code = self._generate_turntable_script(job, start_frame)
+        elif render_type == "animation":
+            script_code = self._generate_animation_script(job, start_frame)
+        else:
+            script_code = self._generate_still_script(job)
+        
+        try:
+            with open(self._temp_script_path, 'w', encoding='utf-8') as f:
+                f.write(script_code)
+            
+            if on_log:
+                on_log(f"Marmoset render type: {render_type}")
+                on_log(f"Script path: {self._temp_script_path}")
+                on_log(f"Output: {job.output_folder}")
+            
+            def render_thread():
+                try:
+                    startupinfo = None
+                    creation_flags = 0
+                    if sys.platform == 'win32':
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        # Start Toolbag minimized to reduce UI interference
+                        startupinfo.wShowWindow = 6  # SW_MINIMIZE
+                        # Prevent Toolbag from stealing focus
+                        creation_flags = 0x08000000  # CREATE_NO_WINDOW doesn't work for GUI apps
+                    
+                    # Add -hide flag to hide Toolbag's main menu (Toolbag 3.07+)
+                    cmd = [toolbag_exe, '-hide', self._temp_script_path]
+                    if on_log:
+                        on_log(f"Command: {' '.join(cmd)}")
+                    
+                    self.current_process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        startupinfo=startupinfo,
+                        creationflags=creation_flags
+                    )
+                    
+                    if on_log:
+                        on_log(f"Started Toolbag (PID: {self.current_process.pid})")
+                    
+                    # Start progress monitor
+                    self._start_progress_monitor(job, on_progress, on_log)
+                    
+                    # Read stdout in real-time
+                    for line_bytes in self.current_process.stdout:
+                        if self.is_cancelling:
+                            break
+                        line = line_bytes.decode('utf-8', errors='replace').strip()
+                        if line and on_log:
+                            # Only log lines that contain [Wane] or important info
+                            if '[Wane]' in line or 'error' in line.lower() or 'exception' in line.lower():
+                                on_log(f"Toolbag: {line}")
+                    
+                    return_code = self.current_process.wait()
+                    self._stop_progress_monitor()
+                    
+                    if on_log:
+                        on_log(f"Toolbag exited with code: {return_code}")
+                    
+                    if self.is_cancelling:
+                        if on_log:
+                            on_log("Render cancelled")
+                        return
+                    
+                    final_status = self._read_progress_file()
+                    if on_log:
+                        on_log(f"Final status: {final_status}")
+                    
+                    if final_status.get("status") == "complete":
+                        on_complete()
+                    elif final_status.get("status") == "error":
+                        on_error(final_status.get("error", "Unknown error"))
+                    elif return_code == 0:
+                        on_complete()
+                    else:
+                        on_error(f"Toolbag exited with code {return_code}")
+                    
+                except Exception as e:
+                    self._stop_progress_monitor()
+                    if not self.is_cancelling:
+                        if on_log:
+                            on_log(f"Render thread error: {e}")
+                        on_error(str(e))
+                finally:
+                    self._cleanup()
+            
+            threading.Thread(target=render_thread, daemon=True).start()
+            
+        except Exception as e:
+            self._cleanup()
+            on_error(f"Failed to start render: {e}")
+    
+    def _generate_still_script(self, job) -> str:
+        """Generate script for still image render."""
+        scene_path = job.file_path.replace('\\', '\\\\')
+        output_folder = job.output_folder.replace('\\', '\\\\')
+        progress_path = self._progress_file_path.replace('\\', '\\\\')
+        
+        samples = job.get_setting("samples", 256)
+        use_transparency = job.get_setting("use_transparency", False)
+        output_format = job.output_format.upper()
+        
+        # Build output filename
+        ext_map = {"PNG": "png", "JPEG": "jpg", "TGA": "tga", "PSD": "psd", "EXR (16-BIT)": "exr", "EXR (32-BIT)": "exr"}
+        ext = ext_map.get(output_format, "png")
+        output_file = f"{output_folder}\\\\{job.output_name}.{ext}"
+        
+        return f'''# Wane Render Script - Still Image
+import mset
+import json
+import os
+import sys
+
+def log(msg):
+    print(f"[Wane] {{msg}}")
+    sys.stdout.flush()
+
+def update_progress(status, progress=0, message="", error=""):
+    try:
+        data = {{"status": status, "progress": progress, "message": message, "error": error, "frame": 0, "total_frames": 1}}
+        with open(r"{progress_path}", 'w') as f:
+            json.dump(data, f)
+        log(f"Progress: {{status}} {{progress}}% - {{message}}")
+    except Exception as e:
+        log(f"Progress update error: {{e}}")
+
+def render_still():
+    try:
+        log("Starting still render...")
+        update_progress("loading", 0, "Loading scene...")
+        
+        log(f"Loading scene: {scene_path}")
+        mset.loadScene(r"{scene_path}")
+        log("Scene loaded successfully")
+        
+        update_progress("configuring", 10, "Configuring render...")
+        
+        # Ensure output directory exists
+        output_dir = r"{output_folder}"
+        log(f"Output directory: {{output_dir}}")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Build output path
+        output_path = r"{output_file}"
+        log(f"Output file: {{output_path}}")
+        
+        update_progress("rendering", 20, "Rendering image...")
+        log("Starting mset.renderCamera...")
+        
+        # Use renderCamera for single image output - positional arguments only
+        # Signature: mset.renderCamera(path, width, height, samples, transparency)
+        mset.renderCamera(
+            output_path,
+            {job.res_width},
+            {job.res_height},
+            {samples},
+            {str(use_transparency)}
+        )
+        
+        log("Render complete!")
+        
+        # Verify output exists
+        if os.path.exists(output_path):
+            log(f"Output file created: {{output_path}}")
+            update_progress("complete", 100, "Render complete")
+        else:
+            log("WARNING: Output file not found after render!")
+            update_progress("complete", 100, "Render complete (file location may vary)")
+        
+    except Exception as e:
+        log(f"Render error: {{e}}")
+        update_progress("error", 0, "", str(e))
+        import traceback
+        traceback.print_exc()
+    
+    log("Quitting Toolbag...")
+    mset.quit()
+
+render_still()
+'''
+    
+    def _generate_turntable_script(self, job, start_frame: int) -> str:
+        """Generate script for turntable render."""
+        scene_path = job.file_path.replace('\\', '\\\\')
+        output_folder = job.output_folder.replace('\\', '\\\\')
+        progress_path = self._progress_file_path.replace('\\', '\\\\')
+        
+        samples = job.get_setting("samples", 256)
+        use_transparency = job.get_setting("use_transparency", False)
+        video_format = job.get_setting("video_format", "PNG Sequence")
+        total_frames = job.frame_end
+        clockwise = job.get_setting("turntable_clockwise", True)
+        
+        is_mp4 = "MP4" in video_format.upper()
+        spin_sign = "" if clockwise else "-"
+        
+        return f'''# Wane Render Script - Turntable
+import mset
+import json
+import os
+import sys
+
+def log(msg):
+    print(f"[Wane] {{msg}}")
+    sys.stdout.flush()
+
+def update_progress(status, progress=0, message="", error="", frame=0, total={total_frames}):
+    try:
+        data = {{"status": status, "progress": progress, "message": message, "error": error, "frame": frame, "total_frames": total}}
+        with open(r"{progress_path}", 'w') as f:
+            json.dump(data, f)
+        log(f"Progress: {{status}} {{progress}}% frame={{frame}}/{{total}}")
+    except Exception as e:
+        log(f"Progress update error: {{e}}")
+
+def render_turntable():
+    try:
+        log("Starting turntable render...")
+        update_progress("loading", 0, "Loading scene...")
+        
+        log(f"Loading scene: {scene_path}")
+        mset.loadScene(r"{scene_path}")
+        log("Scene loaded successfully")
+        
+        update_progress("configuring", 5, "Configuring turntable...")
+        
+        # Check for existing frames in output folder (for resume)
+        output_dir = r"{output_folder}"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        import glob
+        existing_files = glob.glob(os.path.join(output_dir, "*.png"))
+        existing_count = len(existing_files)
+        resume_from_frame = max(1, existing_count + 1) if existing_count > 0 else 1
+        log(f"Existing frames in output: {{existing_count}}")
+        log(f"Will render from frame {{resume_from_frame}} to {total_frames}")
+        
+        # If all frames are already rendered, skip
+        if existing_count >= {total_frames}:
+            log("All frames already rendered!")
+            update_progress("complete", 100, "Already complete", frame={total_frames})
+            mset.quit()
+            return
+        
+        # Find and enable turntable
+        turntable = None
+        for obj in mset.getAllObjects():
+            obj_type = type(obj).__name__
+            obj_name = obj.name.lower() if hasattr(obj, 'name') else ''
+            if 'Turntable' in obj_type or 'turntable' in obj_name:
+                turntable = obj
+                log(f"Found turntable: {{obj.name}}")
+                break
+        
+        if turntable:
+            turntable.enabled = True
+            # Spin rate: degrees per second (at scene frame rate, typically 30fps)
+            turntable.spinRate = {spin_sign}(360.0 / {total_frames}) * 30.0
+            log(f"Turntable enabled, spin rate: {{turntable.spinRate}}")
+        else:
+            log("WARNING: No turntable found in scene!")
+        
+        log(f"Output directory: {{output_dir}}")
+        
+        # Set timeline selection for resume
+        # This tells Toolbag which frame range to render
+        timeline = mset.getTimeline()
+        if timeline and resume_from_frame > 1:
+            try:
+                timeline.selectionStart = resume_from_frame
+                timeline.selectionEnd = {total_frames}
+                log(f"Timeline selection set: {{resume_from_frame}} to {total_frames}")
+            except Exception as e:
+                log(f"Could not set timeline selection: {{e}}")
+        
+        # Find and configure the Render object's VIDEO output settings
+        render_obj = None
+        for obj in mset.getAllObjects():
+            if type(obj).__name__ == 'RenderObject':
+                render_obj = obj
+                log(f"Found render object: {{obj.name}}")
+                break
+        
+        if render_obj and hasattr(render_obj, 'videos'):
+            videos = render_obj.videos
+            log("Configuring video output settings...")
+            
+            # Set output path (REQUIRED - this is where the video goes)
+            try:
+                videos.outputPath = output_dir
+                log(f"Set video outputPath: {{videos.outputPath}}")
+            except Exception as e:
+                log(f"Could not set outputPath: {{e}}")
+            
+            # Set resolution
+            try:
+                videos.width = {job.res_width}
+                videos.height = {job.res_height}
+                log(f"Set video resolution: {{videos.width}}x{{videos.height}}")
+            except Exception as e:
+                log(f"Could not set resolution: {{e}}")
+            
+            # Set samples
+            try:
+                videos.samples = {samples}
+                log(f"Set video samples: {{videos.samples}}")
+            except Exception as e:
+                log(f"Could not set samples: {{e}}")
+            
+            # Set transparency
+            try:
+                videos.transparency = {str(use_transparency)}
+                log(f"Set video transparency: {{videos.transparency}}")
+            except Exception as e:
+                log(f"Could not set transparency: {{e}}")
+            
+            # Set format (PNG Sequence for image sequence)
+            try:
+                videos.format = "PNG"
+                log(f"Set video format: {{videos.format}}")
+            except Exception as e:
+                log(f"Could not set format: {{e}}")
+        else:
+            log("WARNING: No Render object or videos output found!")
+        
+        update_progress("rendering", 10, "Rendering turntable...", frame={start_frame})
+        log("Starting mset.renderVideos()...")
+        
+        # Render video/sequence - uses the configured RenderObject.videos settings
+        mset.renderVideos()
+        
+        log("Turntable render complete!")
+        update_progress("complete", 100, "Turntable complete", frame={total_frames})
+        
+    except Exception as e:
+        log(f"Render error: {{e}}")
+        update_progress("error", 0, "", str(e))
+        import traceback
+        traceback.print_exc()
+    
+    log("Quitting Toolbag...")
+    mset.quit()
+
+render_turntable()
+'''
+    
+    def _generate_animation_script(self, job, start_frame: int) -> str:
+        """Generate script for animation sequence render."""
+        scene_path = job.file_path.replace('\\', '\\\\')
+        output_folder = job.output_folder.replace('\\', '\\\\')
+        progress_path = self._progress_file_path.replace('\\', '\\\\')
+        
+        samples = job.get_setting("samples", 256)
+        use_transparency = job.get_setting("use_transparency", False)
+        
+        return f'''# Wane Render Script - Animation
+import mset
+import json
+import os
+import sys
+
+def log(msg):
+    print(f"[Wane] {{msg}}")
+    sys.stdout.flush()
+
+def update_progress(status, progress=0, message="", error="", frame=0, total={job.frame_end}):
+    try:
+        data = {{"status": status, "progress": progress, "message": message, "error": error, "frame": frame, "total_frames": total}}
+        with open(r"{progress_path}", 'w') as f:
+            json.dump(data, f)
+        log(f"Progress: {{status}} {{progress}}% frame={{frame}}/{{total}}")
+    except Exception as e:
+        log(f"Progress update error: {{e}}")
+
+def render_animation():
+    try:
+        log("Starting animation render...")
+        update_progress("loading", 0, "Loading scene...")
+        
+        log(f"Loading scene: {scene_path}")
+        mset.loadScene(r"{scene_path}")
+        log("Scene loaded successfully")
+        
+        update_progress("configuring", 5, "Configuring animation...")
+        
+        # Check for existing frames in output folder (for resume)
+        output_dir = r"{output_folder}"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        import glob
+        existing_files = glob.glob(os.path.join(output_dir, "*.png"))
+        existing_count = len(existing_files)
+        
+        # Use start_frame from job or count from existing files, whichever is greater
+        resume_from_frame = max({start_frame}, existing_count + 1)
+        log(f"Existing frames in output: {{existing_count}}")
+        log(f"Will render from frame {{resume_from_frame}} to {job.frame_end}")
+        
+        # If all frames are already rendered, skip
+        if existing_count >= {job.frame_end}:
+            log("All frames already rendered!")
+            update_progress("complete", 100, "Already complete", frame={job.frame_end})
+            mset.quit()
+            return
+        
+        # Set timeline range for animation (with resume support)
+        timeline = mset.getTimeline()
+        if timeline:
+            timeline.selectionStart = resume_from_frame
+            timeline.selectionEnd = {job.frame_end}
+            log(f"Timeline set: {{timeline.selectionStart}} to {{timeline.selectionEnd}}")
+        else:
+            log("WARNING: Could not access timeline!")
+        
+        log(f"Output directory: {{output_dir}}")
+        
+        # Find and configure the Render object's VIDEO output settings
+        render_obj = None
+        for obj in mset.getAllObjects():
+            if type(obj).__name__ == 'RenderObject':
+                render_obj = obj
+                log(f"Found render object: {{obj.name}}")
+                break
+        
+        if render_obj and hasattr(render_obj, 'videos'):
+            videos = render_obj.videos
+            log("Configuring video output settings...")
+            
+            # Set output path (REQUIRED - this is where the video goes)
+            try:
+                videos.outputPath = output_dir
+                log(f"Set video outputPath: {{videos.outputPath}}")
+            except Exception as e:
+                log(f"Could not set outputPath: {{e}}")
+            
+            # Set resolution
+            try:
+                videos.width = {job.res_width}
+                videos.height = {job.res_height}
+                log(f"Set video resolution: {{videos.width}}x{{videos.height}}")
+            except Exception as e:
+                log(f"Could not set resolution: {{e}}")
+            
+            # Set samples
+            try:
+                videos.samples = {samples}
+                log(f"Set video samples: {{videos.samples}}")
+            except Exception as e:
+                log(f"Could not set samples: {{e}}")
+            
+            # Set transparency
+            try:
+                videos.transparency = {str(use_transparency)}
+                log(f"Set video transparency: {{videos.transparency}}")
+            except Exception as e:
+                log(f"Could not set transparency: {{e}}")
+            
+            # Set format (PNG Sequence for image sequence)
+            try:
+                videos.format = "PNG"
+                log(f"Set video format: {{videos.format}}")
+            except Exception as e:
+                log(f"Could not set format: {{e}}")
+        else:
+            log("WARNING: No Render object or videos output found!")
+        
+        update_progress("rendering", 10, "Rendering animation...", frame={start_frame})
+        log("Starting mset.renderVideos()...")
+        
+        # Render video/sequence - uses the configured RenderObject.videos settings
+        mset.renderVideos()
+        
+        log("Animation render complete!")
+        update_progress("complete", 100, "Animation complete", frame={job.frame_end})
+        
+    except Exception as e:
+        log(f"Render error: {{e}}")
+        update_progress("error", 0, "", str(e))
+        import traceback
+        traceback.print_exc()
+    
+    log("Quitting Toolbag...")
+    mset.quit()
+
+render_animation()
+'''
+    
+    def _start_progress_monitor(self, job, on_progress, on_log=None):
+        """Start background thread to monitor progress by watching output files."""
+        self._monitoring = True
+        
+        def monitor():
+            import glob
+            import time
+            
+            last_frame_count = 0
+            total_frames = job.frame_end if job.is_animation else 1
+            
+            # Get initial file count (for resume support)
+            output_pattern = os.path.join(job.output_folder, "*.png")
+            try:
+                initial_files = glob.glob(output_pattern)
+                last_frame_count = len(initial_files)
+                if on_log and last_frame_count > 0:
+                    on_log(f"Found {last_frame_count} existing frames in output folder")
+            except:
+                pass
+            
+            while self._monitoring and not self.is_cancelling:
+                # Also check progress file for status messages
+                progress = self._read_progress_file()
+                
+                if progress:
+                    status = progress.get("status", "")
+                    message = progress.get("message", "")
+                    
+                    if on_log and message and message != self._last_message:
+                        on_log(message)
+                        self._last_message = message
+                    
+                    if status == "complete":
+                        # Final frame count from output folder
+                        try:
+                            final_files = glob.glob(output_pattern)
+                            final_count = len(final_files)
+                            on_progress(final_count, f"Render complete: {final_count} frames")
+                        except:
+                            on_progress(total_frames, "Render complete")
+                        break
+                    elif status == "error":
+                        break
+                
+                # Watch output folder for new PNG files (more accurate than progress file)
+                try:
+                    current_files = glob.glob(output_pattern)
+                    current_count = len(current_files)
+                    
+                    if current_count > last_frame_count:
+                        # New frames have been rendered
+                        last_frame_count = current_count
+                        
+                        if on_log:
+                            on_log(f"Rendered frame {current_count}/{total_frames}")
+                        
+                        # Update job's current_frame for pause/resume
+                        job.current_frame = current_count
+                        job.rendering_frame = current_count
+                        
+                        on_progress(current_count, f"Rendering frame {current_count}/{total_frames}")
+                except Exception as e:
+                    if on_log:
+                        on_log(f"Progress check error: {e}")
+                
+                time.sleep(0.5)
+        
+        self._progress_monitor_thread = threading.Thread(target=monitor, daemon=True)
+        self._progress_monitor_thread.start()
+    
+    def _stop_progress_monitor(self):
+        """Stop the progress monitor thread."""
+        self._monitoring = False
+        if self._progress_monitor_thread:
+            self._progress_monitor_thread.join(timeout=2)
+            self._progress_monitor_thread = None
+    
+    def _read_progress_file(self) -> Dict[str, Any]:
+        """Read the current progress from the progress file."""
+        if not self._progress_file_path or not os.path.exists(self._progress_file_path):
+            return {}
+        
+        try:
+            with open(self._progress_file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    
+    def cancel_render(self):
+        """Cancel the current render."""
+        self.is_cancelling = True
+        self._stop_progress_monitor()
+        
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+                self.current_process.wait(timeout=5)
+            except:
+                try:
+                    self.current_process.kill()
+                except:
+                    pass
+        
+        self._cleanup()
+    
+    def _cleanup(self):
+        """Clean up temporary files."""
+        for path in [self._temp_script_path, self._progress_file_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+        
+        self._temp_script_path = None
+        self._progress_file_path = None
+        self.current_process = None
 
 
 # ============================================================================
@@ -1264,6 +2223,15 @@ async def show_add_job_dialog():
         'res_width': 1920,
         'res_height': 1080,
         'submit_paused': False,
+        # Marmoset-specific settings
+        'render_type': 'still',           # still, turntable, animation
+        'renderer': 'Ray Tracing',        # Ray Tracing, Hybrid, Raster
+        'samples': 256,
+        'shadow_quality': 'High',         # Low, High, Mega
+        'use_transparency': False,
+        'denoise_mode': 'gpu',            # off, cpu, gpu
+        'video_format': 'PNG Sequence',
+        'turntable_frames': 120,
     }
     
     # UI references for scene info updates
@@ -1278,6 +2246,7 @@ async def show_add_job_dialog():
     name_input = None
     engine_buttons = {}
     accent_elements = {}  # Elements that change color with engine selection
+    marmoset_settings_container = None  # Reference to Marmoset settings panel for refresh
     
     # Engine-specific colors
     ENGINE_ACCENT_COLORS = {
@@ -1321,6 +2290,10 @@ async def show_add_job_dialog():
                 background-color: {accent_color} !important;
                 transition: all 0.4s ease-in-out !important;
             ''')
+        
+        # Refresh Marmoset settings section (show/hide based on engine)
+        if 'marmoset_settings' in accent_elements:
+            accent_elements['marmoset_settings'].refresh()
         
         # Update CSS variable for all form elements (inputs, checkboxes, selects, etc.)
         ui.run_javascript(f'''
@@ -1587,7 +2560,35 @@ async def show_add_job_dialog():
                             frame_end_input.value = info.get('frame_end', 250)
                             if info.get('frame_end', 1) > info.get('frame_start', 1):
                                 anim_checkbox.value = True
-                            status_label.set_text('✓ Loaded')
+                            
+                            # Update Marmoset-specific settings from scene
+                            if form['engine_type'] == 'marmoset':
+                                # Set turntable frames from scene if available
+                                if info.get('turntable_frames'):
+                                    form['turntable_frames'] = info['turntable_frames']
+                                elif info.get('total_frames', 1) > 1:
+                                    form['turntable_frames'] = info['total_frames']
+                                
+                                # Set samples from scene
+                                if info.get('video_samples'):
+                                    form['samples'] = info['video_samples']
+                                elif info.get('samples'):
+                                    form['samples'] = info['samples']
+                                
+                                # Check for turntable or animation
+                                if info.get('has_turntable'):
+                                    form['render_type'] = 'turntable'
+                                elif info.get('has_animation'):
+                                    form['render_type'] = 'animation'
+                                
+                                # Refresh Marmoset settings panel to show updated values
+                                if marmoset_settings_container:
+                                    try:
+                                        marmoset_settings_container.refresh()
+                                    except:
+                                        pass
+                            
+                            status_label.set_text('[OK] Loaded')
                         except Exception as e:
                             print(f"Apply scene info error: {e}")
                             status_label.set_text('Error')
@@ -1675,7 +2676,7 @@ async def show_add_job_dialog():
             with ui.row().classes('w-full items-center gap-2'):
                 res_w_input = ui.number('Width', value=1920, min=1).classes('w-24')
                 res_w_input.bind_value(form, 'res_width')
-                ui.label('×').classes('text-gray-400')
+                ui.label('x').classes('text-gray-400')
                 res_h_input = ui.number('Height', value=1080, min=1).classes('w-24')
                 res_h_input.bind_value(form, 'res_height')
             
@@ -1692,6 +2693,86 @@ async def show_add_job_dialog():
                 ui.label('to').classes('text-gray-400')
                 frame_end_input = ui.number('End', value=250, min=1).classes('w-20')
                 frame_end_input.bind_value(form, 'frame_end')
+            
+            # ============================================================
+            # MARMOSET-SPECIFIC SETTINGS (shown only for Marmoset engine)
+            # ============================================================
+            
+            @ui.refreshable
+            def marmoset_settings():
+                if form['engine_type'] == 'marmoset':
+                    ui.element('div').classes('accent-separator w-full my-2')
+                    ui.label('Marmoset Settings').classes('text-sm font-bold text-gray-400')
+                    
+                    # Render type selector
+                    with ui.row().classes('w-full items-center gap-2'):
+                        def on_render_type_change(e):
+                            if 'marmoset_settings' in accent_elements:
+                                accent_elements['marmoset_settings'].refresh()
+                        
+                        render_type_select = ui.select(
+                            options=['still', 'turntable', 'animation'],
+                            value=form.get('render_type', 'still'),
+                            label='Render Type',
+                            on_change=on_render_type_change
+                        ).classes('w-36')
+                        render_type_select.bind_value(form, 'render_type')
+                        
+                        renderer_select = ui.select(
+                            options=['Ray Tracing', 'Hybrid', 'Raster'],
+                            value=form.get('renderer', 'Ray Tracing'),
+                            label='Renderer'
+                        ).classes('w-32')
+                        renderer_select.bind_value(form, 'renderer')
+                    
+                    # Quality settings
+                    with ui.row().classes('w-full items-center gap-2'):
+                        samples_input = ui.number('Samples', value=form.get('samples', 256), min=1, max=4096).classes('w-24')
+                        samples_input.bind_value(form, 'samples')
+                        
+                        shadow_select = ui.select(
+                            options=['Low', 'High', 'Mega'],
+                            value=form.get('shadow_quality', 'High'),
+                            label='Shadows'
+                        ).classes('w-24')
+                        shadow_select.bind_value(form, 'shadow_quality')
+                        
+                        denoise_select = ui.select(
+                            options=['off', 'cpu', 'gpu'],
+                            value=form.get('denoise_mode', 'gpu'),
+                            label='Denoise'
+                        ).classes('w-24')
+                        denoise_select.bind_value(form, 'denoise_mode')
+                    
+                    # Transparency checkbox
+                    ui.checkbox('Transparent Background').props('dense').bind_value(form, 'use_transparency')
+                    
+                    # Turntable-specific settings (show when turntable selected)
+                    if form.get('render_type') == 'turntable':
+                        with ui.row().classes('w-full items-center gap-2 mt-1'):
+                            turntable_frames = ui.number('Turntable Frames', value=form.get('turntable_frames', 120), min=1).classes('w-36')
+                            turntable_frames.bind_value(form, 'turntable_frames')
+                            
+                            video_format_select = ui.select(
+                                options=['PNG Sequence', 'JPEG Sequence', 'TGA Sequence', 'MP4'],
+                                value=form.get('video_format', 'PNG Sequence'),
+                                label='Output Format'
+                            ).classes('w-36')
+                            video_format_select.bind_value(form, 'video_format')
+                    
+                    # Animation-specific video format (show when animation selected)
+                    elif form.get('render_type') == 'animation':
+                        with ui.row().classes('w-full items-center gap-2 mt-1'):
+                            video_format_select = ui.select(
+                                options=['PNG Sequence', 'JPEG Sequence', 'TGA Sequence', 'MP4'],
+                                value=form.get('video_format', 'PNG Sequence'),
+                                label='Output Format'
+                            ).classes('w-36')
+                            video_format_select.bind_value(form, 'video_format')
+            
+            marmoset_settings_container = marmoset_settings
+            accent_elements['marmoset_settings'] = marmoset_settings
+            marmoset_settings()
             
             # Accent separator
             ui.element('div').classes('accent-separator w-full my-2')
@@ -1711,6 +2792,39 @@ async def show_add_job_dialog():
                     print("Missing output folder")
                     return
                 
+                # Build engine settings based on engine type
+                if form['engine_type'] == 'marmoset':
+                    engine_settings = {
+                        "render_type": form.get('render_type', 'still'),
+                        "renderer": form.get('renderer', 'Ray Tracing'),
+                        "samples": int(form.get('samples', 256)),
+                        "shadow_quality": form.get('shadow_quality', 'High'),
+                        "use_transparency": form.get('use_transparency', False),
+                        "denoise_mode": form.get('denoise_mode', 'gpu'),
+                        "denoise_quality": "high",
+                        "denoise_strength": 1.0,
+                        "video_format": form.get('video_format', 'PNG Sequence'),
+                        "turntable_frames": int(form.get('turntable_frames', 120)),
+                        "turntable_clockwise": True,
+                    }
+                    
+                    # Adjust frame settings for turntable
+                    is_anim = form['is_animation']
+                    frame_start = int(form['frame_start'])
+                    frame_end = int(form['frame_end'])
+                    
+                    if form.get('render_type') == 'turntable':
+                        is_anim = True
+                        frame_end = int(form.get('turntable_frames', 120))
+                        frame_start = 1
+                    elif form.get('render_type') == 'animation':
+                        is_anim = True
+                else:
+                    engine_settings = {"use_scene_settings": True, "samples": 128}
+                    is_anim = form['is_animation']
+                    frame_start = int(form['frame_start'])
+                    frame_end = int(form['frame_end'])
+                
                 job = RenderJob(
                     name=form['name'] or "Untitled",
                     engine_type=form['engine_type'],
@@ -1719,14 +2833,14 @@ async def show_add_job_dialog():
                     output_name=form['output_name'],
                     output_format=form['output_format'],
                     camera=form['camera'],
-                    is_animation=form['is_animation'],
-                    frame_start=int(form['frame_start']),
-                    frame_end=int(form['frame_end']),
-                    original_start=int(form['frame_start']),
+                    is_animation=is_anim,
+                    frame_start=frame_start,
+                    frame_end=frame_end,
+                    original_start=frame_start,
                     res_width=int(form['res_width']),
                     res_height=int(form['res_height']),
                     status='paused' if form['submit_paused'] else 'queued',
-                    engine_settings={"use_scene_settings": True, "samples": 128},
+                    engine_settings=engine_settings,
                 )
                 # Set initial progress based on frame range position in timeline
                 if job.is_animation and job.frame_end > 0 and job.frame_start > 1:
@@ -1760,7 +2874,7 @@ async def show_settings_dialog():
                         if engine_logo:
                             ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-6 h-6 object-contain')
                         ui.label(engine.name).classes('font-bold')
-                        status = "✓ Available" if engine.is_available else "✗ Not Found"
+                        status = "[OK] Available" if engine.is_available else "[X] Not Found"
                         color = "text-zinc-400" if engine.is_available else "text-zinc-600"
                         ui.label(status).classes(f'{color} text-sm')
                     
@@ -1820,11 +2934,18 @@ def main_page():
     # Comprehensive CSS for dark theme, scrollbars, and animation fixes
     ui.add_head_html('''
     <style>
+        /* Global box-sizing for proper layout */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+        
         /* Responsive container */
         .responsive-container {
             width: 100%;
             max-width: 100%;
             padding: 1rem;
+            box-sizing: border-box;
+            overflow-x: hidden;
         }
         @media (min-width: 1024px) {
             .responsive-container {
@@ -1837,6 +2958,146 @@ def main_page():
         }
         .job-card {
             width: 100%;
+        }
+        
+        /* ========== CUSTOM TITLE BAR (Frameless Window) ========== */
+        
+        .custom-titlebar {
+            height: 32px;
+            background: #0a0a0a;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 8px;
+            -webkit-app-region: drag;  /* Make titlebar draggable */
+            user-select: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 9999;
+            border-bottom: 1px solid #27272a;  /* Subtle separator */
+        }
+        
+        .titlebar-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            -webkit-app-region: drag;
+        }
+        
+        .titlebar-icon {
+            width: 16px;
+            height: 16px;
+            object-fit: contain;
+            filter: invert(1);  /* Invert for dark theme */
+            border-radius: 3px;
+        }
+        
+        .titlebar-title {
+            font-size: 12px;
+            font-weight: 500;
+            color: #a1a1aa;
+            letter-spacing: 0.02em;
+        }
+        
+        .titlebar-controls {
+            display: flex;
+            align-items: center;
+            -webkit-app-region: no-drag;  /* Buttons not draggable */
+        }
+        
+        .titlebar-btn {
+            width: 46px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+            color: #a1a1aa;  /* For stroke="currentColor" */
+        }
+        
+        .titlebar-btn svg {
+            width: 10px;
+            height: 10px;
+            fill: #a1a1aa;
+            stroke: #a1a1aa;
+            transition: fill 0.15s ease, stroke 0.15s ease;
+        }
+        
+        .titlebar-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+        
+        .titlebar-btn:hover svg {
+            fill: #ffffff;
+            stroke: #ffffff;
+        }
+        
+        .titlebar-btn:active {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Close button - red on hover */
+        .titlebar-btn-close:hover {
+            background: #e81123;
+        }
+        
+        .titlebar-btn-close:hover svg {
+            fill: #ffffff;
+        }
+        
+        .titlebar-btn-close:active {
+            background: #c42b1c;
+        }
+        
+        /* Adjust layout for custom titlebar - only when titlebar is visible */
+        /* The titlebar is 32px fixed at top, so we need to push everything down */
+        html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+        }
+        
+        body.has-custom-titlebar {
+            padding-top: 0 !important;
+        }
+        
+        /* Push the NiceGUI header down by titlebar height */
+        body.has-custom-titlebar .q-header {
+            top: 32px !important;
+            left: 0 !important;
+            right: 0 !important;
+            width: 100% !important;
+        }
+        
+        /* The q-layout needs margin-top for the titlebar, not padding */
+        /* NiceGUI's q-page-container already has padding for the q-header */
+        body.has-custom-titlebar .q-layout {
+            margin-top: 32px !important;
+            padding-top: 0 !important;
+            min-height: calc(100vh - 32px) !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+        }
+        
+        /* Main content area - this is where scrollbar should appear */
+        body.has-custom-titlebar .q-page-container {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        
+        /* Ensure scrollbar appears inside the content area, not at window edge */
+        body.has-custom-titlebar .q-page {
+            width: 100% !important;
+            max-width: 100% !important;
         }
         
         /* ========== MAIN WINDOW DESATURATED THEME ========== */
@@ -2037,9 +3298,14 @@ def main_page():
         
         /* ========== ENGINE LOGO STYLING ========== */
         /* Invert dark logos for visibility on dark theme */
-        img[src*="marmoset_logo"],
+        /* Note: marmoset_logo is already white, only invert wain_logo if needed */
         img[src*="wain_logo"] {
             filter: invert(1);
+        }
+        
+        /* Marmoset logo is white - no invert needed */
+        img[src*="marmoset_logo"] {
+            /* Already white on dark background */
         }
         
         /* Rounded corners for wain logo in header */
@@ -2065,6 +3331,9 @@ def main_page():
         }
         ::-webkit-scrollbar-thumb:hover {
             background: #52525b;
+        }
+        ::-webkit-scrollbar-corner {
+            background: #18181b;
         }
         
         /* Quasar scroll area scrollbar */
@@ -2704,6 +3973,126 @@ def main_page():
     </script>
     ''')
     
+    # Custom title bar for frameless window (only visible in native mode)
+    # Uses pywebview's JavaScript API for window controls
+    ui.add_body_html('''
+    <div id="custom-titlebar" class="custom-titlebar" style="display: none;">
+        <div class="titlebar-left">
+            <img src="/logos/wain_logo.png" class="titlebar-icon" alt="">
+            <span class="titlebar-title">Wain</span>
+        </div>
+        <div class="titlebar-controls">
+            <!-- Minimize button -->
+            <button class="titlebar-btn" id="titlebar-minimize" title="Minimize">
+                <svg viewBox="0 0 10 10">
+                    <rect x="0" y="4.5" width="10" height="1"/>
+                </svg>
+            </button>
+            <!-- Maximize/Restore button -->
+            <button class="titlebar-btn" id="titlebar-maximize" title="Maximize">
+                <svg viewBox="0 0 10 10" id="maximize-icon">
+                    <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/>
+                </svg>
+                <svg viewBox="0 0 10 10" id="restore-icon" style="display: none;">
+                    <!-- Restore icon (two overlapping windows) -->
+                    <path d="M2,0.5 L9.5,0.5 L9.5,7" fill="none" stroke="currentColor" stroke-width="1"/>
+                    <rect x="0.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1"/>
+                </svg>
+            </button>
+            <!-- Close button -->
+            <button class="titlebar-btn titlebar-btn-close" id="titlebar-close" title="Close">
+                <svg viewBox="0 0 10 10">
+                    <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/>
+                    <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+    <script>
+        // Show title bar only in native pywebview mode
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check if we're in pywebview (native mode)
+            function checkPywebview() {
+                if (window.pywebview && window.pywebview.api) {
+                    // Add body class for CSS layout adjustments
+                    document.body.classList.add('has-custom-titlebar');
+                    
+                    // Show the custom title bar
+                    const titlebar = document.getElementById('custom-titlebar');
+                    if (titlebar) {
+                        titlebar.style.display = 'flex';
+                    }
+                    
+                    // Wire up the window control buttons
+                    document.getElementById('titlebar-minimize').addEventListener('click', function() {
+                        window.pywebview.api.minimize();
+                    });
+                    
+                    const maxBtn = document.getElementById('titlebar-maximize');
+                    const maxIcon = document.getElementById('maximize-icon');
+                    const restoreIcon = document.getElementById('restore-icon');
+                    let isMaximized = false;
+                    
+                    function setMaximizedState(maximized) {
+                        isMaximized = maximized;
+                        if (maximized) {
+                            maxIcon.style.display = 'none';
+                            restoreIcon.style.display = 'block';
+                            maxBtn.title = 'Restore';
+                        } else {
+                            maxIcon.style.display = 'block';
+                            restoreIcon.style.display = 'none';
+                            maxBtn.title = 'Maximize';
+                        }
+                    }
+                    
+                    maxBtn.addEventListener('click', function() {
+                        if (isMaximized) {
+                            window.pywebview.api.restore();
+                            setMaximizedState(false);
+                        } else {
+                            window.pywebview.api.maximize();
+                            setMaximizedState(true);
+                        }
+                    });
+                    
+                    // Double-click title bar to maximize (standard Windows behavior)
+                    document.querySelector('.titlebar-left').addEventListener('dblclick', function() {
+                        if (isMaximized) {
+                            window.pywebview.api.restore();
+                            setMaximizedState(false);
+                        } else {
+                            window.pywebview.api.maximize();
+                            setMaximizedState(true);
+                        }
+                    });
+                    
+                    document.getElementById('titlebar-close').addEventListener('click', function() {
+                        window.pywebview.api.close();
+                    });
+                    
+                    console.log('Custom title bar initialized for native mode');
+                } else {
+                    // Not in pywebview, hide title bar
+                    document.body.classList.remove('has-custom-titlebar');
+                    const titlebar = document.getElementById('custom-titlebar');
+                    if (titlebar) titlebar.style.display = 'none';
+                }
+            }
+            
+            // pywebview API might not be ready immediately
+            if (window.pywebview && window.pywebview.api) {
+                checkPywebview();
+            } else {
+                // Wait for pywebview to be ready
+                window.addEventListener('pywebviewready', checkPywebview);
+                // Also try after a short delay as fallback
+                setTimeout(checkPywebview, 500);
+            }
+        });
+    </script>
+    ''')
+    
     with ui.header().classes('items-center justify-between px-4 md:px-6 py-3 bg-zinc-900 header-main'):
         with ui.row().classes('items-center gap-4'):
             ui.image(f'/logos/wain_logo.png?{ASSET_VERSION}').classes('w-10 h-10 object-contain rounded-lg')
@@ -2748,6 +4137,39 @@ def main_page():
         queue_list()
         
         with ui.expansion('Log', icon='terminal').classes('w-full log-expansion'):
+            # Header row with copy button
+            with ui.row().classes('w-full items-center justify-between mb-2'):
+                ui.label('Render Log').classes('text-sm text-gray-400')
+                with ui.row().classes('gap-2'):
+                    def save_log_to_file():
+                        # Save log to a temp file and open it
+                        import tempfile
+                        import subprocess
+                        log_text = '\n'.join(render_app.log_messages[-100:])
+                        log_path = os.path.join(tempfile.gettempdir(), 'wane_log.txt')
+                        try:
+                            with open(log_path, 'w', encoding='utf-8') as f:
+                                f.write(log_text)
+                            # Open in default text editor
+                            if sys.platform == 'win32':
+                                os.startfile(log_path)
+                            elif sys.platform == 'darwin':
+                                subprocess.run(['open', log_path])
+                            else:
+                                subprocess.run(['xdg-open', log_path])
+                            render_app.log(f"Log saved to: {log_path}")
+                        except Exception as e:
+                            render_app.log(f"Failed to save log: {e}")
+                    
+                    def clear_log():
+                        render_app.log_messages.clear()
+                        render_app.log("Log cleared")
+                        if render_app.log_container:
+                            render_app.log_container.refresh()
+                    
+                    ui.button(icon='open_in_new', on_click=save_log_to_file).props('flat dense size=sm').classes('text-zinc-400 hover:text-white').tooltip('Open log in text editor')
+                    ui.button(icon='delete_sweep', on_click=clear_log).props('flat dense size=sm').classes('text-zinc-400 hover:text-white').tooltip('Clear log')
+            
             @ui.refreshable
             def log_display():
                 # Use scroll_area with scroll-to-bottom behavior
@@ -2755,7 +4177,7 @@ def main_page():
                     with ui.column().classes('p-2 gap-0 font-mono text-xs'):
                         # Show messages in chronological order (oldest first, newest at bottom)
                         for msg in render_app.log_messages[-50:]:
-                            ui.label(msg).classes('text-gray-400')
+                            ui.label(msg).classes('text-gray-400 select-text')
                 # Auto-scroll to bottom after rendering
                 ui.run_javascript('''
                     setTimeout(() => {
@@ -2844,6 +4266,25 @@ if __name__ in {"__main__", "__mp_main__"}:
     icon_ico = os.path.join(assets_dir, 'wain_icon.ico')
     icon_png = os.path.join(assets_dir, 'wain_logo.png')
     
+    # On Windows, try to create .ico from .png if it doesn't exist
+    # Windows taskbar strongly prefers .ico format
+    if sys.platform == 'win32' and not os.path.exists(icon_ico) and os.path.exists(icon_png):
+        try:
+            from PIL import Image
+            print(f"Creating ICO from PNG: {icon_png}")
+            img = Image.open(icon_png)
+            # Convert to RGBA if needed
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            # Create ICO with multiple sizes for best display
+            img.save(icon_ico, format='ICO', sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+            print(f"Created ICO file: {icon_ico}")
+        except ImportError:
+            print("PIL not available - cannot create ICO from PNG")
+            print("For best taskbar icon, install Pillow: pip install Pillow")
+        except Exception as e:
+            print(f"Could not create ICO file: {e}")
+    
     # Use ICO for native window icon (Windows), PNG as fallback for favicon
     if os.path.exists(icon_ico):
         favicon_path = icon_ico
@@ -2856,6 +4297,199 @@ if __name__ in {"__main__", "__mp_main__"}:
         # Configure native window settings for pywebview
         print("Configuring native window...")
         app.native.window_args['title'] = 'Wain'
+        app.native.window_args['frameless'] = True  # Remove native title bar for custom UI
+        app.native.window_args['easy_drag'] = False  # We handle dragging in CSS
+        
+        # Create JS API for window controls (minimize, maximize, close)
+        class WindowAPI:
+            """JavaScript API for window controls in frameless mode.
+            Uses Windows API directly for smooth animations.
+            """
+            
+            def _get_hwnd(self):
+                """Get the window handle."""
+                try:
+                    import ctypes
+                    return ctypes.windll.user32.FindWindowW(None, 'Wain')
+                except:
+                    return None
+            
+            def minimize(self):
+                """Minimize the window with animation."""
+                try:
+                    if sys.platform == 'win32':
+                        import ctypes
+                        hwnd = self._get_hwnd()
+                        if hwnd:
+                            # SW_MINIMIZE = 6 triggers standard Windows minimize animation
+                            ctypes.windll.user32.ShowWindow(hwnd, 6)
+                            return True
+                    else:
+                        # Fallback for non-Windows
+                        import webview
+                        if webview.windows:
+                            webview.windows[0].minimize()
+                            return True
+                except Exception as e:
+                    print(f"Minimize error: {e}")
+                return False
+            
+            def maximize(self):
+                """Maximize the window with animation."""
+                try:
+                    if sys.platform == 'win32':
+                        import ctypes
+                        hwnd = self._get_hwnd()
+                        if hwnd:
+                            # SW_MAXIMIZE = 3 triggers standard Windows maximize animation
+                            ctypes.windll.user32.ShowWindow(hwnd, 3)
+                            return True
+                    else:
+                        import webview
+                        if webview.windows:
+                            webview.windows[0].maximize()
+                            return True
+                except Exception as e:
+                    print(f"Maximize error: {e}")
+                return False
+            
+            def restore(self):
+                """Restore the window with animation."""
+                try:
+                    if sys.platform == 'win32':
+                        import ctypes
+                        hwnd = self._get_hwnd()
+                        if hwnd:
+                            # SW_RESTORE = 9 triggers standard Windows restore animation
+                            ctypes.windll.user32.ShowWindow(hwnd, 9)
+                            return True
+                    else:
+                        import webview
+                        if webview.windows:
+                            webview.windows[0].restore()
+                            return True
+                except Exception as e:
+                    print(f"Restore error: {e}")
+                return False
+            
+            def is_maximized(self):
+                """Check if window is maximized."""
+                try:
+                    if sys.platform == 'win32':
+                        import ctypes
+                        hwnd = self._get_hwnd()
+                        if hwnd:
+                            return bool(ctypes.windll.user32.IsZoomed(hwnd))
+                except Exception as e:
+                    print(f"IsMaximized error: {e}")
+                return False
+            
+            def toggle_maximize(self):
+                """Toggle between maximized and restored state."""
+                if self.is_maximized():
+                    return self.restore()
+                else:
+                    return self.maximize()
+            
+            def close(self):
+                """Close the window."""
+                try:
+                    import webview
+                    if webview.windows:
+                        webview.windows[0].destroy()
+                        return True
+                except Exception as e:
+                    print(f"Close error: {e}")
+                return False
+        
+        # Expose the API to JavaScript
+        app.native.window_args['js_api'] = WindowAPI()
+        
+        # Set taskbar icon on Windows using native API
+        if sys.platform == 'win32':
+            import ctypes
+            
+            # CRITICAL: Set AppUserModelID BEFORE window is created
+            # This tells Windows to treat Wane as its own application (not grouped with Python)
+            # Without this, Windows shows the Python icon in the taskbar
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Wane.RenderManager.1')
+                print("Set AppUserModelID for taskbar")
+            except Exception as e:
+                print(f"Could not set AppUserModelID: {e}")
+            
+            def set_taskbar_icon_windows():
+                """Set the taskbar icon using Windows API after window is created."""
+                import time
+                
+                # Wait for window to be created
+                time.sleep(2.0)
+                
+                try:
+                    user32 = ctypes.windll.user32
+                    
+                    # Find the Wain window by title
+                    hwnd = user32.FindWindowW(None, 'Wain')
+                    if hwnd == 0:
+                        print("Could not find Wain window for icon")
+                        return
+                    
+                    # Constants for Win32 API
+                    ICON_SMALL = 0
+                    ICON_BIG = 1
+                    WM_SETICON = 0x0080
+                    IMAGE_ICON = 1
+                    LR_LOADFROMFILE = 0x0010
+                    LR_DEFAULTSIZE = 0x0040
+                    
+                    # Try loading ICO file first (required for taskbar), fall back to PNG
+                    icon_to_load = icon_ico if os.path.exists(icon_ico) else icon_png
+                    
+                    if not icon_to_load or not os.path.exists(icon_to_load):
+                        print("No icon file found")
+                        return
+                    
+                    print(f"Loading icon from: {icon_to_load}")
+                    
+                    # Load the icon - use specific sizes for taskbar
+                    # Load large icon (32x32 or 48x48 for taskbar)
+                    hIconBig = user32.LoadImageW(
+                        None,
+                        icon_to_load,
+                        IMAGE_ICON,
+                        48, 48,  # Large icon size for taskbar
+                        LR_LOADFROMFILE
+                    )
+                    
+                    # Load small icon (16x16 for title bar)
+                    hIconSmall = user32.LoadImageW(
+                        None,
+                        icon_to_load,
+                        IMAGE_ICON,
+                        16, 16,  # Small icon size for title bar
+                        LR_LOADFROMFILE
+                    )
+                    
+                    if hIconBig:
+                        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hIconBig)
+                        print("Set large taskbar icon")
+                    else:
+                        print("Could not load large icon")
+                        
+                    if hIconSmall:
+                        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hIconSmall)
+                        print("Set small title bar icon")
+                    else:
+                        print("Could not load small icon")
+                        
+                except Exception as e:
+                    print(f"Failed to set taskbar icon: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Run icon setter in background thread (only if we have an icon file)
+            if (icon_ico and os.path.exists(icon_ico)) or (icon_png and os.path.exists(icon_png)):
+                threading.Thread(target=set_taskbar_icon_windows, daemon=True).start()
         
         print("Starting UI (native mode)...")
         ui.run(

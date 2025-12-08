@@ -15,14 +15,19 @@ REM Check if we should run installer
 if "%1"=="--install" goto :install
 if "%1"=="--debug" goto :debug
 
-REM Try to run wain.py directly first (faster if already installed)
+REM Try to run directly if dependencies are installed
 REM Check ALL required packages including WebEngine and qtpy
 python -c "import nicegui; import webview; import PyQt6; from PyQt6 import QtWebEngineWidgets; import qtpy" >nul 2>&1
 if errorlevel 1 goto :install
 
-REM Dependencies installed, launch with pythonw (no console)
-REM Use "start" to detach, then exit batch immediately
-start "" pythonw "%~dp0wain.py"
+REM Dependencies installed - launch with splash screen
+REM Use pythonw with .pyw file for no console window
+if exist "%~dp0wain_launcher.pyw" (
+    start "" pythonw "%~dp0wain_launcher.pyw"
+) else (
+    REM Fallback to wain.py directly if launcher doesn't exist
+    start "" pythonw "%~dp0wain.py"
+)
 exit
 
 :install

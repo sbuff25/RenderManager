@@ -833,6 +833,25 @@ class MarmosetEngine(RenderEngine):
         "animation": "Animation",
     }
     
+    # Available render passes (key: display_name, value: mset pass name)
+    # These correspond to the viewport passes in Toolbag's Component View / Render Passes
+    RENDER_PASSES = {
+        "beauty": {"name": "Beauty", "pass": "", "desc": "Full quality render (default)"},
+        "albedo": {"name": "Albedo", "pass": "Albedo", "desc": "Base color/diffuse texture"},
+        "normals": {"name": "Normals", "pass": "Normals", "desc": "Surface normal directions"},
+        "depth": {"name": "Depth", "pass": "Depth", "desc": "Distance from camera"},
+        "ao": {"name": "Ambient Occlusion", "pass": "AO", "desc": "Contact shadows/cavity"},
+        "roughness": {"name": "Roughness", "pass": "Roughness", "desc": "Surface roughness values"},
+        "metalness": {"name": "Metalness", "pass": "Metalness", "desc": "Metallic areas"},
+        "emissive": {"name": "Emissive", "pass": "Emissive", "desc": "Self-illumination"},
+        "reflection": {"name": "Reflection", "pass": "Reflection", "desc": "Specular reflections"},
+        "diffuse_light": {"name": "Diffuse Light", "pass": "Diffuse Light", "desc": "Diffuse lighting only"},
+        "specular_light": {"name": "Specular Light", "pass": "Specular Light", "desc": "Specular lighting only"},
+        "position": {"name": "Position", "pass": "Position", "desc": "World position data"},
+        "object_id": {"name": "Object ID", "pass": "Object ID", "desc": "Unique colors per object"},
+        "material_id": {"name": "Material ID", "pass": "Material ID", "desc": "Unique colors per material"},
+    }
+    
     def __init__(self):
         super().__init__()
         self._temp_script_path: Optional[str] = None
@@ -900,6 +919,23 @@ class MarmosetEngine(RenderEngine):
             "turntable_clockwise": True,      # Rotation direction
             # Video format (for turntable/animation)
             "video_format": "PNG Sequence",   # Output format for sequences
+            # Render passes - dict of pass_key: enabled
+            "render_passes": {
+                "beauty": True,               # Always render beauty by default
+                "albedo": False,
+                "normals": False,
+                "depth": False,
+                "ao": False,
+                "roughness": False,
+                "metalness": False,
+                "emissive": False,
+                "reflection": False,
+                "diffuse_light": False,
+                "specular_light": False,
+                "position": False,
+                "object_id": False,
+                "material_id": False,
+            },
         }
     
     def get_file_dialog_filter(self) -> List[tuple]:
@@ -1243,7 +1279,7 @@ probe_scene()
             on_error(f"Failed to start render: {e}")
     
     def _generate_still_script(self, job) -> str:
-        """Generate script for still image render."""
+        """Generate script for still image render with render pass support."""
         scene_path = job.file_path.replace('\\', '\\\\')
         output_folder = job.output_folder.replace('\\', '\\\\')
         progress_path = self._progress_file_path.replace('\\', '\\\\')
@@ -1252,12 +1288,38 @@ probe_scene()
         use_transparency = job.get_setting("use_transparency", False)
         output_format = job.output_format.upper()
         
-        # Build output filename
+        # Build output filename base
         ext_map = {"PNG": "png", "JPEG": "jpg", "TGA": "tga", "PSD": "psd", "EXR (16-BIT)": "exr", "EXR (32-BIT)": "exr"}
         ext = ext_map.get(output_format, "png")
-        output_file = f"{output_folder}\\\\{job.output_name}.{ext}"
+        output_base = job.output_name
         
-        return f'''# Wane Render Script - Still Image
+        # Get enabled render passes
+        render_passes = job.get_setting("render_passes", {"beauty": True})
+        enabled_passes = [key for key, enabled in render_passes.items() if enabled]
+        
+        # If no passes selected, default to beauty
+        if not enabled_passes:
+            enabled_passes = ["beauty"]
+        
+        # Build passes list for the script - map our keys to Toolbag pass names
+        passes_config = []
+        for pass_key in enabled_passes:
+            if pass_key in self.RENDER_PASSES:
+                pass_info = self.RENDER_PASSES[pass_key]
+                toolbag_pass = pass_info['pass']  # Empty string for beauty (Full Quality)
+                suffix = f"_{pass_key}" if len(enabled_passes) > 1 or pass_key != "beauty" else ""
+                passes_config.append({
+                    'key': pass_key,
+                    'name': pass_info['name'],
+                    'toolbag_pass': toolbag_pass,
+                    'suffix': suffix,
+                })
+        
+        # Convert to Python literal for embedding in script
+        import json as json_module
+        passes_json = json_module.dumps(passes_config)
+        
+        return f'''# Wane Render Script - Still Image with Render Passes
 import mset
 import json
 import os
@@ -1267,9 +1329,9 @@ def log(msg):
     print(f"[Wane] {{msg}}")
     sys.stdout.flush()
 
-def update_progress(status, progress=0, message="", error=""):
+def update_progress(status, progress=0, message="", error="", current_pass=""):
     try:
-        data = {{"status": status, "progress": progress, "message": message, "error": error, "frame": 0, "total_frames": 1}}
+        data = {{"status": status, "progress": progress, "message": message, "error": error, "frame": 0, "total_frames": 1, "current_pass": current_pass}}
         with open(r"{progress_path}", 'w') as f:
             json.dump(data, f)
         log(f"Progress: {{status}} {{progress}}% - {{message}}")
@@ -1278,46 +1340,79 @@ def update_progress(status, progress=0, message="", error=""):
 
 def render_still():
     try:
-        log("Starting still render...")
+        log("Starting still render with render passes...")
         update_progress("loading", 0, "Loading scene...")
         
         log(f"Loading scene: {scene_path}")
         mset.loadScene(r"{scene_path}")
         log("Scene loaded successfully")
         
-        update_progress("configuring", 10, "Configuring render...")
-        
         # Ensure output directory exists
         output_dir = r"{output_folder}"
         log(f"Output directory: {{output_dir}}")
         os.makedirs(output_dir, exist_ok=True)
         
-        # Build output path
-        output_path = r"{output_file}"
-        log(f"Output file: {{output_path}}")
+        # Render passes configuration
+        passes = {passes_json}
+        total_passes = len(passes)
+        log(f"Rendering {{total_passes}} pass(es): {{[p['name'] for p in passes]}}")
         
-        update_progress("rendering", 20, "Rendering image...")
-        log("Starting mset.renderCamera...")
+        rendered_files = []
         
-        # Use renderCamera for single image output - positional arguments only
-        # Signature: mset.renderCamera(path, width, height, samples, transparency)
-        mset.renderCamera(
-            output_path,
-            {job.res_width},
-            {job.res_height},
-            {samples},
-            {str(use_transparency)}
-        )
+        for i, pass_config in enumerate(passes):
+            pass_key = pass_config['key']
+            pass_name = pass_config['name']
+            toolbag_pass = pass_config['toolbag_pass']
+            suffix = pass_config['suffix']
+            
+            # Calculate progress (spread across all passes)
+            base_progress = int((i / total_passes) * 80) + 10
+            update_progress("rendering", base_progress, f"Rendering {{pass_name}}...", current_pass=pass_name)
+            
+            # Build output path with suffix
+            output_path = os.path.join(output_dir, f"{output_base}{{suffix}}.{ext}")
+            log(f"Rendering pass '{{pass_name}}' ({{toolbag_pass or 'Full Quality'}}) to: {{output_path}}")
+            
+            # Use renderCamera with viewportPass parameter
+            # Signature: renderCamera(path, width, height, samples, transparency, camera, viewportPass)
+            try:
+                if toolbag_pass:
+                    # Render specific pass
+                    mset.renderCamera(
+                        output_path,
+                        {job.res_width},
+                        {job.res_height},
+                        {samples},
+                        {str(use_transparency)},
+                        '',  # camera (empty = current camera)
+                        toolbag_pass  # viewportPass
+                    )
+                else:
+                    # Beauty pass (Full Quality) - no viewportPass needed
+                    mset.renderCamera(
+                        output_path,
+                        {job.res_width},
+                        {job.res_height},
+                        {samples},
+                        {str(use_transparency)}
+                    )
+                
+                if os.path.exists(output_path):
+                    log(f"Pass '{{pass_name}}' rendered: {{output_path}}")
+                    rendered_files.append(output_path)
+                else:
+                    log(f"WARNING: Pass '{{pass_name}}' output not found!")
+                    
+            except Exception as pass_error:
+                log(f"Error rendering pass '{{pass_name}}': {{pass_error}}")
+                # Continue with other passes
         
-        log("Render complete!")
+        log(f"Render complete! {{len(rendered_files)}}/{{total_passes}} passes rendered.")
         
-        # Verify output exists
-        if os.path.exists(output_path):
-            log(f"Output file created: {{output_path}}")
-            update_progress("complete", 100, "Render complete")
+        if rendered_files:
+            update_progress("complete", 100, f"Rendered {{len(rendered_files)}} pass(es)")
         else:
-            log("WARNING: Output file not found after render!")
-            update_progress("complete", 100, "Render complete (file location may vary)")
+            update_progress("error", 0, "", "No passes were rendered successfully")
         
     except Exception as e:
         log(f"Render error: {{e}}")
@@ -2232,6 +2327,23 @@ async def show_add_job_dialog():
         'denoise_mode': 'gpu',            # off, cpu, gpu
         'video_format': 'PNG Sequence',
         'turntable_frames': 120,
+        # Render passes - dict of pass_key: enabled
+        'render_passes': {
+            'beauty': True,
+            'albedo': False,
+            'normals': False,
+            'depth': False,
+            'ao': False,
+            'roughness': False,
+            'metalness': False,
+            'emissive': False,
+            'reflection': False,
+            'diffuse_light': False,
+            'specular_light': False,
+            'position': False,
+            'object_id': False,
+            'material_id': False,
+        },
     }
     
     # UI references for scene info updates
@@ -2769,6 +2881,44 @@ async def show_add_job_dialog():
                                 label='Output Format'
                             ).classes('w-36')
                             video_format_select.bind_value(form, 'video_format')
+                    
+                    # ============================================================
+                    # RENDER PASSES SECTION (for still renders)
+                    # ============================================================
+                    if form.get('render_type') == 'still':
+                        with ui.expansion('Render Passes', icon='layers').classes('w-full mt-2 render-passes-expansion'):
+                            ui.label('Select additional render passes to output:').classes('text-xs text-gray-500 mb-2')
+                            
+                            # Get render passes from MarmosetEngine
+                            marmoset_engine = render_app.engine_registry.get('marmoset')
+                            if marmoset_engine:
+                                # Group passes into categories for better organization
+                                pass_groups = {
+                                    'Essential': ['beauty', 'albedo', 'normals', 'depth', 'ao'],
+                                    'Material': ['roughness', 'metalness', 'emissive', 'reflection'],
+                                    'Lighting': ['diffuse_light', 'specular_light'],
+                                    'Utility': ['position', 'object_id', 'material_id'],
+                                }
+                                
+                                for group_name, pass_keys in pass_groups.items():
+                                    ui.label(group_name).classes('text-xs font-bold text-gray-400 mt-2 mb-1')
+                                    with ui.row().classes('w-full flex-wrap gap-x-4 gap-y-1'):
+                                        for pass_key in pass_keys:
+                                            if pass_key in marmoset_engine.RENDER_PASSES:
+                                                pass_info = marmoset_engine.RENDER_PASSES[pass_key]
+                                                
+                                                # Create checkbox for each pass
+                                                def make_toggle(key):
+                                                    def toggle_pass(e):
+                                                        form['render_passes'][key] = e.value
+                                                    return toggle_pass
+                                                
+                                                cb = ui.checkbox(
+                                                    pass_info['name'],
+                                                    value=form['render_passes'].get(pass_key, False),
+                                                    on_change=make_toggle(pass_key)
+                                                ).props('dense size=sm').classes('render-pass-checkbox')
+                                                cb.tooltip(pass_info['desc'])
             
             marmoset_settings_container = marmoset_settings
             accent_elements['marmoset_settings'] = marmoset_settings
@@ -2806,6 +2956,8 @@ async def show_add_job_dialog():
                         "video_format": form.get('video_format', 'PNG Sequence'),
                         "turntable_frames": int(form.get('turntable_frames', 120)),
                         "turntable_clockwise": True,
+                        # Copy render passes selection
+                        "render_passes": form.get('render_passes', {'beauty': True}).copy(),
                     }
                     
                     # Adjust frame settings for turntable

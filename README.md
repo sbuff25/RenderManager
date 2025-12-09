@@ -1,19 +1,19 @@
-# Wain - Render Queue Manager
+# Wane - Render Queue Manager
 
 A professional render queue manager for 3D artists. Supports Blender and Marmoset Toolbag with pause/resume capabilities.
 
 ## Quick Start
 
 ### Windows
-1. **Double-click `Wain.bat`**
+1. **Double-click `Wane.bat`**
    - First run: Installs dependencies, then launches
-   - After that: Shows splash screen → launches app (no console window!)
+   - After that: Launches the native desktop app
 
 ### Manual Launch
 ```bash
-python launch_wain.py          # Install & launch
-python launch_wain.py --check  # Check dependencies only
-python wain.py                 # Run directly (if deps installed)
+python -m wane              # Install & launch
+Wane.bat --debug            # Run with console output for debugging
+Wane.bat --install          # Force reinstall dependencies
 ```
 
 ## Requirements
@@ -24,22 +24,40 @@ python wain.py                 # Run directly (if deps installed)
 
 - **Windows 10/11** (recommended)
 
-## Files
+## Project Structure
 
-Keep all these files in the same folder:
+This is the modular version of Wane, split into organized packages:
 
 ```
-Wain/
-├── Wain.bat              # Windows launcher (double-click to start)
-├── wain_launcher.pyw     # Splash screen launcher (no console)
-├── launch_wain.py        # Installer/launcher script
-├── wain.py               # Main application
-├── wain_config.json      # Settings (created on first run)
-└── assets/
-    ├── wain_logo.png     # App logo
-    ├── wain_icon.ico     # Taskbar icon (optional)
-    ├── blender_logo.png  # Blender engine icon
-    └── marmoset_logo.png # Marmoset Toolbag icon
+wane_modular/
+├── Wane.bat                  # Windows launcher (double-click to start)
+├── assets/                   # Logo and icon files
+│   ├── wane_logo.png
+│   ├── wane_icon.ico
+│   ├── blender_logo.png
+│   └── marmoset_logo.png
+└── wane/                     # Main package
+    ├── __init__.py           # Package exports
+    ├── __main__.py           # Entry point (python -m wane)
+    ├── app.py                # RenderApp class and state management
+    ├── config.py             # Theme, colors, constants
+    ├── models.py             # RenderJob, AppSettings dataclasses
+    ├── engines/              # Render engine implementations
+    │   ├── __init__.py
+    │   ├── base.py           # RenderEngine abstract base class
+    │   ├── blender.py        # Blender integration
+    │   ├── marmoset.py       # Marmoset Toolbag integration
+    │   └── registry.py       # Engine registry
+    ├── ui/                   # User interface
+    │   ├── __init__.py
+    │   ├── main.py           # Main page layout
+    │   ├── components.py     # Stat cards, job cards
+    │   ├── dialogs.py        # Add job, settings dialogs
+    │   └── styles.py         # CSS/JS styles (reference)
+    └── utils/                # Utilities
+        ├── __init__.py
+        ├── bootstrap.py      # Dependency auto-installer
+        └── file_dialogs.py   # Native file dialogs
 ```
 
 ## Features
@@ -49,7 +67,6 @@ Wain/
 - **Queue Management**: Queue multiple jobs, auto-process
 - **Scene Probing**: Auto-detects settings from scene files
 - **Native Desktop App**: Runs as a proper Windows application with custom title bar
-- **Splash Screen**: Professional loading screen while app initializes
 - **Smooth Animations**: Native Windows animations for minimize/maximize/restore
 - **Browser Fallback**: Works in browser if native packages unavailable
 
@@ -64,11 +81,13 @@ Wain/
 ### Marmoset Toolbag
 - Supports Toolbag 4 and 5
 - Ray Tracing, Hybrid, Raster renderers
-- Image and video output
+- Multi-pass rendering (26 pass types)
+- Turntable and animation sequences
+- Automatic file organization
 
 ## Dependencies
 
-Wain automatically installs these on first run:
+Wane automatically installs these on first run:
 - **NiceGUI** - Web-based UI framework
 - **PyQt6** - Qt6 framework
 - **PyQt6-WebEngine** - Browser engine for native window
@@ -78,7 +97,7 @@ Wain automatically installs these on first run:
 
 ## Configuration
 
-Settings are saved to `wain_config.json` in the same folder.
+Settings are saved to `wane_config.json` in the working directory.
 
 ## Troubleshooting
 
@@ -97,23 +116,27 @@ pip install proxy-tools bottle
 ```
 
 ### App Won't Start
-Check that all required files are present:
-```bash
-python launch_wain.py --check
-```
-
-### Window Appears Blank
-This can happen if PyQt6 isn't properly installed:
-```bash
-pip uninstall PyQt6 PyQt6-Qt6 PyQt6-sip
-pip install PyQt6
-```
-
-### Splash Screen Shows but App Doesn't Load
 Run in debug mode to see errors:
 ```bash
-Wain.bat --debug
+Wane.bat --debug
 ```
+
+## Development
+
+To work on Wane:
+
+```bash
+# Clone/extract the package
+cd wane_modular
+
+# Run in debug mode
+python -m wane
+```
+
+The modular structure makes it easy to:
+- Add new render engines (implement `engines/base.py` interface)
+- Customize UI components (modify `ui/components.py`)
+- Extend functionality (add to appropriate module)
 
 ## License
 
@@ -121,4 +144,4 @@ MIT License - Free for personal and commercial use.
 
 ---
 
-*Wain v1.0.0 - A wagon that carries your renders*
+*Wane v1.0.0 - A wagon that carries your renders*

@@ -26,11 +26,10 @@ Wane.bat --install          # Force reinstall dependencies
 
 ## Project Structure
 
-This is the modular version of Wane, split into organized packages:
-
 ```
-wane_modular/
+wane/
 ├── Wane.bat                  # Windows launcher (double-click to start)
+├── readme.md                 # This file
 ├── assets/                   # Logo and icon files
 │   ├── wane_logo.png
 │   ├── wane_icon.ico
@@ -52,8 +51,7 @@ wane_modular/
     │   ├── __init__.py
     │   ├── main.py           # Main page layout
     │   ├── components.py     # Stat cards, job cards
-    │   ├── dialogs.py        # Add job, settings dialogs
-    │   └── styles.py         # CSS/JS styles (reference)
+    │   └── dialogs.py        # Add job, settings dialogs
     └── utils/                # Utilities
         ├── __init__.py
         ├── bootstrap.py      # Dependency auto-installer
@@ -81,9 +79,24 @@ wane_modular/
 ### Marmoset Toolbag
 - Supports Toolbag 4 and 5
 - Ray Tracing, Hybrid, Raster renderers
-- Multi-pass rendering (26 pass types)
+- **Selective Multi-Pass Rendering** (26 pass types)
+  - Only renders the passes you select
+  - Uses `renderCamera()` for precise pass control
+  - No wasted renders or post-processing
 - Turntable and animation sequences
-- Automatic file organization
+- Automatic file organization by pass
+
+## Multi-Pass Rendering (Marmoset)
+
+Wane v2.4+ uses an optimized frame-by-frame approach:
+
+1. **Select your passes** in the Add Job dialog
+2. **Wane renders only what you need**: `Total renders = Frames × Passes`
+   - Example: 30 frames × 3 passes = **90 renders** (not 875!)
+3. **Progress shows exactly** what's happening: `Render 45/90 | Normals | Frame 15/30`
+4. **Files organized automatically** into pass folders
+
+This is as fast as rendering manually in Marmoset - no extra passes, no cleanup needed.
 
 ## Dependencies
 
@@ -93,7 +106,7 @@ Wane automatically installs these on first run:
 - **PyQt6-WebEngine** - Browser engine for native window
 - **qtpy** - Qt compatibility layer
 - **pywebview** - Native desktop window wrapper
-- **Pillow** - Image processing for icons and splash screen
+- **Pillow** - Image processing for icons
 
 ## Configuration
 
@@ -121,13 +134,18 @@ Run in debug mode to see errors:
 Wane.bat --debug
 ```
 
+### Marmoset Passes Not Working
+- Ensure pass names are lowercase in the API (Wane handles this automatically)
+- Check the render log for specific error messages
+- Some passes require specific scene setup (e.g., Material ID needs materials assigned)
+
 ## Development
 
 To work on Wane:
 
 ```bash
 # Clone/extract the package
-cd wane_modular
+cd wane
 
 # Run in debug mode
 python -m wane
@@ -138,10 +156,26 @@ The modular structure makes it easy to:
 - Customize UI components (modify `ui/components.py`)
 - Extend functionality (add to appropriate module)
 
+## Version History
+
+### v2.4.0 (Current)
+- **Optimized Marmoset rendering**: Uses `renderCamera()` frame-by-frame
+- **Accurate progress tracking**: Shows exact render count (frames × passes)
+- **No wasted renders**: Only renders selected passes
+- **Improved progress display**: Shows pass name, render count, and frame number
+
+### v2.3.0
+- Timeline-based frame control for Marmoset
+- Fixed `frameCount` attribute error
+
+### v2.2.0
+- Modular package structure
+- Multi-pass rendering support
+
 ## License
 
 MIT License - Free for personal and commercial use.
 
 ---
 
-*Wane v1.0.0 - A wagon that carries your renders*
+*Wane v2.4.0 - A wagon that carries your renders*

@@ -1,0 +1,47 @@
+{
+  "jobs": [
+    {
+      "id": "93f25692",
+      "name": "BlainsCousin",
+      "engine_type": "marmoset",
+      "file_path": "H:/Work/PortfolioWork/PortfolioScenes/BlainsCousin.tbscene",
+      "output_folder": "H:/Work/PortfolioWork/PortfolioScenes/MarmousetTests",
+      "output_name": "render_",
+      "output_format": "PNG",
+      "status": "completed",
+      "progress": 100,
+      "is_animation": true,
+      "frame_start": 1,
+      "frame_end": 30,
+      "current_frame": 90,
+      "rendering_frame": 30,
+      "original_start": 1,
+      "res_width": 512,
+      "res_height": 512,
+      "camera": "Scene Default",
+      "engine_settings": {
+        "render_type": "turntable",
+        "renderer": "Ray Tracing",
+        "samples": 256,
+        "shadow_quality": "High",
+        "use_transparency": false,
+        "denoise_mode": "gpu",
+        "denoise_quality": "high",
+        "denoise_strength": 1.0,
+        "video_format": "PNG Sequence",
+        "turntable_frames": 30,
+        "turntable_clockwise": true,
+        "render_passes": [
+          "beauty",
+          "ambient_occlusion",
+          "normals"
+        ]
+      },
+      "elapsed_time": "0:00:35",
+      "accumulated_seconds": 0,
+      "error_message": "",
+      "current_sample": 0,
+      "total_samples": 0
+    }
+  ]
+}

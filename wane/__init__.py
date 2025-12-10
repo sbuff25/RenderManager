@@ -9,7 +9,7 @@ Built with NiceGUI + pywebview (Qt backend) for native desktop window.
 Works on Python 3.10+ (including 3.13 and 3.14)
 """
 
-__version__ = "1.8.1"
+__version__ = "2.4.0"
 __author__ = "Spencer"
 __app_name__ = "Wane"
 

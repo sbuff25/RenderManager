@@ -72,21 +72,37 @@ def create_job_card(job):
                 </div>
             ''', sanitize=False).classes('w-full mt-2')
         
+        # Build info line
         engine_name = engine.name if engine else job.engine_type
         info_parts = [engine_name, job.resolution_display]
         if job.elapsed_time:
             info_parts.append(f"Time: {job.elapsed_time}")
         
+        # Build progress details
         progress_parts = []
-        if job.total_passes > 1 and job.current_pass:
-            progress_parts.append(f"{job.current_pass} ({job.current_pass_num}/{job.total_passes})")
-        if job.is_animation:
-            if job.total_passes > 1 and job.pass_frame > 0:
-                progress_parts.append(f"Frame {job.pass_frame}/{job.pass_total_frames}")
-            elif job.display_frame > 0:
-                progress_parts.append(f"Frame {job.display_frame}/{job.frame_end}")
-        if job.samples_display:
-            progress_parts.append(f"Sample {job.samples_display}")
+        
+        if job.engine_type == "marmoset":
+            # For Marmoset: show current pass name and render count
+            if job.current_pass:
+                progress_parts.append(job.current_pass)
+            # Show "Render X/Y" where Y = frames × passes
+            if job.total_passes > 0 and job.pass_total_frames > 0:
+                total_renders = job.pass_total_frames * job.total_passes
+                if job.current_frame > 0:
+                    progress_parts.append(f"Render {job.current_frame}/{total_renders}")
+            # Also show current frame for context
+            if job.rendering_frame > 0 and job.pass_total_frames > 0:
+                progress_parts.append(f"Frame {job.rendering_frame}/{job.pass_total_frames}")
+        else:
+            # For Blender: show pass info and frame progress
+            if job.total_passes > 1 and job.current_pass:
+                progress_parts.append(f"{job.current_pass} ({job.current_pass_num}/{job.total_passes})")
+            if job.is_animation:
+                if job.display_frame > 0:
+                    progress_parts.append(f"Frame {job.display_frame}/{job.frame_end}")
+            if job.samples_display:
+                progress_parts.append(f"Sample {job.samples_display}")
+        
         render_progress = " | ".join(progress_parts)
         
         ui.html(f'''

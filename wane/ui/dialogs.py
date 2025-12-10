@@ -196,7 +196,7 @@ async def show_add_job_dialog():
                     
                     ui.checkbox('Transparent Background').props('dense').bind_value(form, 'use_transparency')
                     
-                    # RENDER PASSES - This is the critical section
+                    # RENDER PASSES
                     ui.label('Render Passes').classes('text-sm text-gray-400 mt-2')
                     
                     marmoset_engine = render_app.engine_registry.get('marmoset')
@@ -208,8 +208,8 @@ async def show_add_job_dialog():
                             form['render_passes'] = ['beauty']
                         else:
                             form['render_passes'] = list(e.value)
-                        # DEBUG: Log when passes change
-                        print(f"[DEBUG] Render passes changed to: {form['render_passes']}")
+                        # Refresh to update render count display
+                        accent_elements.get('marmoset_settings') and accent_elements['marmoset_settings'].refresh()
                     
                     passes_select = ui.select(
                         options=pass_options,
@@ -219,12 +219,29 @@ async def show_add_job_dialog():
                         on_change=on_passes_change
                     ).classes('w-full').props('use-chips')
                     
-                    pass_count = len(form.get('render_passes', ['beauty']))
-                    ui.label(f'{pass_count} pass{"es" if pass_count != 1 else ""} selected').classes('text-xs text-gray-500')
+                    # Calculate and show total render count
+                    num_passes = len(form.get('render_passes', ['beauty']))
+                    render_type = form.get('render_type', 'still')
+                    
+                    if render_type == 'still':
+                        total_renders = num_passes
+                        frames_text = "1 frame"
+                    elif render_type == 'turntable':
+                        frames = int(form.get('turntable_frames', 120))
+                        total_renders = frames * num_passes
+                        frames_text = f"{frames} frames"
+                    else:  # animation
+                        frames = int(form.get('frame_end', 250)) - int(form.get('frame_start', 1)) + 1
+                        total_renders = frames * num_passes
+                        frames_text = f"{frames} frames"
+                    
+                    ui.label(f'{num_passes} pass{"es" if num_passes != 1 else ""} × {frames_text} = {total_renders} total renders').classes('text-xs text-gray-500')
                     
                     if form.get('render_type') == 'turntable':
                         with ui.row().classes('w-full items-center gap-2 mt-1'):
-                            ui.number('Turntable Frames', value=form.get('turntable_frames', 120), min=1).bind_value(form, 'turntable_frames').classes('w-36')
+                            turntable_input = ui.number('Turntable Frames', value=form.get('turntable_frames', 120), min=1).classes('w-36')
+                            turntable_input.bind_value(form, 'turntable_frames')
+                            turntable_input.on('change', lambda: accent_elements.get('marmoset_settings') and accent_elements['marmoset_settings'].refresh())
                             ui.select(options=['PNG Sequence', 'JPEG Sequence', 'TGA Sequence', 'MP4'], value=form.get('video_format', 'PNG Sequence'), label='Output Format').bind_value(form, 'video_format').classes('w-36')
             
             accent_elements['marmoset_settings'] = marmoset_settings
@@ -241,9 +258,6 @@ async def show_add_job_dialog():
                     print("Missing file path or output folder")
                     return
                 
-                # DEBUG: Log what passes are being submitted
-                print(f"[DEBUG] Submitting job with render_passes: {form.get('render_passes', ['beauty'])}")
-                
                 if form['engine_type'] == 'marmoset':
                     engine_settings = {
                         "render_type": form.get('render_type', 'still'),
@@ -259,9 +273,6 @@ async def show_add_job_dialog():
                         "turntable_clockwise": True,
                         "render_passes": form.get('render_passes', ['beauty']),
                     }
-                    
-                    # DEBUG: Log engine_settings
-                    print(f"[DEBUG] Engine settings: {engine_settings}")
                     
                     is_anim = form['is_animation']
                     frame_start = int(form['frame_start'])

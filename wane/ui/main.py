@@ -87,8 +87,15 @@ def main_page():
                     else baseText = baseText + ' | Time: ' + elapsed;
                     
                     var progressParts = [];
+                    // Show pass name first
                     if (passDisplay && passDisplay.length > 0) progressParts.push(passDisplay);
-                    if (framesDisplay && framesDisplay.includes('/')) progressParts.push('Frame ' + framesDisplay);
+                    // Show render count (for Marmoset: "Render X/Y", for Blender: "Frame X/Y")
+                    if (framesDisplay && framesDisplay.length > 0) {
+                        // framesDisplay comes as "X/Y" format
+                        if (framesDisplay.includes('/')) {
+                            progressParts.push('Render ' + framesDisplay);
+                        }
+                    }
                     if (samplesDisplay) progressParts.push('Sample ' + samplesDisplay);
                     var progressText = progressParts.length > 0 ? ' | ' + progressParts.join(' | ') : '';
                     info.innerHTML = baseText + '<span id="job-render-progress-' + jobId + '">' + progressText + '</span>';

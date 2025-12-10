@@ -20,7 +20,7 @@ from wane.models import RenderJob, AppSettings
 from wane.engines.registry import EngineRegistry
 
 class RenderApp:
-    CONFIG_FILE = "wain_config.json"
+    CONFIG_FILE = "wane_config.json"
     
     def __init__(self):
         self.engine_registry = EngineRegistry()
@@ -77,6 +77,9 @@ class RenderApp:
             job.elapsed_time = ""
             job.current_sample = 0
             job.total_samples = 0
+            job.current_pass = ""
+            job.current_pass_num = 0
+            job.pass_frame = 0
             if job.is_animation and job.frame_end > 0 and job.original_start > 1:
                 job.progress = int(((job.original_start - 1) / job.frame_end) * 100)
             else:
@@ -103,11 +106,28 @@ class RenderApp:
             elapsed = f"{h}:{m:02d}:{s:02d}"
             self.current_job.elapsed_time = elapsed
             
+            # Build progress display for JavaScript update
+            job = self.current_job
+            if job.engine_type == "marmoset":
+                # For Marmoset: show render count as "current/total"
+                if job.total_passes > 0 and job.pass_total_frames > 0:
+                    total_renders = job.pass_total_frames * job.total_passes
+                    frames_display = f"{job.current_frame}/{total_renders}"
+                else:
+                    frames_display = ""
+                pass_display = job.current_pass if job.current_pass else ""
+                samples_display = ""
+            else:
+                # Blender
+                frames_display = job.frames_display
+                samples_display = job.samples_display
+                pass_display = job.pass_display
+            
             try:
-                safe_frames = self.current_job.frames_display.replace('"', '\\"').replace("'", "\\'")
-                safe_samples = self.current_job.samples_display.replace('"', '\\"').replace("'", "\\'")
-                safe_pass = self.current_job.pass_display.replace('"', '\\"').replace("'", "\\'")
-                ui.run_javascript(f'''window.updateJobProgress && window.updateJobProgress("{self.current_job.id}", {self.current_job.progress}, "{elapsed}", "{safe_frames}", "{safe_samples}", "{safe_pass}");''')
+                safe_frames = frames_display.replace('"', '\\"').replace("'", "\\'")
+                safe_samples = samples_display.replace('"', '\\"').replace("'", "\\'")
+                safe_pass = pass_display.replace('"', '\\"').replace("'", "\\'")
+                ui.run_javascript(f'''window.updateJobProgress && window.updateJobProgress("{job.id}", {job.progress}, "{elapsed}", "{safe_frames}", "{safe_samples}", "{safe_pass}");''')
             except:
                 pass
         
@@ -182,16 +202,29 @@ class RenderApp:
         self._last_ui_update = datetime.now()
         
         def on_progress(frame, msg):
+            # Update elapsed time
+            total_secs = job.accumulated_seconds
+            if self.render_start_time:
+                total_secs += int((datetime.now() - self.render_start_time).total_seconds())
+            h, rem = divmod(total_secs, 3600)
+            m, s = divmod(rem, 60)
+            job.elapsed_time = f"{h}:{m:02d}:{s:02d}"
+            
             if job.engine_type == "marmoset":
-                total_secs = job.accumulated_seconds
-                if self.render_start_time:
-                    total_secs += int((datetime.now() - self.render_start_time).total_seconds())
-                h, rem = divmod(total_secs, 3600)
-                m, s = divmod(rem, 60)
-                job.elapsed_time = f"{h}:{m:02d}:{s:02d}"
-                self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display))
+                # For Marmoset: frame is the render count, msg contains pass name
+                # Build display strings showing "current/total" renders
+                if job.total_passes > 0 and job.pass_total_frames > 0:
+                    total_renders = job.pass_total_frames * job.total_passes
+                    frames_display = f"{job.current_frame}/{total_renders}"
+                else:
+                    frames_display = ""
+                pass_display = job.current_pass if job.current_pass else ""
+                samples_display = ""
+                
+                self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, frames_display, samples_display, pass_display))
                 return
             
+            # Blender progress handling
             sample_match = re.search(r'Sample (\d+)/(\d+)', msg)
             if sample_match:
                 job.current_sample = int(sample_match.group(1))
@@ -216,13 +249,6 @@ class RenderApp:
                     job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
                 elif frame > 0:
                     job.progress = min(job.progress + 5, 95)
-            
-            total_secs = job.accumulated_seconds
-            if self.render_start_time:
-                total_secs += int((datetime.now() - self.render_start_time).total_seconds())
-            h, rem = divmod(total_secs, 3600)
-            m, s = divmod(rem, 60)
-            job.elapsed_time = f"{h}:{m:02d}:{s:02d}"
             
             self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display))
         

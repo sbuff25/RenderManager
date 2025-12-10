@@ -31,8 +31,8 @@ class RenderJob:
     is_animation: bool = False
     frame_start: int = 1
     frame_end: int = 250
-    current_frame: int = 0      # Last COMPLETED frame (used for resume)
-    rendering_frame: int = 0    # Frame currently being rendered (for display)
+    current_frame: int = 0      # For Marmoset: total render count; For Blender: last completed frame
+    rendering_frame: int = 0    # Current frame number being rendered
     original_start: int = 0
     res_width: int = 1920
     res_height: int = 1080
@@ -45,7 +45,7 @@ class RenderJob:
     error_message: str = ""
     current_sample: int = 0
     total_samples: int = 0
-    # Multi-pass rendering support (for engines like Marmoset that render passes separately)
+    # Multi-pass rendering support
     current_pass: str = ""          # Name of the pass currently rendering
     current_pass_num: int = 0       # Current pass number (1-based)
     total_passes: int = 1           # Total number of passes to render
@@ -62,21 +62,10 @@ class RenderJob:
     @property
     def pass_display(self) -> str:
         """Display current pass info."""
-        if self.current_pass == "Organizing":
-            return "Organizing files..."
-        if self.total_passes > 1:
-            if self.current_pass:
-                return f"{self.current_pass}"
-            return f"Rendering {self.total_passes} passes"
-        elif self.current_pass:
+        if self.current_pass:
             return self.current_pass
-        return ""
-    
-    @property
-    def pass_frames_display(self) -> str:
-        """Display frame progress within current pass"""
-        if self.pass_total_frames > 0:
-            return f"{self.pass_frame}/{self.pass_total_frames}"
+        if self.total_passes > 1:
+            return f"Rendering {self.total_passes} passes"
         return ""
     
     @property
@@ -88,12 +77,25 @@ class RenderJob:
     
     @property
     def frames_display(self) -> str:
-        """Display frames - for multi-pass simultaneous shows files count, otherwise frames"""
-        if self.total_passes > 1 and self.engine_type == "marmoset":
-            total_files = self.pass_total_frames * self.total_passes
-            if total_files > 0:
-                return f"{self.current_frame}/{total_files} files"
+        """
+        Display progress information.
+        
+        For Marmoset multi-pass: shows "X/Y renders" (total render operations)
+        For Blender animations: shows "X/Y" (frames)
+        For stills: shows frame number
+        """
+        if self.engine_type == "marmoset":
+            # For Marmoset, show render count out of total renders
+            if self.total_passes > 0 and self.pass_total_frames > 0:
+                total_renders = self.pass_total_frames * self.total_passes
+                if total_renders > 0 and self.current_frame > 0:
+                    return f"{self.current_frame}/{total_renders}"
+            # Show frame progress for turntable/animation
+            if self.pass_frame > 0 and self.pass_total_frames > 0:
+                return f"{self.pass_frame}/{self.pass_total_frames}"
             return ""
+        
+        # Blender: standard frame display
         if self.is_animation:
             frame = self.display_frame
             if frame > 0 and frame >= self.frame_start:

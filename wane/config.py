@@ -6,11 +6,11 @@ Theme colors, engine configurations, and application constants.
 """
 
 # Cache busting - increment to force browser asset refresh
-ASSET_VERSION = "v2"
+ASSET_VERSION = "v3"
 
 # Application info
 APP_NAME = "Wane"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.4.0"
 CONFIG_FILE = "wane_config.json"
 
 # Required Python version

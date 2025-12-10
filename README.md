@@ -1,19 +1,19 @@
-# Wane - Render Queue Manager
+# Wain - Render Queue Manager
 
 A professional render queue manager for 3D artists. Supports Blender and Marmoset Toolbag with pause/resume capabilities.
 
 ## Quick Start
 
 ### Windows
-1. **Double-click `Wane.bat`**
+1. **Double-click `Wain.bat`**
    - First run: Installs dependencies, then launches
    - After that: Launches the native desktop app
 
 ### Manual Launch
 ```bash
-python -m wane              # Install & launch
-Wane.bat --debug            # Run with console output for debugging
-Wane.bat --install          # Force reinstall dependencies
+python -m wain              # Install & launch
+Wain.bat --debug            # Run with console output for debugging
+Wain.bat --install          # Force reinstall dependencies
 ```
 
 ## Requirements
@@ -27,17 +27,18 @@ Wane.bat --install          # Force reinstall dependencies
 ## Project Structure
 
 ```
-wane/
-├── Wane.bat                  # Windows launcher (double-click to start)
+wain/
+├── Wain.bat                  # Windows launcher (double-click to start)
 ├── readme.md                 # This file
 ├── assets/                   # Logo and icon files
-│   ├── wane_logo.png
-│   ├── wane_icon.ico
+│   ├── wain_logo.png
+│   ├── wain_icon.ico
 │   ├── blender_logo.png
 │   └── marmoset_logo.png
-└── wane/                     # Main package
+├── wain_launcher.pyw         # Splash screen launcher
+└── wain/                     # Main package
     ├── __init__.py           # Package exports
-    ├── __main__.py           # Entry point (python -m wane)
+    ├── __main__.py           # Entry point (python -m wain)
     ├── app.py                # RenderApp class and state management
     ├── config.py             # Theme, colors, constants
     ├── models.py             # RenderJob, AppSettings dataclasses
@@ -60,6 +61,7 @@ wane/
 
 ## Features
 
+- **Professional Splash Screen**: Animated loading screen with progress bar on startup
 - **Multi-Engine Support**: Blender, Marmoset Toolbag
 - **Pause/Resume**: Stop and continue renders at any frame
 - **Queue Management**: Queue multiple jobs, auto-process
@@ -88,10 +90,10 @@ wane/
 
 ## Multi-Pass Rendering (Marmoset)
 
-Wane v2.4+ uses an optimized frame-by-frame approach:
+Wain v2.4+ uses an optimized frame-by-frame approach:
 
 1. **Select your passes** in the Add Job dialog
-2. **Wane renders only what you need**: `Total renders = Frames × Passes`
+2. **Wain renders only what you need**: `Total renders = Frames × Passes`
    - Example: 30 frames × 3 passes = **90 renders** (not 875!)
 3. **Progress shows exactly** what's happening: `Render 45/90 | Normals | Frame 15/30`
 4. **Files organized automatically** into pass folders
@@ -100,7 +102,7 @@ This is as fast as rendering manually in Marmoset - no extra passes, no cleanup 
 
 ## Dependencies
 
-Wane automatically installs these on first run:
+Wain automatically installs these on first run:
 - **NiceGUI** - Web-based UI framework
 - **PyQt6** - Qt6 framework
 - **PyQt6-WebEngine** - Browser engine for native window
@@ -110,7 +112,7 @@ Wane automatically installs these on first run:
 
 ## Configuration
 
-Settings are saved to `wane_config.json` in the working directory.
+Settings are saved to `wain_config.json` in the working directory.
 
 ## Troubleshooting
 
@@ -131,24 +133,24 @@ pip install proxy-tools bottle
 ### App Won't Start
 Run in debug mode to see errors:
 ```bash
-Wane.bat --debug
+Wain.bat --debug
 ```
 
 ### Marmoset Passes Not Working
-- Ensure pass names are lowercase in the API (Wane handles this automatically)
+- Ensure pass names are lowercase in the API (Wain handles this automatically)
 - Check the render log for specific error messages
 - Some passes require specific scene setup (e.g., Material ID needs materials assigned)
 
 ## Development
 
-To work on Wane:
+To work on Wain:
 
 ```bash
 # Clone/extract the package
-cd wane
+cd wain
 
 # Run in debug mode
-python -m wane
+python -m wain
 ```
 
 The modular structure makes it easy to:
@@ -178,4 +180,4 @@ MIT License - Free for personal and commercial use.
 
 ---
 
-*Wane v2.4.0 - A wagon that carries your renders*
+*Wain v2.4.0 - A wagon that carries your renders*

@@ -1,0 +1,47 @@
+"""
+Wain - Multi-Engine Render Queue Manager
+=========================================
+
+A professional render queue manager for 3D artists.
+Supports Blender and Marmoset Toolbag with pause/resume capabilities.
+
+Built with NiceGUI + pywebview (Qt backend) for native desktop window.
+Works on Python 3.10+ (including 3.13 and 3.14)
+"""
+
+__version__ = "2.5.0"
+__author__ = "Spencer"
+__app_name__ = "Wain"
+
+from wain.config import (
+    APP_NAME,
+    APP_VERSION,
+    DARK_THEME,
+    ENGINE_COLORS,
+    ENGINE_LOGOS,
+    STATUS_CONFIG,
+    ASSET_VERSION,
+)
+
+from wain.models import RenderJob, AppSettings
+from wain.engines import RenderEngine, BlenderEngine, MarmosetEngine, EngineRegistry
+from wain.app import RenderApp
+
+__all__ = [
+    '__version__',
+    '__app_name__',
+    'APP_NAME',
+    'APP_VERSION',
+    'DARK_THEME',
+    'ENGINE_COLORS',
+    'ENGINE_LOGOS',
+    'STATUS_CONFIG',
+    'ASSET_VERSION',
+    'RenderJob',
+    'AppSettings',
+    'RenderEngine',
+    'BlenderEngine',
+    'MarmosetEngine',
+    'EngineRegistry',
+    'RenderApp',
+]

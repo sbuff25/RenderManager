@@ -1,0 +1,21 @@
+[23:13:54] Found: Blender 4.5.0
+[23:13:54] Found: Marmoset Toolbag 5.0
+[23:13:54] Loaded 1 jobs
+[23:13:59] Delete: BlainsCousin
+[23:15:03] Added: BlainsCousin
+[23:15:05] Start: BlainsCousin
+[23:15:06] Starting: BlainsCousin
+[23:15:06] Requested passes: ['beauty', 'normals', 'material_id']
+[23:15:06] Render type: turntable
+[23:15:06] Output: H:/Work/PortfolioWork/PortfolioScenes/MarmousetTests
+[23:15:06] Started Toolbag PID: 5540
+[23:15:08] ============================================================
+[23:15:08] TURNTABLE RENDER
+[23:15:08] ============================================================
+[23:15:08] Requested 3 pass(es):
+[23:15:08]   - beauty: '(beauty)'
+[23:15:08]   - normals: 'Normals'
+[23:15:08]   - material_id: 'Material ID'
+[23:15:09] Scene loaded
+[23:15:09] ERROR: 'mset.RenderOutputOptions' object has no attribute 'frameCount'
+[23:15:09] Failed: BlainsCousin - 'mset.RenderOutputOptions' object has no attribute 'frameCount'

@@ -10,7 +10,7 @@ ASSET_VERSION = "v2"
 
 # Application info
 APP_NAME = "Wane"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.2.0"
 CONFIG_FILE = "wane_config.json"
 
 # Required Python version

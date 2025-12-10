@@ -61,14 +61,10 @@ class RenderJob:
     
     @property
     def pass_display(self) -> str:
-        """Display current pass info.
-        For Marmoset multi-pass (simultaneous): shows pass count
-        For sequential rendering: shows current pass
-        """
+        """Display current pass info."""
         if self.current_pass == "Organizing":
             return "Organizing files..."
         if self.total_passes > 1:
-            # For simultaneous multi-pass (Marmoset), show total passes being rendered
             if self.current_pass:
                 return f"{self.current_pass}"
             return f"Rendering {self.total_passes} passes"
@@ -93,14 +89,11 @@ class RenderJob:
     @property
     def frames_display(self) -> str:
         """Display frames - for multi-pass simultaneous shows files count, otherwise frames"""
-        # For multi-pass simultaneous renders (Marmoset), show file count
-        # current_frame = total files, pass_total_frames = frames per pass, total_passes = pass count
         if self.total_passes > 1 and self.engine_type == "marmoset":
             total_files = self.pass_total_frames * self.total_passes
             if total_files > 0:
                 return f"{self.current_frame}/{total_files} files"
             return ""
-        # For standard renders, show frame progress
         if self.is_animation:
             frame = self.display_frame
             if frame > 0 and frame >= self.frame_start:

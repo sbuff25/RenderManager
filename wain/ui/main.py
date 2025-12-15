@@ -7,7 +7,7 @@ import os
 import sys
 from nicegui import ui, app
 
-from ..config import DARK_THEME, ENGINE_LOGOS, ASSET_VERSION
+from ..config import DARK_THEME, AVAILABLE_LOGOS, ASSET_VERSION, APP_VERSION
 from ..app import render_app
 from .components import create_stat_card, create_job_card
 from .dialogs import show_add_job_dialog, show_settings_dialog
@@ -36,7 +36,7 @@ def main_page():
         .job-action-btn-engine-marmoset { color: #ef0343 !important; }
         .job-action-btn-engine-marmoset:hover { color: #ffffff !important; background-color: rgba(239, 3, 67, 0.2) !important; }
         
-        img[src*="wain_logo"] { filter: invert(1); border-radius: 8px; }
+        img[src*="wain_logo"], img[src*="wain_logo"] { filter: invert(1); border-radius: 8px; }
         
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #18181b; border-radius: 4px; }
@@ -47,7 +47,7 @@ def main_page():
         
         .custom-progress-container { width: 100%; display: flex; flex-direction: column; gap: 4px; min-height: 28px; }
         .custom-progress-track { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.15); border-radius: 4px; overflow: hidden; position: relative; }
-        .custom-progress-fill { height: 100%; border-radius: 4px; position: relative; background: #3b82f6; will-change: width; }
+        .custom-progress-fill { height: 100%; border-radius: 4px; position: relative; background: #71717a; will-change: width; }
         .custom-progress-label { text-align: center; font-size: 14px; color: #a1a1aa; }
         
         .custom-progress-rendering.custom-progress-engine-blender .custom-progress-fill { background: #ea7600; }
@@ -89,14 +89,16 @@ def main_page():
                     var progressParts = [];
                     // Show pass name first
                     if (passDisplay && passDisplay.length > 0) progressParts.push(passDisplay);
-                    // Show render count (for Marmoset: "Render X/Y", for Blender: "Frame X/Y")
+                    // Show frame count for animations (Blender: "Frame X/Y", Marmoset: "Render X/Y")
                     if (framesDisplay && framesDisplay.length > 0) {
-                        // framesDisplay comes as "X/Y" format
                         if (framesDisplay.includes('/')) {
-                            progressParts.push('Render ' + framesDisplay);
+                            progressParts.push('Frame ' + framesDisplay);
                         }
                     }
-                    if (samplesDisplay) progressParts.push('Sample ' + samplesDisplay);
+                    // samplesDisplay now always returns "Frame X%" showing render progress within current frame
+                    if (samplesDisplay && samplesDisplay.length > 0) {
+                        progressParts.push(samplesDisplay);
+                    }
                     var progressText = progressParts.length > 0 ? ' | ' + progressParts.join(' | ') : '';
                     info.innerHTML = baseText + '<span id="job-render-progress-' + jobId + '">' + progressText + '</span>';
                 }
@@ -136,7 +138,12 @@ def main_page():
     
     with ui.header().classes('items-center justify-between px-4 md:px-6 py-3 bg-zinc-900'):
         with ui.row().classes('items-center gap-4'):
-            ui.image(f'/logos/wain_logo.png?{ASSET_VERSION}').classes('w-10 h-10 object-contain rounded-lg')
+            # Use logo if available, otherwise show app name
+            wain_logo = AVAILABLE_LOGOS.get('wain')
+            if wain_logo:
+                ui.image(f'/logos/{wain_logo}?{ASSET_VERSION}').classes('w-10 h-10 object-contain rounded-lg')
+            else:
+                ui.label('WAIN').classes('text-xl font-bold text-white')
         
         with ui.row().classes('gap-2'):
             ui.button('Settings', icon='settings', on_click=show_settings_dialog).props('flat').classes('header-btn text-zinc-400')
@@ -223,6 +230,9 @@ def main_page():
             log_display()
     
     ui.timer(0.25, render_app.process_queue)
+    
+    # Log version at startup to verify correct version is running
+    render_app.log(f"Wain v{APP_VERSION} started")
     
     for engine in render_app.engine_registry.get_all():
         if engine.is_available:

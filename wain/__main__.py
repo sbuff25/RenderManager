@@ -61,7 +61,6 @@ def run():
         print("Open http://localhost:8080 if browser doesn't open automatically")
     
     # Serve logo/asset files from assets subfolder
-    # Look for assets relative to the package, or in current working directory
     package_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(package_dir)
     cwd = os.getcwd()
@@ -86,6 +85,12 @@ def run():
         print(f"Created assets folder: {assets_dir}")
     else:
         print(f"Using assets folder: {assets_dir}")
+    
+    # Check which asset files exist and update AVAILABLE_LOGOS
+    from wain.config import check_assets, AVAILABLE_LOGOS
+    print("Checking for asset files...")
+    check_assets(assets_dir)
+    print(f"Available logos: {list(AVAILABLE_LOGOS.keys()) if AVAILABLE_LOGOS else 'None (using icon fallbacks)'}")
     
     # Clear Qt WebEngine cache to ensure fresh assets load (native mode only)
     if HAS_NATIVE_MODE:

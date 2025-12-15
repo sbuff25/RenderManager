@@ -3,18 +3,26 @@ Wain - Blender Engine
 =====================
 
 Render engine implementation for Blender.
+v2.7.0 - Fixed denoiser value normalization (OPTIX -> OptiX)
+
+Note on "double rendering": At high resolutions (e.g. 3840x2048), Blender
+splits the frame into multiple tiles and renders them sequentially. This
+is normal GPU rendering behavior, not a bug. The log will show:
+  "Rendered 0/2 Tiles, Sample 1024/1024"
+  "Rendered 1/2 Tiles, Sample 1/1024"
+This means tile 1 is starting, not the frame re-rendering.
 """
 
 import os
 import sys
 import re
-import gzip
 import subprocess
 import threading
 import tempfile
 from typing import Dict, Any, Optional, List
 
 from wain.engines.base import RenderEngine
+from wain.config import BLENDER_DENOISER_FROM_INTERNAL
 
 
 class BlenderEngine(RenderEngine):
@@ -85,6 +93,9 @@ class BlenderEngine(RenderEngine):
             "cameras": ["Scene Default"], "active_camera": "Scene Default",
             "resolution_x": 1920, "resolution_y": 1080, "engine": "Cycles",
             "samples": 128, "frame_start": 1, "frame_end": 250,
+            "use_denoising": True, "denoiser": "OptiX",  # Use UI-friendly name
+            "use_compositing": True, "use_sequencer": False,  # Default sequencer OFF
+            "has_compositor_denoise": False,
         }
         
         blender_exe = self.get_best_blender_for_file(file_path)
@@ -110,10 +121,25 @@ engine_map = {"CYCLES": "Cycles", "BLENDER_EEVEE_NEXT": "Eevee", "BLENDER_WORKBE
 print(f"ENGINE:{engine_map.get(render.engine, 'Cycles')}")
 if render.engine == "CYCLES":
     print(f"SAMPLES:{scene.cycles.samples}")
+    print(f"USE_DENOISING:{scene.cycles.use_denoising}")
+    print(f"DENOISER:{scene.cycles.denoiser}")
 else:
     print("SAMPLES:128")
+    print("USE_DENOISING:False")
+    print("DENOISER:OPTIX")
 print(f"FRAME_START:{scene.frame_start}")
 print(f"FRAME_END:{scene.frame_end}")
+print(f"USE_COMPOSITING:{render.use_compositing}")
+print(f"USE_SEQUENCER:{render.use_sequencer}")
+
+# Check for compositor denoise node
+has_comp_denoise = False
+if scene.node_tree and scene.node_tree.nodes:
+    for node in scene.node_tree.nodes:
+        if node.type == 'DENOISE' and not node.mute:
+            has_comp_denoise = True
+            break
+print(f"HAS_COMPOSITOR_DENOISE:{has_comp_denoise}")
 print("INFO_END")
 '''
         try:
@@ -148,8 +174,16 @@ print("INFO_END")
                     elif line.startswith('RES_Y:'): info["resolution_y"] = int(line.split(':')[1])
                     elif line.startswith('ENGINE:'): info["engine"] = line.split(':')[1]
                     elif line.startswith('SAMPLES:'): info["samples"] = int(line.split(':')[1])
+                    elif line.startswith('USE_DENOISING:'): info["use_denoising"] = line.split(':')[1] == 'True'
+                    elif line.startswith('DENOISER:'):
+                        # CRITICAL FIX: Convert internal Blender value (OPTIX) to UI-friendly name (OptiX)
+                        internal_value = line.split(':')[1].strip()
+                        info["denoiser"] = BLENDER_DENOISER_FROM_INTERNAL.get(internal_value, 'OptiX')
                     elif line.startswith('FRAME_START:'): info["frame_start"] = int(line.split(':')[1])
                     elif line.startswith('FRAME_END:'): info["frame_end"] = int(line.split(':')[1])
+                    elif line.startswith('USE_COMPOSITING:'): info["use_compositing"] = line.split(':')[1] == 'True'
+                    elif line.startswith('USE_SEQUENCER:'): info["use_sequencer"] = line.split(':')[1] == 'True'
+                    elif line.startswith('HAS_COMPOSITOR_DENOISE:'): info["has_compositor_denoise"] = line.split(':')[1] == 'True'
             
             if cameras: info["cameras"] = ["Scene Default"] + cameras
             print(f"[Wain] Blender probe results: {info}")
@@ -179,10 +213,8 @@ print("INFO_END")
         
         # For single frame renders, check if output already exists
         if not job.is_animation and not job.overwrite_existing:
-            # Try to find existing output file
             ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}
             ext = ext_map.get(self.OUTPUT_FORMATS.get(job.output_format, "PNG"), "png")
-            # Blender adds frame number with -x 1 flag
             potential_output = os.path.join(job.output_folder, f"{job.output_name}{job.frame_start:04d}.{ext}")
             if os.path.exists(potential_output):
                 if on_log:
@@ -221,18 +253,14 @@ def skip_existing_handler(scene, depsgraph):
     output_path = f"{output_base}{{frame:04d}}.{ext}"
     if os.path.exists(output_path):
         print(f"[Wain] Skipping frame {{frame}} - already exists")
-        # Skip by immediately completing the frame
         bpy.context.scene.render.use_lock_interface = False
         raise Exception("SKIP_FRAME")
-
-# Note: Blender doesn't have a native way to skip frames in -a mode
-# The user should use resume functionality instead for skip behavior
 '''
         else:
             script = base_script
         
         script_dir = os.path.dirname(job.file_path) or os.getcwd()
-        self.temp_script_path = os.path.join(script_dir, f"_render_{job.id}.py")
+        self.temp_script_path = os.path.join(script_dir, f"_wain_render_{job.id}.py")
         with open(self.temp_script_path, 'w') as f:
             f.write(script)
         
@@ -244,34 +272,102 @@ def skip_existing_handler(scene, depsgraph):
         else:
             cmd.extend(["-f", str(job.frame_start)])
         
-        if on_log: on_log(f"Command: {' '.join(cmd)}")
+        if on_log: on_log(f"[v2.8.3] Command: {' '.join(cmd)}")
         
         def render_thread():
+            """Render in background thread with robust encoding handling."""
             try:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, startupinfo=startupinfo)
                 
-                for line_bytes in self.current_process.stdout:
-                    if self.is_cancelling: break
-                    line = line_bytes.decode('utf-8', errors='replace').strip()
-                    if on_log and line: on_log(line)
+                # Force UTF-8 encoding to handle Unicode output from addons
+                env = os.environ.copy()
+                env['PYTHONIOENCODING'] = 'utf-8'
+                env['PYTHONLEGACYWINDOWSSTDIO'] = '0'
+                
+                self.current_process = subprocess.Popen(
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.STDOUT, 
+                    startupinfo=startupinfo,
+                    env=env
+                )
+                
+                # Read stdout as binary and decode ourselves to avoid encoding issues
+                while True:
+                    if self.is_cancelling:
+                        break
                     
-                    frame_match = re.search(r'Fra:(\d+)', line)
-                    if frame_match:
-                        on_progress(int(frame_match.group(1)), line)
-                    elif "Saved:" in line:
-                        on_progress(-1, line)
+                    try:
+                        line_bytes = self.current_process.stdout.readline()
+                        if not line_bytes:
+                            break
+                        
+                        # Decode bytes to string - use errors='replace' to handle any encoding
+                        try:
+                            line = line_bytes.decode('utf-8', errors='replace')
+                        except Exception:
+                            try:
+                                line = line_bytes.decode('latin-1', errors='replace')
+                            except Exception:
+                                line = str(line_bytes)
+                        
+                        line = line.strip()
+                        
+                        # AGGRESSIVELY sanitize to ASCII - this is critical for Windows
+                        # Convert ALL non-printable-ASCII characters to '?'
+                        safe_chars = []
+                        for c in line:
+                            try:
+                                code = ord(c)
+                                if 32 <= code < 127:
+                                    safe_chars.append(c)
+                                else:
+                                    safe_chars.append('?')
+                            except Exception:
+                                safe_chars.append('?')
+                        safe_line = ''.join(safe_chars)
+                        
+                        # Log the sanitized line
+                        if on_log and safe_line:
+                            try:
+                                on_log(safe_line)
+                            except Exception:
+                                pass  # Skip if logging fails
+                        
+                        # Parse progress info from original line (may contain unicode)
+                        try:
+                            frame_match = re.search(r'Fra:(\d+)', line)
+                            if frame_match:
+                                on_progress(int(frame_match.group(1)), safe_line)
+                            elif "Saved:" in line:
+                                on_progress(-1, safe_line)
+                        except Exception:
+                            pass  # Skip progress parsing errors
+                            
+                    except Exception:
+                        # Skip ANY problematic lines - never fail the render
+                        continue
                 
                 return_code = self.current_process.wait()
                 self._cleanup()
                 
                 if not self.is_cancelling:
-                    if return_code == 0: on_complete()
-                    else: on_error(f"Blender exited with code {return_code}")
+                    if return_code == 0:
+                        on_complete()
+                    else:
+                        on_error(f"Blender exited with code {return_code}")
+                        
             except Exception as e:
                 self._cleanup()
-                if not self.is_cancelling: on_error(str(e))
+                if not self.is_cancelling:
+                    # Sanitize error message to ASCII
+                    try:
+                        err_msg = str(e)
+                        safe_err = ''.join(c if 32 <= ord(c) < 127 else '?' for c in err_msg)
+                    except Exception:
+                        safe_err = "Unknown error"
+                    on_error(safe_err)
         
         threading.Thread(target=render_thread, daemon=True).start()
     

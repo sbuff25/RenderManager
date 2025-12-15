@@ -3,6 +3,7 @@ Wain UI Dialogs
 ===============
 
 Modal dialogs for adding jobs and configuring settings.
+v2.7.0 - Fixed denoiser dropdown value validation (OPTIX -> OptiX)
 """
 
 import os
@@ -13,10 +14,29 @@ from typing import Optional, Dict, Any
 
 from nicegui import ui
 
-from wain.config import ENGINE_COLORS, ENGINE_LOGOS, ASSET_VERSION
+from wain.config import ENGINE_COLORS, AVAILABLE_LOGOS, ENGINE_ICONS, ASSET_VERSION, BLENDER_DENOISER_FROM_INTERNAL
 from wain.models import RenderJob
 from wain.app import render_app
 from wain.utils.file_dialogs import open_file_dialog_async, open_folder_dialog_async
+
+
+def _normalize_denoiser_value(value: str) -> str:
+    """
+    Normalize denoiser value to match dropdown options.
+    Blender returns 'OPTIX' but dropdown has 'OptiX'.
+    """
+    if value is None:
+        return 'OpenImageDenoise'
+    # Use config mapping if available
+    normalized = BLENDER_DENOISER_FROM_INTERNAL.get(value.upper(), None)
+    if normalized:
+        return normalized
+    # Fallback: if already in correct format, return as-is
+    if value in ['OpenImageDenoise', 'OptiX']:
+        return value
+    # Default fallback
+    return 'OpenImageDenoise'
+
 
 async def show_add_job_dialog():
     """Add Job dialog with all fields visible."""
@@ -34,6 +54,8 @@ async def show_add_job_dialog():
         'frame_end': 250,
         'res_width': 1920,
         'res_height': 1080,
+        'base_res_width': 1920,   # Original scene resolution (for scaling)
+        'base_res_height': 1080,
         'submit_paused': False,
         'overwrite_existing': True,
         # Marmoset-specific
@@ -46,11 +68,16 @@ async def show_add_job_dialog():
         'video_format': 'PNG Sequence',
         'turntable_frames': 120,
         'render_passes': ['beauty'],
+        # Blender-specific
+        'blender_denoiser': 'OptiX',
+        'blender_use_compositing': True,
+        'blender_use_sequencer': False,
     }
     
     camera_select = None
     res_w_input = None
     res_h_input = None
+    res_scale_container = None
     frame_start_input = None
     frame_end_input = None
     anim_checkbox = None
@@ -60,14 +87,38 @@ async def show_add_job_dialog():
     engine_buttons = {}
     accent_elements = {}
     
+    def get_current_scale():
+        """Calculate current resolution scale percentage."""
+        if form['base_res_width'] > 0 and form['base_res_height'] > 0:
+            scale_w = form['res_width'] / form['base_res_width']
+            scale_h = form['res_height'] / form['base_res_height']
+            # Use average if aspect ratio changed, otherwise use width scale
+            if abs(scale_w - scale_h) < 0.01:
+                return scale_w
+            return (scale_w + scale_h) / 2
+        return 1.0
+    
+    def apply_scale(scale: float):
+        """Apply resolution scale to base resolution."""
+        new_w = max(1, int(form['base_res_width'] * scale))
+        new_h = max(1, int(form['base_res_height'] * scale))
+        form['res_width'] = new_w
+        form['res_height'] = new_h
+        if res_w_input:
+            res_w_input.value = new_w
+        if res_h_input:
+            res_h_input.value = new_h
+        if res_scale_container:
+            res_scale_container.refresh()
+    
     def select_engine(eng_type):
         form['engine_type'] = eng_type
-        accent_color = ENGINE_COLORS.get(eng_type, "#3b82f6")
+        accent_color = ENGINE_COLORS.get(eng_type, "#71717a")
         
         for et, btn in engine_buttons.items():
             if et == eng_type:
                 btn.classes(replace='px-3 py-2 rounded engine-btn-selected')
-                btn.style(f'background-color: {ENGINE_COLORS.get(et, "#3b82f6")} !important; color: white !important;')
+                btn.style(f'background-color: {ENGINE_COLORS.get(et, "#71717a")} !important; color: white !important;')
             else:
                 btn.classes(replace='px-3 py-2 rounded engine-btn-unselected')
                 btn.style('background-color: transparent !important; color: #52525b !important;')
@@ -89,10 +140,10 @@ async def show_add_job_dialog():
                 ui.label('Engine:').classes('text-gray-400 w-20')
                 with ui.row().classes('gap-2'):
                     for engine in render_app.engine_registry.get_available():
-                        engine_logo = ENGINE_LOGOS.get(engine.engine_type)
+                        engine_logo = AVAILABLE_LOGOS.get(engine.engine_type)
                         is_selected = engine.engine_type == form['engine_type']
                         eng_type = engine.engine_type
-                        accent_color = ENGINE_COLORS.get(eng_type, "#3b82f6")
+                        accent_color = ENGINE_COLORS.get(eng_type, "#71717a")
                         
                         if is_selected:
                             btn_class = 'px-3 py-2 rounded engine-btn-selected'
@@ -105,6 +156,9 @@ async def show_add_job_dialog():
                             with ui.row().classes('items-center gap-2'):
                                 if engine_logo:
                                     ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-5 h-5 object-contain')
+                                else:
+                                    engine_icon = ENGINE_ICONS.get(eng_type, 'help')
+                                    ui.icon(engine_icon).classes('text-lg')
                                 ui.label(engine.name).classes('text-sm')
                         engine_buttons[engine.engine_type] = btn
             
@@ -117,19 +171,16 @@ async def show_add_job_dialog():
                 file_input.bind_value(form, 'file_path')
                 
                 def probe_scene(file_path: str):
-                    """Probe scene file and update form with scene settings."""
                     detected = render_app.engine_registry.detect_engine_for_file(file_path)
                     if not detected:
                         status_label.set_text('Unknown file type')
                         return
                     
-                    # Switch to detected engine
                     select_engine(detected.engine_type)
                     status_label.set_text('Probing scene...')
                     status_label.classes(replace='text-xs text-yellow-500')
                     
                     async def do_probe_async():
-                        """Run probe in executor and update UI."""
                         loop = asyncio.get_event_loop()
                         
                         def blocking_probe():
@@ -139,19 +190,20 @@ async def show_add_job_dialog():
                             return info
                         
                         try:
-                            # Run blocking probe in thread pool
                             info = await loop.run_in_executor(None, blocking_probe)
                             
-                            # Now we're back on the UI thread - safe to update UI
-                            # Resolution
                             if info.get('resolution_x'):
                                 res_w_input.value = info['resolution_x']
                                 form['res_width'] = info['resolution_x']
+                                form['base_res_width'] = info['resolution_x']
                             if info.get('resolution_y'):
                                 res_h_input.value = info['resolution_y']
                                 form['res_height'] = info['resolution_y']
+                                form['base_res_height'] = info['resolution_y']
+                            # Refresh scale buttons after resolution update
+                            if res_scale_container:
+                                res_scale_container.refresh()
                             
-                            # Cameras
                             cameras = info.get('cameras', ['Scene Default'])
                             if cameras:
                                 camera_select.options = cameras
@@ -161,7 +213,6 @@ async def show_add_job_dialog():
                                     form['camera'] = active_cam
                                 camera_select.update()
                             
-                            # Frames
                             if info.get('frame_start'):
                                 frame_start_input.value = info['frame_start']
                                 form['frame_start'] = info['frame_start']
@@ -169,12 +220,20 @@ async def show_add_job_dialog():
                                 frame_end_input.value = info['frame_end']
                                 form['frame_end'] = info['frame_end']
                             
-                            # Samples
                             if info.get('samples'):
                                 form['samples'] = info['samples']
-                                # Refresh marmoset settings if visible
                                 if 'marmoset_settings' in accent_elements:
                                     accent_elements['marmoset_settings'].refresh()
+                            
+                            # Handle Blender-specific settings
+                            if detected.engine_type == 'blender':
+                                if info.get('denoiser'):
+                                    # CRITICAL: Normalize denoiser value before storing
+                                    form['blender_denoiser'] = _normalize_denoiser_value(info['denoiser'])
+                                if 'use_compositing' in info:
+                                    form['blender_use_compositing'] = info['use_compositing']
+                                if 'use_sequencer' in info:
+                                    form['blender_use_sequencer'] = info['use_sequencer']
                             
                             # Marmoset-specific
                             if detected.engine_type == 'marmoset':
@@ -186,11 +245,9 @@ async def show_add_job_dialog():
                                     frame_end_input.value = info['turntable_frames']
                                 if info.get('renderer'):
                                     form['renderer'] = info['renderer']
-                                # Refresh marmoset settings section
                                 if 'marmoset_settings' in accent_elements:
                                     accent_elements['marmoset_settings'].refresh()
                             
-                            # Check if animation
                             has_anim = info.get('has_animation', False)
                             if not has_anim and info.get('frame_start') and info.get('frame_end'):
                                 has_anim = info['frame_end'] > info['frame_start']
@@ -198,11 +255,9 @@ async def show_add_job_dialog():
                                 anim_checkbox.value = True
                                 form['is_animation'] = True
                             
-                            # Status message
                             res_str = f"{info.get('resolution_x', '?')}x{info.get('resolution_y', '?')}"
                             samples_str = f"{info.get('samples', '?')} samples"
                             
-                            # Check if we got real data or just defaults
                             if info.get('cameras') and len(info.get('cameras', [])) > 0:
                                 status_label.set_text(f'Scene loaded: {res_str}, {samples_str}')
                                 status_label.classes(replace='text-xs text-green-500')
@@ -216,7 +271,6 @@ async def show_add_job_dialog():
                             status_label.set_text(f'Probe failed: {err_msg}')
                             status_label.classes(replace='text-xs text-red-500')
                     
-                    # Schedule the async probe
                     asyncio.create_task(do_probe_async())
                 
                 def browse_file():
@@ -227,7 +281,6 @@ async def show_add_job_dialog():
                                 name_input.value = os.path.splitext(os.path.basename(result))[0]
                             if not form['output_folder']:
                                 output_input.value = os.path.dirname(result)
-                            # Probe scene for settings
                             probe_scene(result)
                     
                     filters = render_app.engine_registry.get_all_file_filters()
@@ -255,12 +308,49 @@ async def show_add_job_dialog():
                 ui.input('Prefix', value='render_').bind_value(form, 'output_name').classes('flex-grow')
                 ui.select(['PNG', 'JPEG', 'OpenEXR', 'TIFF'], value='PNG', label='Format').bind_value(form, 'output_format').classes('w-28')
             
+            # Resolution section with scale presets
+            ui.label('Resolution:').classes('text-sm text-gray-400')
             with ui.row().classes('w-full items-center gap-2'):
                 res_w_input = ui.number('Width', value=1920, min=1).classes('w-24')
                 res_w_input.bind_value(form, 'res_width')
                 ui.label('x').classes('text-gray-400')
                 res_h_input = ui.number('Height', value=1080, min=1).classes('w-24')
                 res_h_input.bind_value(form, 'res_height')
+                
+                # Update base resolution when manually edited (shift-click or direct edit)
+                def on_res_change():
+                    if res_scale_container:
+                        res_scale_container.refresh()
+                res_w_input.on('blur', on_res_change)
+                res_h_input.on('blur', on_res_change)
+            
+            # Resolution scale presets
+            @ui.refreshable
+            def resolution_scale_buttons():
+                current_scale = get_current_scale()
+                scales = [
+                    (0.25, '25%'),
+                    (0.5, '50%'),
+                    (1.0, '100%'),
+                    (1.5, '150%'),
+                    (2.0, '200%'),
+                ]
+                with ui.row().classes('w-full items-center gap-1 flex-wrap'):
+                    ui.label('Scale:').classes('text-xs text-gray-500 mr-1')
+                    for scale, label in scales:
+                        is_active = abs(current_scale - scale) < 0.01
+                        btn_class = 'text-xs px-2 py-1'
+                        if is_active:
+                            btn_style = 'background-color: #3f3f46 !important; color: white !important;'
+                        else:
+                            btn_style = 'background-color: transparent !important; color: #71717a !important;'
+                        ui.button(label, on_click=lambda s=scale: apply_scale(s)).props('flat dense').classes(btn_class).style(btn_style)
+                    
+                    # Show current effective resolution
+                    ui.label(f'{form["res_width"]}×{form["res_height"]}').classes('text-xs text-gray-500 ml-2')
+            
+            res_scale_container = resolution_scale_buttons
+            resolution_scale_buttons()
             
             camera_select = ui.select(['Scene Default'], value='Scene Default', label='Camera').classes('w-full')
             camera_select.bind_value(form, 'camera')
@@ -299,7 +389,6 @@ async def show_add_job_dialog():
                     
                     ui.checkbox('Transparent Background').props('dense').bind_value(form, 'use_transparency')
                     
-                    # RENDER PASSES
                     ui.label('Render Passes').classes('text-sm text-gray-400 mt-2')
                     
                     marmoset_engine = render_app.engine_registry.get('marmoset')
@@ -311,7 +400,6 @@ async def show_add_job_dialog():
                             form['render_passes'] = ['beauty']
                         else:
                             form['render_passes'] = list(e.value)
-                        # Refresh to update render count display
                         accent_elements.get('marmoset_settings') and accent_elements['marmoset_settings'].refresh()
                     
                     passes_select = ui.select(
@@ -322,7 +410,6 @@ async def show_add_job_dialog():
                         on_change=on_passes_change
                     ).classes('w-full').props('use-chips')
                     
-                    # Calculate and show total render count
                     num_passes = len(form.get('render_passes', ['beauty']))
                     render_type = form.get('render_type', 'still')
                     
@@ -333,7 +420,7 @@ async def show_add_job_dialog():
                         frames = int(form.get('turntable_frames', 120))
                         total_renders = frames * num_passes
                         frames_text = f"{frames} frames"
-                    else:  # animation
+                    else:
                         frames = int(form.get('frame_end', 250)) - int(form.get('frame_start', 1)) + 1
                         total_renders = frames * num_passes
                         frames_text = f"{frames} frames"
@@ -390,7 +477,13 @@ async def show_add_job_dialog():
                     elif form.get('render_type') == 'animation':
                         is_anim = True
                 else:
-                    engine_settings = {"use_scene_settings": True, "samples": 128}
+                    engine_settings = {
+                        "use_scene_settings": True,
+                        "samples": 128,
+                        "blender_denoiser": form.get('blender_denoiser', 'OptiX'),
+                        "blender_use_compositing": form.get('blender_use_compositing', True),
+                        "blender_use_sequencer": form.get('blender_use_sequencer', False),
+                    }
                     is_anim = form['is_animation']
                     frame_start = int(form['frame_start'])
                     frame_end = int(form['frame_end'])
@@ -427,9 +520,12 @@ async def show_add_job_dialog():
 async def show_edit_job_dialog(job):
     """Edit an existing job's settings."""
     
-    accent_color = ENGINE_COLORS.get(job.engine_type, "#3b82f6")
+    accent_color = ENGINE_COLORS.get(job.engine_type, "#71717a")
     
-    # Pre-populate form from job
+    # CRITICAL FIX: Normalize denoiser value when loading from job
+    raw_denoiser = job.get_setting('blender_denoiser', 'OptiX')
+    normalized_denoiser = _normalize_denoiser_value(raw_denoiser)
+    
     form = {
         'engine_type': job.engine_type,
         'name': job.name,
@@ -443,6 +539,8 @@ async def show_edit_job_dialog(job):
         'frame_end': job.frame_end,
         'res_width': job.res_width,
         'res_height': job.res_height,
+        'base_res_width': job.res_width,   # Base resolution for scaling
+        'base_res_height': job.res_height,
         'overwrite_existing': job.overwrite_existing,
         # Marmoset-specific from engine_settings
         'render_type': job.get_setting('render_type', 'still'),
@@ -454,9 +552,39 @@ async def show_edit_job_dialog(job):
         'video_format': job.get_setting('video_format', 'PNG Sequence'),
         'turntable_frames': job.get_setting('turntable_frames', 120),
         'render_passes': job.get_setting('render_passes', ['beauty']),
+        # Blender-specific - use normalized value
+        'blender_denoiser': normalized_denoiser,
+        'blender_use_compositing': job.get_setting('blender_use_compositing', True),
+        'blender_use_sequencer': job.get_setting('blender_use_sequencer', False),
     }
     
     accent_elements = {}
+    res_w_input = None
+    res_h_input = None
+    res_scale_container = None
+    
+    def get_current_scale():
+        """Calculate current resolution scale percentage."""
+        if form['base_res_width'] > 0 and form['base_res_height'] > 0:
+            scale_w = form['res_width'] / form['base_res_width']
+            scale_h = form['res_height'] / form['base_res_height']
+            if abs(scale_w - scale_h) < 0.01:
+                return scale_w
+            return (scale_w + scale_h) / 2
+        return 1.0
+    
+    def apply_scale(scale: float):
+        """Apply resolution scale to base resolution."""
+        new_w = max(1, int(form['base_res_width'] * scale))
+        new_h = max(1, int(form['base_res_height'] * scale))
+        form['res_width'] = new_w
+        form['res_height'] = new_h
+        if res_w_input:
+            res_w_input.value = new_w
+        if res_h_input:
+            res_h_input.value = new_h
+        if res_scale_container:
+            res_scale_container.refresh()
     
     with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;').classes('accent-dialog'):
         with ui.row().classes('w-full items-center justify-between p-4'):
@@ -467,10 +595,13 @@ async def show_edit_job_dialog(job):
             # Engine display (read-only)
             with ui.row().classes('w-full items-center gap-2'):
                 ui.label('Engine:').classes('text-gray-400 w-20')
-                engine_logo = ENGINE_LOGOS.get(job.engine_type)
+                engine_logo = AVAILABLE_LOGOS.get(job.engine_type)
+                engine_icon = ENGINE_ICONS.get(job.engine_type, 'help')
                 with ui.row().classes('items-center gap-2 px-3 py-2 rounded').style(f'background-color: {accent_color}; color: white;'):
                     if engine_logo:
                         ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-5 h-5 object-contain')
+                    else:
+                        ui.icon(engine_icon).classes('text-lg')
                     engine = render_app.engine_registry.get(job.engine_type)
                     ui.label(engine.name if engine else job.engine_type).classes('text-sm')
             
@@ -509,12 +640,47 @@ async def show_edit_job_dialog(job):
                 ui.input('Prefix', value=form['output_name']).bind_value(form, 'output_name').classes('flex-grow')
                 ui.select(['PNG', 'JPEG', 'OpenEXR', 'TIFF'], value=form['output_format'], label='Format').bind_value(form, 'output_format').classes('w-28')
             
+            # Resolution section with scale presets
+            ui.label('Resolution:').classes('text-sm text-gray-400')
             with ui.row().classes('w-full items-center gap-2'):
                 res_w_input = ui.number('Width', value=form['res_width'], min=1).classes('w-24')
                 res_w_input.bind_value(form, 'res_width')
                 ui.label('x').classes('text-gray-400')
                 res_h_input = ui.number('Height', value=form['res_height'], min=1).classes('w-24')
                 res_h_input.bind_value(form, 'res_height')
+                
+                def on_res_change():
+                    if res_scale_container:
+                        res_scale_container.refresh()
+                res_w_input.on('blur', on_res_change)
+                res_h_input.on('blur', on_res_change)
+            
+            # Resolution scale presets
+            @ui.refreshable
+            def resolution_scale_buttons():
+                current_scale = get_current_scale()
+                scales = [
+                    (0.25, '25%'),
+                    (0.5, '50%'),
+                    (1.0, '100%'),
+                    (1.5, '150%'),
+                    (2.0, '200%'),
+                ]
+                with ui.row().classes('w-full items-center gap-1 flex-wrap'):
+                    ui.label('Scale:').classes('text-xs text-gray-500 mr-1')
+                    for scale, label in scales:
+                        is_active = abs(current_scale - scale) < 0.01
+                        btn_class = 'text-xs px-2 py-1'
+                        if is_active:
+                            btn_style = 'background-color: #3f3f46 !important; color: white !important;'
+                        else:
+                            btn_style = 'background-color: transparent !important; color: #71717a !important;'
+                        ui.button(label, on_click=lambda s=scale: apply_scale(s)).props('flat dense').classes(btn_class).style(btn_style)
+                    
+                    ui.label(f'{form["res_width"]}×{form["res_height"]}').classes('text-xs text-gray-500 ml-2')
+            
+            res_scale_container = resolution_scale_buttons
+            resolution_scale_buttons()
             
             camera_select = ui.select([form['camera']], value=form['camera'], label='Camera').classes('w-full')
             camera_select.bind_value(form, 'camera')
@@ -553,7 +719,6 @@ async def show_edit_job_dialog(job):
                     
                     ui.checkbox('Transparent Background', value=form.get('use_transparency', False)).props('dense').bind_value(form, 'use_transparency')
                     
-                    # Render passes
                     ui.label('Render Passes').classes('text-sm text-gray-400 mt-2')
                     
                     marmoset_engine = render_app.engine_registry.get('marmoset')
@@ -575,7 +740,6 @@ async def show_edit_job_dialog(job):
                         on_change=on_passes_change
                     ).classes('w-full').props('use-chips')
                     
-                    # Calculate total render count
                     num_passes = len(form.get('render_passes', ['beauty']))
                     render_type = form.get('render_type', 'still')
                     
@@ -620,7 +784,6 @@ async def show_edit_job_dialog(job):
             ui.button('Cancel', on_click=dialog.close).props('flat')
             
             def apply_form_to_job(target_job):
-                """Apply form values to job object."""
                 target_job.name = form['name'] or "Untitled"
                 target_job.file_path = form['file_path']
                 target_job.output_folder = form['output_folder']
@@ -658,6 +821,13 @@ async def show_edit_job_dialog(job):
                     elif form.get('render_type') == 'animation':
                         target_job.is_animation = True
                 else:
+                    target_job.engine_settings = {
+                        "use_scene_settings": True,
+                        "samples": 128,
+                        "blender_denoiser": form.get('blender_denoiser', 'OptiX'),
+                        "blender_use_compositing": form.get('blender_use_compositing', True),
+                        "blender_use_sequencer": form.get('blender_use_sequencer', False),
+                    }
                     target_job.is_animation = form['is_animation']
                     target_job.frame_start = int(form['frame_start'])
                     target_job.frame_end = int(form['frame_end'])
@@ -665,7 +835,6 @@ async def show_edit_job_dialog(job):
                 target_job.original_start = target_job.frame_start
             
             def save_changes():
-                """Save changes without changing status."""
                 apply_form_to_job(job)
                 render_app.save_config()
                 render_app.log(f"Updated: {job.name}")
@@ -674,9 +843,7 @@ async def show_edit_job_dialog(job):
                 dialog.close()
             
             def resubmit():
-                """Save changes and resubmit job."""
                 apply_form_to_job(job)
-                # Reset progress
                 job.status = 'queued'
                 job.progress = 0
                 job.current_frame = 0
@@ -697,14 +864,12 @@ async def show_edit_job_dialog(job):
                     render_app.stats_container.refresh()
                 dialog.close()
             
-            # Show different buttons based on status
             if job.status in ['completed', 'failed']:
                 ui.button('Resubmit', icon='refresh', on_click=resubmit).style(f'background-color: {accent_color} !important;')
             elif job.status in ['queued', 'paused']:
                 ui.button('Save', on_click=save_changes).props('flat').classes('text-zinc-300')
                 ui.button('Save & Queue', icon='play_arrow', on_click=resubmit).style(f'background-color: {accent_color} !important;')
             else:
-                # Rendering - shouldn't be editable but show save anyway
                 ui.button('Save', on_click=save_changes).style(f'background-color: {accent_color} !important;')
     
     dialog.open()
@@ -718,13 +883,16 @@ async def show_settings_dialog():
         
         with ui.column().classes('w-full p-4 gap-4'):
             for engine in render_app.engine_registry.get_all():
-                engine_logo = ENGINE_LOGOS.get(engine.engine_type)
+                engine_logo = AVAILABLE_LOGOS.get(engine.engine_type)
+                engine_icon = ENGINE_ICONS.get(engine.engine_type, 'help')
                 engine_color = ENGINE_COLORS.get(engine.engine_type, "#3f3f46")
                 
                 with ui.card().classes('w-full p-3'):
                     with ui.row().classes('items-center gap-2 mb-2'):
                         if engine_logo:
                             ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-6 h-6 object-contain')
+                        else:
+                            ui.icon(engine_icon).classes('text-xl').style(f'color: {engine_color}')
                         ui.label(engine.name).classes('font-bold')
                         status = "[OK] Available" if engine.is_available else "[X] Not Found"
                         ui.label(status).classes('text-sm text-zinc-400' if engine.is_available else 'text-sm text-zinc-600')

@@ -16,14 +16,18 @@ class RenderEngine(ABC):
     
     All render engines (Blender, Marmoset, etc.) must inherit from this
     class and implement the abstract methods.
+    
+    Each engine MUST have a unique accent color defined in config.ENGINE_COLORS.
+    This color is used throughout the UI for status badges, progress bars,
+    action buttons, and other engine-specific visual elements.
     """
     
     # Class attributes - override in subclasses
-    name: str = "Unknown"
-    engine_type: str = "unknown"
-    file_extensions: List[str] = []
-    icon: str = "help"
-    color: str = "#888888"
+    name: str = "Unknown"           # Display name (e.g., "Blender", "Marmoset Toolbag")
+    engine_type: str = "unknown"    # Internal ID (e.g., "blender", "marmoset")
+    file_extensions: List[str] = [] # Supported file extensions (e.g., [".blend"])
+    icon: str = "help"              # Material icon fallback when logo unavailable
+    color: str = "#888888"          # Accent color (also define in config.ENGINE_COLORS)
     
     def __init__(self):
         self.installed_versions: Dict[str, str] = {}

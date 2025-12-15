@@ -24,7 +24,14 @@ import math
 # Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(SCRIPT_DIR, 'assets')
-LOGO_PATH = os.path.join(ASSETS_DIR, 'wain_logo.png')
+
+# Check for logo with either spelling
+LOGO_PATH = None
+for logo_name in ['wain_logo.png', 'wain_logo.png']:
+    path = os.path.join(ASSETS_DIR, logo_name)
+    if os.path.exists(path):
+        LOGO_PATH = path
+        break
 
 # ============================================================================
 # SPLASH SCREEN (Tkinter - lightweight, loads instantly)
@@ -74,7 +81,7 @@ def create_splash():
     # ========== LOGO ==========
     logo_label = None
     try:
-        if os.path.exists(LOGO_PATH):
+        if LOGO_PATH and os.path.exists(LOGO_PATH):
             from PIL import Image, ImageTk, ImageOps
             img = Image.open(LOGO_PATH)
             
@@ -152,7 +159,7 @@ def create_splash():
     # ========== VERSION ==========
     version_label = tk.Label(
         frame,
-        text="v2.4.0",
+        text="v2.8.3",
         font=('Segoe UI', 9),
         fg=TEXT_TERTIARY,
         bg=BG_COLOR

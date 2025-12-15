@@ -9,7 +9,7 @@ Built with NiceGUI + pywebview (Qt backend) for native desktop window.
 Works on Python 3.10+ (including 3.13 and 3.14)
 """
 
-__version__ = "2.5.0"
+__version__ = "2.8.3"
 __author__ = "Spencer"
 __app_name__ = "Wain"
 
@@ -19,8 +19,13 @@ from wain.config import (
     DARK_THEME,
     ENGINE_COLORS,
     ENGINE_LOGOS,
+    ENGINE_ICONS,
+    AVAILABLE_LOGOS,
     STATUS_CONFIG,
     ASSET_VERSION,
+    BLENDER_DENOISERS,
+    BLENDER_DENOISER_FROM_INTERNAL,
+    check_assets,
 )
 
 from wain.models import RenderJob, AppSettings
@@ -35,8 +40,13 @@ __all__ = [
     'DARK_THEME',
     'ENGINE_COLORS',
     'ENGINE_LOGOS',
+    'ENGINE_ICONS',
+    'AVAILABLE_LOGOS',
     'STATUS_CONFIG',
     'ASSET_VERSION',
+    'BLENDER_DENOISERS',
+    'BLENDER_DENOISER_FROM_INTERNAL',
+    'check_assets',
     'RenderJob',
     'AppSettings',
     'RenderEngine',

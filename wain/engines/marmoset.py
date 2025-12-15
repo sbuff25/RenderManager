@@ -162,17 +162,15 @@ class MarmosetEngine(RenderEngine):
             creation_flags = 0
             if startupinfo:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 0  # SW_HIDE
-                creation_flags = 0x08000000  # CREATE_NO_WINDOW
+                startupinfo.wShowWindow = 0
+                creation_flags = 0x08000000
             
             print(f"[Wain] Probing scene: {file_path}")
-            print(f"[Wain] Running: {toolbag_exe} -hide {probe_script}")
             
-            # Use -hide flag to run Toolbag headlessly
             result = subprocess.run(
                 [toolbag_exe, '-hide', probe_script], 
                 capture_output=True, 
-                timeout=20,  # 20 seconds - shorter timeout
+                timeout=20,
                 startupinfo=startupinfo,
                 creationflags=creation_flags
             )
@@ -180,16 +178,13 @@ class MarmosetEngine(RenderEngine):
             print(f"[Wain] Toolbag exited with code: {result.returncode}")
             
             if os.path.exists(output_json):
-                print(f"[Wain] Reading probe results from: {output_json}")
                 with open(output_json, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     print(f"[Wain] Probe results: {data}")
                     return data
-            else:
-                print(f"[Wain] No output file created - using defaults")
             return default_info
         except subprocess.TimeoutExpired:
-            print(f"[Wain] Probe timed out after 20 seconds")
+            print(f"[Wain] Probe timed out")
             return default_info
         except Exception as e:
             print(f"[Wain] Probe error: {e}")
@@ -241,24 +236,15 @@ def probe_scene():
                 break
         
         if render_obj:
-            # Image settings (resolution, samples)
             if hasattr(render_obj, 'images'):
                 img = render_obj.images
                 if hasattr(img, 'width'): result["resolution_x"] = img.width
                 if hasattr(img, 'height'): result["resolution_y"] = img.height
                 if hasattr(img, 'samples'): result["samples"] = img.samples
-            
-            # Video settings (check for video samples)
-            if hasattr(render_obj, 'videos'):
-                vid = render_obj.videos
-                if hasattr(vid, 'samples') and vid.samples > 0:
-                    result["video_samples"] = vid.samples
         
-        # Timeline info - primary source for frame counts
         try:
             timeline = mset.getTimeline()
             if timeline:
-                # Get total frames from timeline
                 total = 1
                 if hasattr(timeline, 'totalFrames'):
                     total = timeline.totalFrames
@@ -271,9 +257,6 @@ def probe_scene():
                     result["has_animation"] = True
                     if result["has_turntable"]:
                         result["turntable_frames"] = total
-                
-                if hasattr(timeline, 'getFrameRate'):
-                    result["frame_rate"] = timeline.getFrameRate()
         except:
             pass
         
@@ -326,7 +309,6 @@ probe_scene()
             on_log(f"Output: {job.output_folder}")
             on_log(f"Overwrite existing: {overwrite_existing}")
         
-        # All render types use frame-by-frame renderCamera() for selective pass control
         if render_type == "turntable":
             total_renders = job.frame_end * num_passes
             if on_log:
@@ -405,10 +387,6 @@ probe_scene()
             on_error(f"Failed to start render: {e}")
     
     def _generate_still_script(self, job) -> str:
-        """
-        Still image render - render each requested pass once using renderCamera().
-        Total renders = number of passes selected.
-        """
         scene_path = job.file_path.replace('\\', '\\\\')
         output_folder = job.output_folder.replace('\\', '\\\\')
         progress_path = self._progress_file_path.replace('\\', '\\\\')
@@ -448,12 +426,12 @@ def log(msg):
     print(f"[Wain] {{msg}}")
     sys.stdout.flush()
 
-def update_progress(status, progress=0, current=0, total=0, current_pass="", error=""):
+def update_progress(status, progress=0, current=0, total=0, current_pass="", pass_in_frame=0, num_passes=0, error=""):
     try:
         with open(r"{progress_path}", 'w') as f:
             json.dump({{"status": status, "progress": progress, "current": current,
                        "total": total, "current_pass": current_pass, "error": error,
-                       "frame": 1, "total_frames": 1}}, f)
+                       "frame": 1, "total_frames": 1, "pass_in_frame": pass_in_frame, "num_passes": num_passes}}, f)
     except:
         pass
 
@@ -467,22 +445,14 @@ def render_still():
         log("=" * 60)
         log(f"Total renders: {{num_passes}} (1 frame x {{num_passes}} passes)")
         log(f"Overwrite existing: {{OVERWRITE_EXISTING}}")
-        log("")
-        log("Passes to render:")
-        for p in passes:
-            pass_name = p['pass'] if p['pass'] else 'beauty (full quality)'
-            log(f"  - {{p['id']}}: {{pass_name}}")
         
-        update_progress("loading", 0, 0, num_passes)
+        update_progress("loading", 0, 0, num_passes, "", 0, num_passes)
         
         mset.loadScene(r"{scene_path}")
         log("Scene loaded")
         
         output_dir = r"{output_folder}"
         os.makedirs(output_dir, exist_ok=True)
-        
-        log("")
-        log("Rendering passes...")
         
         rendered_count = 0
         skipped_count = 0
@@ -494,15 +464,13 @@ def render_still():
             
             render_num = idx + 1
             progress_pct = min(int((render_num / num_passes) * 100), 99)
-            update_progress("rendering", progress_pct, render_num, num_passes, pass_name)
+            update_progress("rendering", progress_pct, render_num, num_passes, pass_name, render_num, num_passes)
             
-            # Build output filename
             if num_passes > 1:
                 output_path = os.path.join(output_dir, f"{job.output_name}{{pass_id}}.{ext}")
             else:
                 output_path = os.path.join(output_dir, "{job.output_name}.{ext}")
             
-            # Check if file exists and skip if not overwriting
             if not OVERWRITE_EXISTING and os.path.exists(output_path):
                 log(f"  Skipping {{render_num}}/{{num_passes}}: {{pass_name}} (file exists)")
                 skipped_count += 1
@@ -517,16 +485,14 @@ def render_still():
                     {job.res_height},
                     {samples},
                     {str(use_transparency)},
-                    "",  # camera
-                    viewport_pass  # specific pass to render
+                    "",
+                    viewport_pass
                 )
                 
                 if os.path.exists(output_path):
                     file_size = os.path.getsize(output_path)
                     log(f"    Saved: {{os.path.basename(output_path)}} ({{file_size:,}} bytes)")
                     rendered_count += 1
-                else:
-                    log(f"    WARNING: File not created!")
             except Exception as pass_err:
                 log(f"    ERROR: {{pass_err}}")
         
@@ -534,13 +500,11 @@ def render_still():
         log("=" * 60)
         log(f"COMPLETE! Rendered {{rendered_count}} images, skipped {{skipped_count}}")
         log("=" * 60)
-        update_progress("complete", 100, num_passes, num_passes)
+        update_progress("complete", 100, num_passes, num_passes, "", num_passes, num_passes)
         
     except Exception as e:
         log(f"FATAL ERROR: {{e}}")
-        update_progress("error", 0, 0, 0, "", str(e))
-        import traceback
-        traceback.print_exc()
+        update_progress("error", 0, 0, 0, "", 0, 0, str(e))
     
     mset.quit()
 
@@ -548,13 +512,6 @@ render_still()
 '''
     
     def _generate_turntable_script(self, job, start_frame: int) -> str:
-        """
-        Turntable render - uses renderCamera() for EACH pass on EACH frame.
-        This ensures we ONLY render the requested passes - nothing extra.
-        
-        Total renders = frames × passes (e.g., 30 frames × 3 passes = 90 renders)
-        Supports resume from start_frame.
-        """
         scene_path = job.file_path.replace('\\', '\\\\')
         output_folder = job.output_folder.replace('\\', '\\\\')
         progress_path = self._progress_file_path.replace('\\', '\\\\')
@@ -581,7 +538,6 @@ render_still()
         
         num_passes = len(pass_config)
         total_renders = total_frames * num_passes
-        # Calculate renders already done (for resume)
         renders_already_done = (start_frame - 1) * num_passes
         
         return f'''import mset
@@ -597,11 +553,12 @@ def log(msg):
     print(f"[Wain] {{msg}}")
     sys.stdout.flush()
 
-def update_progress(status, progress=0, current=0, total=0, frame=0, total_frames=0, current_pass="", error=""):
+def update_progress(status, progress=0, current=0, total=0, frame=0, total_frames=0, current_pass="", pass_in_frame=0, num_passes=0, error=""):
     try:
         with open(r"{progress_path}", 'w') as f:
             json.dump({{"status": status, "progress": progress, "current": current, "total": total,
-                       "frame": frame, "total_frames": total_frames, "current_pass": current_pass, "error": error}}, f)
+                       "frame": frame, "total_frames": total_frames, "current_pass": current_pass,
+                       "pass_in_frame": pass_in_frame, "num_passes": num_passes, "error": error}}, f)
     except:
         pass
 
@@ -613,9 +570,7 @@ def render_turntable():
         total_renders = {total_renders}
         start_frame = START_FRAME
         
-        # Calculate remaining work
         frames_to_render = total_frames - start_frame + 1
-        renders_remaining = frames_to_render * num_passes
         
         log("=" * 60)
         log("TURNTABLE RENDER - Selective Pass Rendering")
@@ -623,17 +578,10 @@ def render_turntable():
         log(f"Total frames: {{total_frames}}")
         if start_frame > 1:
             log(f"Resuming from frame: {{start_frame}}")
-            log(f"Frames to render: {{frames_to_render}}")
         log(f"Passes: {{num_passes}}")
-        log(f"Renders remaining: {{renders_remaining}} ({{frames_to_render}} frames x {{num_passes}} passes)")
         log(f"Overwrite existing: {{OVERWRITE_EXISTING}}")
-        log("")
-        log("Passes to render:")
-        for p in passes:
-            pass_name = p['pass'] if p['pass'] else 'beauty (full quality)'
-            log(f"  - {{p['id']}}: {{pass_name}}")
         
-        update_progress("loading", 0, RENDERS_ALREADY_DONE, total_renders, start_frame - 1, total_frames)
+        update_progress("loading", 0, RENDERS_ALREADY_DONE, total_renders, start_frame - 1, total_frames, "", 0, num_passes)
         
         mset.loadScene(r"{scene_path}")
         log("Scene loaded")
@@ -641,104 +589,71 @@ def render_turntable():
         output_dir = r"{output_folder}"
         os.makedirs(output_dir, exist_ok=True)
         
-        # Create subfolders for each pass (only if multiple passes)
         if num_passes > 1:
             for pass_info in passes:
                 pass_folder = os.path.join(output_dir, pass_info["id"])
                 os.makedirs(pass_folder, exist_ok=True)
-                log(f"Created folder: {{pass_info['id']}}/")
         
-        # Get timeline for frame control
         timeline = mset.getTimeline()
         if not timeline:
-            raise Exception("Could not get timeline - turntable may not be set up")
+            raise Exception("Could not get timeline")
         
-        # Get frame rate for time calculation
         fps = timeline.getFrameRate() if hasattr(timeline, 'getFrameRate') else 30
-        
-        # Set timeline range
         timeline.selectionStart = 1
         timeline.selectionEnd = total_frames
-        log(f"Timeline: 1-{{total_frames}} @ {{fps}} fps")
         
-        log("")
-        log("Starting render loop...")
-        log("")
-        
-        # Get the RenderObject to control passes
         render_obj = None
         for obj in mset.getAllObjects():
             if type(obj).__name__ == 'RenderObject':
                 render_obj = obj
                 break
         
-        if not render_obj:
-            raise Exception("Could not find RenderObject in scene")
-        
-        # Explore the render passes in the scene
-        log("Scene render passes:")
         scene_passes = {{}}
-        scene_pass_names = {{}}  # Map lowercase to actual name
-        if hasattr(render_obj, 'renderPasses'):
+        scene_pass_names = {{}}
+        if render_obj and hasattr(render_obj, 'renderPasses'):
             for rp in render_obj.renderPasses:
                 rp_name = rp.renderPass if hasattr(rp, 'renderPass') else 'unknown'
                 rp_enabled = rp.enabled if hasattr(rp, 'enabled') else False
                 scene_passes[rp_name.lower()] = rp
-                scene_pass_names[rp_name.lower()] = rp_name  # Store actual name
-                log(f"  '{{rp_name}}' (enabled={{rp_enabled}})")
-        else:
-            log("  WARNING: No renderPasses found on RenderObject")
+                scene_pass_names[rp_name.lower()] = rp_name
         
-        log("")
-        
-        # Start render count from already completed renders (for accurate progress)
         render_count = RENDERS_ALREADY_DONE
         skipped_count = 0
         
-        # Main render loop: start from start_frame (for resume support)
         for frame in range(start_frame, total_frames + 1):
-            # Set timeline to this frame
             try:
                 if hasattr(timeline, 'currentFrame'):
                     timeline.currentFrame = frame
                 elif hasattr(timeline, 'time'):
                     timeline.time = (frame - 1) / fps
             except Exception as te:
-                log(f"Timeline control error: {{te}}")
+                log(f"Timeline error: {{te}}")
             
-            # Render each requested pass for this frame
-            for pass_info in passes:
+            for pass_idx, pass_info in enumerate(passes):
                 pass_id = pass_info["id"]
                 pass_name = pass_info["name"]
-                viewport_pass = pass_info["pass"]  # e.g., '', 'normals', 'ambient occlusion'
+                viewport_pass = pass_info["pass"]
+                pass_in_frame = pass_idx + 1  # 1-based pass number within frame
                 
                 render_count += 1
                 progress_pct = min(int((render_count / total_renders) * 100), 99)
-                update_progress("rendering", progress_pct, render_count, total_renders, frame, total_frames, pass_name)
+                update_progress("rendering", progress_pct, render_count, total_renders, frame, total_frames, pass_name, pass_in_frame, num_passes)
                 
-                # Build output path
                 if num_passes > 1:
                     output_path = os.path.join(output_dir, pass_id, f"frame_{{frame:05d}}.png")
                 else:
                     output_path = os.path.join(output_dir, f"frame_{{frame:05d}}.png")
                 
-                # Check if file exists and skip if not overwriting
                 if not OVERWRITE_EXISTING and os.path.exists(output_path):
                     skipped_count += 1
                     continue
                 
-                # Find the EXACT scene pass name (with proper capitalization)
                 lookup_key = viewport_pass.lower() if viewport_pass else 'full quality'
                 actual_pass_name = scene_pass_names.get(lookup_key, '')
                 
-                # Enable ONLY this pass, disable all others
                 for rp_key, rp in scene_passes.items():
                     rp.enabled = (rp_key == lookup_key)
                 
-                if frame == start_frame and (render_count - RENDERS_ALREADY_DONE) <= num_passes:
-                    log(f"Rendering '{{pass_id}}': viewportPass='{{actual_pass_name}}'")
-                
-                # Render using the EXACT pass name from the scene
                 try:
                     mset.renderCamera(
                         output_path,
@@ -746,27 +661,25 @@ def render_turntable():
                         {job.res_height},
                         {samples},
                         {str(use_transparency)},
-                        "",  # camera
-                        actual_pass_name  # Use exact scene pass name with proper case
+                        "",
+                        actual_pass_name
                     )
                 except Exception as e:
-                    log(f"ERROR rendering frame {{frame}} pass '{{pass_id}}': {{e}}")
+                    log(f"ERROR frame {{frame}} pass '{{pass_id}}': {{e}}")
             
-            # Log progress every 5 frames or at the end
             if frame % 5 == 0 or frame == total_frames:
-                log(f"Frame {{frame}}/{{total_frames}} complete ({{render_count}}/{{total_renders}} renders, {{skipped_count}} skipped)")
+                log(f"Frame {{frame}}/{{total_frames}} ({{render_count}}/{{total_renders}} renders)")
         
         log("")
         log("=" * 60)
         actual_rendered = render_count - RENDERS_ALREADY_DONE - skipped_count
         log(f"COMPLETE! Rendered {{actual_rendered}} images, skipped {{skipped_count}}")
-        log(f"  {{frames_to_render}} frames x {{num_passes}} passes")
         log("=" * 60)
-        update_progress("complete", 100, total_renders, total_renders, total_frames, total_frames)
+        update_progress("complete", 100, total_renders, total_renders, total_frames, total_frames, "", num_passes, num_passes)
         
     except Exception as e:
         log(f"FATAL ERROR: {{e}}")
-        update_progress("error", 0, 0, 0, 0, 0, "", str(e))
+        update_progress("error", 0, 0, 0, 0, 0, "", 0, 0, str(e))
         import traceback
         traceback.print_exc()
     
@@ -776,10 +689,6 @@ render_turntable()
 '''
     
     def _generate_animation_script(self, job, start_frame: int) -> str:
-        """
-        Animation render - uses renderCamera() for EACH pass on EACH frame.
-        Total renders = frames × passes.
-        """
         scene_path = job.file_path.replace('\\', '\\\\')
         output_folder = job.output_folder.replace('\\', '\\\\')
         progress_path = self._progress_file_path.replace('\\', '\\\\')
@@ -818,11 +727,12 @@ def log(msg):
     print(f"[Wain] {{msg}}")
     sys.stdout.flush()
 
-def update_progress(status, progress=0, current=0, total=0, frame=0, total_frames=0, current_pass="", error=""):
+def update_progress(status, progress=0, current=0, total=0, frame=0, total_frames=0, current_pass="", pass_in_frame=0, num_passes=0, error=""):
     try:
         with open(r"{progress_path}", 'w') as f:
             json.dump({{"status": status, "progress": progress, "current": current, "total": total,
-                       "frame": frame, "total_frames": total_frames, "current_pass": current_pass, "error": error}}, f)
+                       "frame": frame, "total_frames": total_frames, "current_pass": current_pass,
+                       "pass_in_frame": pass_in_frame, "num_passes": num_passes, "error": error}}, f)
     except:
         pass
 
@@ -839,18 +749,11 @@ def render_animation():
         log("ANIMATION RENDER - Selective Pass Rendering")
         log("=" * 60)
         log(f"Frame range: {{start_frame}}-{{end_frame}} ({{total_frames}} frames)")
-        if start_frame > {job.frame_start}:
-            log(f"Resuming from frame: {{start_frame}}")
         log(f"Passes: {{num_passes}}")
-        log(f"Total renders: {{total_renders}} ({{total_frames}} frames x {{num_passes}} passes)")
+        log(f"Total renders: {{total_renders}}")
         log(f"Overwrite existing: {{OVERWRITE_EXISTING}}")
-        log("")
-        log("Passes to render:")
-        for p in passes:
-            pass_name = p['pass'] if p['pass'] else 'beauty (full quality)'
-            log(f"  - {{p['id']}}: {{pass_name}}")
         
-        update_progress("loading", 0, 0, total_renders, 0, total_frames)
+        update_progress("loading", 0, 0, total_renders, 0, total_frames, "", 0, num_passes)
         
         mset.loadScene(r"{scene_path}")
         log("Scene loaded")
@@ -858,38 +761,28 @@ def render_animation():
         output_dir = r"{output_folder}"
         os.makedirs(output_dir, exist_ok=True)
         
-        # Create subfolders for each pass (only if multiple passes)
         if num_passes > 1:
             for pass_info in passes:
                 pass_folder = os.path.join(output_dir, pass_info["id"])
                 os.makedirs(pass_folder, exist_ok=True)
-                log(f"Created folder: {{pass_info['id']}}/")
         
-        # Get timeline
         timeline = mset.getTimeline()
         if not timeline:
             raise Exception("Could not get timeline")
         
-        # Get frame rate
         fps = timeline.getFrameRate() if hasattr(timeline, 'getFrameRate') else 30
         
-        # Get the RenderObject to find actual pass names
         render_obj = None
         for obj in mset.getAllObjects():
             if type(obj).__name__ == 'RenderObject':
                 render_obj = obj
                 break
         
-        # Build map of lowercase -> actual pass names
         scene_pass_names = {{}}
         if render_obj and hasattr(render_obj, 'renderPasses'):
             for rp in render_obj.renderPasses:
                 rp_name = rp.renderPass if hasattr(rp, 'renderPass') else ''
                 scene_pass_names[rp_name.lower()] = rp_name
-        
-        log("")
-        log("Starting render loop...")
-        log("")
         
         render_count = 0
         skipped_count = 0
@@ -898,40 +791,35 @@ def render_animation():
         for frame in range(start_frame, end_frame + 1):
             frame_idx += 1
             
-            # Set timeline to this frame
             try:
                 if hasattr(timeline, 'currentFrame'):
                     timeline.currentFrame = frame
                 elif hasattr(timeline, 'time'):
                     timeline.time = (frame - 1) / fps
-            except Exception as te:
-                log(f"Timeline control error: {{te}}")
+            except:
+                pass
             
-            for pass_info in passes:
+            for pass_idx, pass_info in enumerate(passes):
                 pass_id = pass_info["id"]
                 pass_name = pass_info["name"]
                 viewport_pass = pass_info["pass"]
+                pass_in_frame = pass_idx + 1  # 1-based pass number within frame
                 
                 render_count += 1
                 progress_pct = min(int((render_count / total_renders) * 100), 99)
-                update_progress("rendering", progress_pct, render_count, total_renders, frame_idx, total_frames, pass_name)
+                update_progress("rendering", progress_pct, render_count, total_renders, frame_idx, total_frames, pass_name, pass_in_frame, num_passes)
                 
                 if num_passes > 1:
                     output_path = os.path.join(output_dir, pass_id, f"frame_{{frame:05d}}.png")
                 else:
                     output_path = os.path.join(output_dir, f"frame_{{frame:05d}}.png")
                 
-                # Check if file exists and skip if not overwriting
                 if not OVERWRITE_EXISTING and os.path.exists(output_path):
                     skipped_count += 1
                     continue
                 
-                # Get exact pass name with proper capitalization
                 lookup_key = viewport_pass.lower() if viewport_pass else 'full quality'
                 actual_pass_name = scene_pass_names.get(lookup_key, viewport_pass)
-                
-                if frame == start_frame and render_count <= num_passes:
-                    log(f"Rendering '{{pass_id}}': viewportPass='{{actual_pass_name}}'")
                 
                 try:
                     mset.renderCamera(
@@ -941,24 +829,23 @@ def render_animation():
                         {samples},
                         {str(use_transparency)},
                         "",
-                        actual_pass_name  # Use exact scene pass name
+                        actual_pass_name
                     )
                 except Exception as e:
-                    log(f"ERROR rendering frame {{frame}} pass '{{pass_id}}': {{e}}")
+                    log(f"ERROR frame {{frame}} pass '{{pass_id}}': {{e}}")
             
             if frame_idx % 5 == 0 or frame_idx == total_frames:
-                log(f"Frame {{frame_idx}}/{{total_frames}} complete ({{render_count}}/{{total_renders}} renders, {{skipped_count}} skipped)")
+                log(f"Frame {{frame_idx}}/{{total_frames}} ({{render_count}}/{{total_renders}} renders)")
         
         log("")
         log("=" * 60)
         log(f"COMPLETE! Rendered {{render_count - skipped_count}} images, skipped {{skipped_count}}")
-        log(f"  {{total_frames}} frames x {{num_passes}} passes")
         log("=" * 60)
-        update_progress("complete", 100, total_renders, total_renders, total_frames, total_frames)
+        update_progress("complete", 100, total_renders, total_renders, total_frames, total_frames, "", num_passes, num_passes)
         
     except Exception as e:
         log(f"FATAL ERROR: {{e}}")
-        update_progress("error", 0, 0, 0, 0, 0, "", str(e))
+        update_progress("error", 0, 0, 0, 0, 0, "", 0, 0, str(e))
         import traceback
         traceback.print_exc()
     
@@ -977,6 +864,8 @@ render_animation()
         - frame: current frame number
         - total_frames: total frames
         - current_pass: name of pass being rendered
+        - pass_in_frame: which pass number within current frame (1-based)
+        - num_passes: total passes per frame
         - progress: percentage (0-100)
         """
         self._monitoring = True
@@ -984,13 +873,11 @@ render_animation()
         def monitor():
             import time
             
-            # Get expected totals from job settings
             render_passes = self._deduplicate_passes(job.get_setting("render_passes", ["beauty"]) or ["beauty"])
             num_passes = len(render_passes)
             total_frames = job.frame_end if job.is_animation else 1
             expected_total = total_frames * num_passes
             
-            # Initialize job tracking fields
             job.total_passes = num_passes
             job.pass_total_frames = total_frames
             
@@ -1007,10 +894,15 @@ render_animation()
                     total_frames_from_file = progress_data.get("total_frames", total_frames)
                     current_pass = progress_data.get("current_pass", "")
                     progress_pct = progress_data.get("progress", 0)
+                    # Pass tracking for frame percentage
+                    pass_in_frame = progress_data.get("pass_in_frame", 0)
+                    num_passes_from_file = progress_data.get("num_passes", num_passes)
                     
                     if status == "complete":
                         job.progress = 100
                         job.current_frame = total
+                        job.current_pass_num = num_passes_from_file
+                        job.total_passes = num_passes_from_file
                         on_progress(total, "Complete")
                         break
                     elif status == "error":
@@ -1018,19 +910,19 @@ render_animation()
                     elif status == "rendering" and current != last_current:
                         last_current = current
                         
-                        # Update job state with values from progress file
-                        job.current_frame = current  # Total renders completed
-                        job.rendering_frame = frame  # Current frame number
+                        job.current_frame = current
+                        job.rendering_frame = frame
                         job.pass_frame = frame
                         job.current_pass = current_pass
                         job.pass_total_frames = total_frames_from_file
-                        
-                        # Use the progress percentage from the script
                         job.progress = min(progress_pct, 99)
+                        # Set pass tracking for frame percentage calculation
+                        job.current_pass_num = pass_in_frame
+                        job.total_passes = num_passes_from_file
                         
                         on_progress(current, f"Rendering {current_pass}")
                 
-                time.sleep(0.2)  # Check 5 times per second
+                time.sleep(0.2)
         
         self._progress_monitor_thread = threading.Thread(target=monitor, daemon=True)
         self._progress_monitor_thread.start()

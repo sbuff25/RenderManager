@@ -46,6 +46,9 @@ class RenderJob:
     error_message: str = ""
     current_sample: int = 0
     total_samples: int = 0
+    # Tile rendering support (Blender splits high-res frames into tiles)
+    current_tile: int = 0           # Current tile being rendered (0-indexed from Blender)
+    total_tiles: int = 1            # Total number of tiles for this frame
     # Multi-pass rendering support
     current_pass: str = ""          # Name of the pass currently rendering
     current_pass_num: int = 0       # Current pass number (1-based)
@@ -55,9 +58,43 @@ class RenderJob:
     
     @property
     def samples_display(self) -> str:
-        """Display sample progress for single frame renders"""
+        """
+        Display frame render progress as a percentage.
+        
+        This is the STANDARD progress indicator for all engines.
+        Shows how far through rendering the CURRENT FRAME we are.
+        
+        For Blender (sample-based):
+            - Tiled rendering: (completed_tiles × samples + current_sample) / (total_tiles × samples)
+            - Single-tile: current_sample / total_samples
+            
+        For Marmoset (pass-based):
+            - Each frame renders N passes sequentially
+            - Progress = current_pass_num / total_passes
+            
+        Always displays as "Frame XX%" for consistency across all engines.
+        """
+        # Marmoset: progress based on passes completed within current frame
+        if self.engine_type == "marmoset":
+            if self.current_pass_num > 0 and self.total_passes > 0:
+                # Pass just started = show percentage based on passes completed
+                # e.g., pass 2 of 3 just started = 1/3 = 33% (pass 1 complete)
+                completed_passes = self.current_pass_num - 1
+                pct = min(int((completed_passes / self.total_passes) * 100), 99)
+                return f"Frame {pct}%"
+            return ""
+        
+        # Blender: progress based on samples/tiles
         if self.current_sample > 0 and self.total_samples > 0:
-            return f"{self.current_sample}/{self.total_samples}"
+            if self.total_tiles > 1:
+                # Tiled rendering - calculate overall frame progress
+                total_work = self.total_tiles * self.total_samples
+                completed_work = (self.current_tile * self.total_samples) + self.current_sample
+                pct = min(int((completed_work / total_work) * 100), 99)
+            else:
+                # Single tile - calculate based on samples
+                pct = min(int((self.current_sample / self.total_samples) * 100), 99)
+            return f"Frame {pct}%"
         return ""
     
     @property

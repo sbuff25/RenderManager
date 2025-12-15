@@ -240,5 +240,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.8.3 — A wagon that carries your renders</em>
+  <em>Wain v2.8.3 — Something carry your renders</em>
 </p>

@@ -35,6 +35,8 @@ def main_page():
         .job-action-btn-engine-blender:hover { color: #ffffff !important; background-color: rgba(234, 118, 0, 0.2) !important; }
         .job-action-btn-engine-marmoset { color: #ef0343 !important; }
         .job-action-btn-engine-marmoset:hover { color: #ffffff !important; background-color: rgba(239, 3, 67, 0.2) !important; }
+        .job-action-btn-engine-vantage { color: #77b22a !important; }
+        .job-action-btn-engine-vantage:hover { color: #ffffff !important; background-color: rgba(119, 178, 42, 0.2) !important; }
         
         img[src*="wain_logo"], img[src*="wain_logo"] { filter: invert(1); border-radius: 8px; }
         
@@ -52,6 +54,7 @@ def main_page():
         
         .custom-progress-rendering.custom-progress-engine-blender .custom-progress-fill { background: #ea7600; }
         .custom-progress-rendering.custom-progress-engine-marmoset .custom-progress-fill { background: #ef0343; }
+        .custom-progress-rendering.custom-progress-engine-vantage .custom-progress-fill { background: #77b22a; }
         .custom-progress-queued .custom-progress-fill { background: #52525b; }
         .custom-progress-paused .custom-progress-fill { background: #a1a1aa; }
         .custom-progress-completed .custom-progress-fill { background: #22c55e; }

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from wain.engines.base import RenderEngine
 from wain.engines.blender import BlenderEngine
 from wain.engines.marmoset import MarmosetEngine
+from wain.engines.vantage import VantageEngine
 
 
 class EngineRegistry:
@@ -20,6 +21,7 @@ class EngineRegistry:
         self.engines: Dict[str, RenderEngine] = {}
         self.register(BlenderEngine())
         self.register(MarmosetEngine())
+        self.register(VantageEngine())
     
     def register(self, engine: RenderEngine):
         self.engines[engine.engine_type] = engine

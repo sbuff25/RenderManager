@@ -8,11 +8,11 @@ Theme colors, engine configurations, and application constants.
 import os
 
 # Cache busting - increment to force browser asset refresh
-ASSET_VERSION = "v7"
+ASSET_VERSION = "v8"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.8.3"
+APP_VERSION = "2.9.0"
 CONFIG_FILE = "wain_config.json"
 
 # Required Python version
@@ -42,18 +42,21 @@ DARK_THEME = {
 ENGINE_COLORS = {
     "blender": "#ea7600",    # Orange
     "marmoset": "#ef0343",   # Red
+    "vantage": "#77b22a",    # Green (Chaos Vantage brand color)
 }
 
 # Engine logo files (in assets/ subfolder) - will be validated at runtime
 ENGINE_LOGOS = {
     "blender": "blender_logo.png",
     "marmoset": "marmoset_logo.png",
+    "vantage": "vantage_logo.png",
 }
 
 # Fallback Material icons for engines (used when logo files missing)
 ENGINE_ICONS = {
     "blender": "view_in_ar",
     "marmoset": "diamond",
+    "vantage": "landscape",
 }
 
 # Status display configuration
@@ -73,6 +76,7 @@ REQUIRED_ASSETS = [
     'wain_logo.png',  # or wain_logo.png
     'blender_logo.png',
     'marmoset_logo.png',
+    'vantage_logo.png',
 ]
 
 # Runtime-validated logos (populated by check_assets)

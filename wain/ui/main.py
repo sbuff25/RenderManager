@@ -7,10 +7,10 @@ import os
 import sys
 from nicegui import ui, app
 
-from ..config import DARK_THEME, AVAILABLE_LOGOS, ASSET_VERSION, APP_VERSION
-from ..app import render_app
-from .components import create_stat_card, create_job_card
-from .dialogs import show_add_job_dialog, show_settings_dialog
+from wain.config import DARK_THEME, AVAILABLE_LOGOS, ASSET_VERSION, APP_VERSION
+from wain.app import render_app
+from wain.ui.components import create_stat_card, create_job_card
+from wain.ui.dialogs import show_add_job_dialog, show_settings_dialog
 
 @ui.page('/')
 def main_page():
@@ -45,8 +45,6 @@ def main_page():
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #52525b; }
         
-        .q-notification, .q-notifications { display: none !important; }
-        
         .custom-progress-container { width: 100%; display: flex; flex-direction: column; gap: 4px; min-height: 28px; }
         .custom-progress-track { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.15); border-radius: 4px; overflow: hidden; position: relative; }
         .custom-progress-fill { height: 100%; border-radius: 4px; position: relative; background: #71717a; will-change: width; }
@@ -72,9 +70,6 @@ def main_page():
     ui.add_head_html('''<script>
         document.addEventListener('DOMContentLoaded', function() {
             const progressState = {};
-            const ANIMATION_SPEED = 0.06;
-            const MIN_STEP = 0.15;
-            
             window.updateJobProgress = function(jobId, progress, elapsed, framesDisplay, samplesDisplay, passDisplay) {
                 const fill = document.getElementById('progress-fill-' + jobId);
                 const label = document.getElementById('progress-label-' + jobId);
@@ -90,15 +85,10 @@ def main_page():
                     else baseText = baseText + ' | Time: ' + elapsed;
                     
                     var progressParts = [];
-                    // Show pass name first
                     if (passDisplay && passDisplay.length > 0) progressParts.push(passDisplay);
-                    // Show frame count for animations (Blender: "Frame X/Y", Marmoset: "Render X/Y")
-                    if (framesDisplay && framesDisplay.length > 0) {
-                        if (framesDisplay.includes('/')) {
-                            progressParts.push('Frame ' + framesDisplay);
-                        }
+                    if (framesDisplay && framesDisplay.length > 0 && framesDisplay.includes('/')) {
+                        progressParts.push('Frame ' + framesDisplay);
                     }
-                    // samplesDisplay now always returns "Frame X%" showing render progress within current frame
                     if (samplesDisplay && samplesDisplay.length > 0) {
                         progressParts.push(samplesDisplay);
                     }
@@ -124,13 +114,10 @@ def main_page():
                     const diff = target - current;
                     
                     if (Math.abs(diff) > 0.1) {
-                        let step = diff * ANIMATION_SPEED;
-                        if (Math.abs(step) < MIN_STEP && Math.abs(diff) > MIN_STEP) step = diff > 0 ? MIN_STEP : -MIN_STEP;
+                        let step = diff * 0.06;
+                        if (Math.abs(step) < 0.15 && Math.abs(diff) > 0.15) step = diff > 0 ? 0.15 : -0.15;
                         progressState[id] = current + step;
                         fill.style.width = progressState[id] + '%';
-                    } else if (Math.abs(diff) > 0.01) {
-                        progressState[id] = target;
-                        fill.style.width = target + '%';
                     }
                 });
                 requestAnimationFrame(animateProgressBars);
@@ -141,7 +128,6 @@ def main_page():
     
     with ui.header().classes('items-center justify-between px-4 md:px-6 py-3 bg-zinc-900'):
         with ui.row().classes('items-center gap-4'):
-            # Use logo if available, otherwise show app name
             wain_logo = AVAILABLE_LOGOS.get('wain')
             if wain_logo:
                 ui.image(f'/logos/{wain_logo}?{ASSET_VERSION}').classes('w-10 h-10 object-contain rounded-lg')
@@ -188,13 +174,10 @@ def main_page():
         queue_list()
         
         with ui.expansion('Log', icon='terminal').classes('w-full log-expansion'):
-            # Log action buttons
             with ui.row().classes('w-full items-center justify-between mb-2'):
                 ui.label('Render Log').classes('text-sm text-gray-400')
                 with ui.row().classes('gap-2'):
                     def save_log_to_file():
-                        import subprocess
-                        # Save to current working directory for easy access
                         log_text = '\n'.join(render_app.log_messages[-500:])
                         log_path = os.path.join(os.getcwd(), 'wain_render_log.txt')
                         try:
@@ -202,10 +185,6 @@ def main_page():
                                 f.write(log_text)
                             if sys.platform == 'win32':
                                 os.startfile(log_path)
-                            elif sys.platform == 'darwin':
-                                subprocess.run(['open', log_path])
-                            else:
-                                subprocess.run(['xdg-open', log_path])
                             render_app.log(f"Log saved: {log_path}")
                         except Exception as e:
                             render_app.log(f"Save failed: {e}")
@@ -216,17 +195,14 @@ def main_page():
                         if render_app.log_container:
                             render_app.log_container.refresh()
                     
-                    # More prominent Save button
-                    ui.button('Save Log to File', icon='save', on_click=save_log_to_file).props('flat dense').classes('text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700').tooltip('Save to wain_render_log.txt')
-                    ui.button(icon='delete_sweep', on_click=clear_log).props('flat dense size=sm').classes('text-zinc-500 hover:text-white').tooltip('Clear')
+                    ui.button('Save Log to File', icon='save', on_click=save_log_to_file).props('flat dense').classes('text-zinc-300')
+                    ui.button(icon='delete_sweep', on_click=clear_log).props('flat dense size=sm').classes('text-zinc-500').tooltip('Clear')
             
             @ui.refreshable
             def log_display():
-                # Scrollable log area with selectable text
                 with ui.scroll_area().classes('w-full h-48 bg-zinc-900 rounded border border-zinc-700'):
                     with ui.column().classes('p-2 gap-0 font-mono text-xs w-full'):
                         for msg in render_app.log_messages[-100:]:
-                            # Each line is selectable
                             ui.label(msg).classes('text-gray-400 select-all cursor-text whitespace-pre-wrap break-all')
             
             render_app.log_container = log_display
@@ -234,7 +210,6 @@ def main_page():
     
     ui.timer(0.25, render_app.process_queue)
     
-    # Log version at startup to verify correct version is running
     render_app.log(f"Wain v{APP_VERSION} started")
     
     for engine in render_app.engine_registry.get_all():

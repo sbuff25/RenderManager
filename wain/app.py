@@ -21,23 +21,12 @@ from wain.engines.registry import EngineRegistry
 
 
 def sanitize_to_ascii(message: str) -> str:
-    """
-    ALWAYS convert message to safe ASCII characters.
-    
-    This is aggressive but necessary because Windows console (charmap/cp1252)
-    cannot handle many Unicode characters. Addons like RetopoFlow, HardOps,
-    and ZenUV output box-drawing characters that cause 'charmap' codec errors.
-    
-    We convert ALL non-ASCII to '?' to guarantee safety.
-    """
+    """Convert message to safe ASCII characters."""
     if not message:
         return ""
     try:
-        # Convert to ASCII, replacing any non-ASCII with '?'
-        # This is the most reliable approach for Windows compatibility
         return ''.join(c if 32 <= ord(c) < 127 else '?' for c in str(message))
     except Exception:
-        # Ultimate fallback - return empty string rather than crash
         return "[encoding error]"
 
 
@@ -62,7 +51,6 @@ class RenderApp:
         self.load_config()
     
     def log(self, message: str):
-        # ALWAYS sanitize to ASCII to prevent Windows encoding crashes
         safe_message = sanitize_to_ascii(message)
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_messages.append(f"[{ts}] {safe_message}")
@@ -131,19 +119,9 @@ class RenderApp:
             self.current_job.elapsed_time = elapsed
             
             job = self.current_job
-            if job.engine_type == "marmoset":
-                if job.total_passes > 0 and job.pass_total_frames > 0:
-                    total_renders = job.pass_total_frames * job.total_passes
-                    frames_display = f"{job.current_frame}/{total_renders}"
-                else:
-                    frames_display = ""
-                pass_display = job.current_pass if job.current_pass else ""
-                # Use samples_display property for frame percentage (consistent across all engines)
-                samples_display = job.samples_display
-            else:
-                frames_display = job.frames_display
-                samples_display = job.samples_display
-                pass_display = job.pass_display
+            frames_display = job.frames_display
+            samples_display = job.samples_display
+            pass_display = job.pass_display
             
             try:
                 safe_frames = frames_display.replace('"', '\\"').replace("'", "\\'")
@@ -207,13 +185,8 @@ class RenderApp:
         
         start_frame = job.frame_start
         if job.is_animation:
-            if job.engine_type == "marmoset":
-                if job.rendering_frame > 0:
-                    start_frame = job.rendering_frame
-                    self.log(f"Resuming from frame {start_frame}")
-            else:
-                if job.current_frame > 0:
-                    start_frame = job.current_frame + 1
+            if job.current_frame > 0:
+                start_frame = job.current_frame + 1
         
         if job.original_start == 0:
             job.original_start = job.frame_start
@@ -226,9 +199,6 @@ class RenderApp:
         if self.stats_container: self.stats_container.refresh()
         self.log(f"Starting: {job.name}")
         
-        self._ui_needs_update = False
-        self._last_ui_update = datetime.now()
-        
         def on_progress(frame, msg):
             total_secs = job.accumulated_seconds
             if self.render_start_time:
@@ -237,64 +207,27 @@ class RenderApp:
             m, s = divmod(rem, 60)
             job.elapsed_time = f"{h}:{m:02d}:{s:02d}"
             
-            if job.engine_type == "marmoset":
-                if job.total_passes > 0 and job.pass_total_frames > 0:
-                    total_renders = job.pass_total_frames * job.total_passes
-                    frames_display = f"{job.current_frame}/{total_renders}"
-                else:
-                    frames_display = ""
-                pass_display = job.current_pass if job.current_pass else ""
-                # Use samples_display property for frame percentage (consistent across all engines)
-                samples_display = job.samples_display
-                
-                self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, frames_display, samples_display, pass_display))
-                return
-            
             sample_match = re.search(r'Sample (\d+)/(\d+)', msg)
             if sample_match:
                 job.current_sample = int(sample_match.group(1))
                 job.total_samples = int(sample_match.group(2))
             
-            # Parse tile info for high-res renders: "Rendered 1/2 Tiles"
-            tile_match = re.search(r'Rendered (\d+)/(\d+) Tiles', msg)
-            if tile_match:
-                job.current_tile = int(tile_match.group(1))
-                job.total_tiles = int(tile_match.group(2))
-            
             if job.is_animation:
                 if frame > 0:
                     job.rendering_frame = frame
-                    # Reset tile tracking for new frame
-                    job.current_tile = 0
-                    job.total_tiles = 1
                 if frame == -1:
-                    # Frame completed - update progress based on completed frames
                     if job.rendering_frame > 0:
                         job.current_frame = job.rendering_frame
                         job.current_sample = 0
-                        job.current_tile = 0
                     job.progress = min(int((job.current_frame / job.frame_end) * 100), 99)
                 else:
-                    # Frame in progress - progress bar shows COMPLETED frames only
-                    # (frame percentage is shown separately in samples_display)
                     completed_frames = job.rendering_frame - 1 if job.rendering_frame > 0 else 0
                     job.progress = min(int((completed_frames / job.frame_end) * 100), 99)
             else:
-                # Still frame render
                 if frame == -1:
                     job.progress = 99
                 elif sample_match:
-                    # Calculate progress accounting for tiles
-                    if job.total_tiles > 1:
-                        # Tiled rendering: overall progress across all tiles
-                        total_work = job.total_tiles * job.total_samples
-                        completed_work = (job.current_tile * job.total_samples) + job.current_sample
-                        job.progress = min(int((completed_work / total_work) * 100), 99)
-                    else:
-                        # Single tile: simple sample progress
-                        job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
-                elif frame > 0:
-                    job.progress = min(job.progress + 5, 95)
+                    job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
             
             self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display))
         
@@ -334,7 +267,6 @@ class RenderApp:
             "engine_settings": j.engine_settings,
             "elapsed_time": j.elapsed_time, "accumulated_seconds": j.accumulated_seconds,
             "error_message": j.error_message,
-            "current_sample": j.current_sample, "total_samples": j.total_samples,
         } for j in self.jobs]}
         try:
             with open(self.CONFIG_FILE, 'w') as f:
@@ -363,7 +295,6 @@ class RenderApp:
                         engine_settings=jd.get("engine_settings", {}),
                         elapsed_time=jd.get("elapsed_time", ""), accumulated_seconds=jd.get("accumulated_seconds", 0),
                         error_message=jd.get("error_message", ""),
-                        current_sample=jd.get("current_sample", 0), total_samples=jd.get("total_samples", 0),
                     ))
             except: pass
 

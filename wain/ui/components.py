@@ -27,7 +27,6 @@ def create_stat_card(title: str, status: str, icon: str, color: str):
 def open_folder(path: str):
     """Open a folder in the system file explorer."""
     if not path or not os.path.exists(path):
-        # Try to create it if it doesn't exist
         try:
             os.makedirs(path, exist_ok=True)
         except:
@@ -51,7 +50,6 @@ def create_job_card(job):
     engine = render_app.engine_registry.get(job.engine_type)
     engine_color = ENGINE_COLORS.get(job.engine_type, "#888")
     
-    # Use logo if available, otherwise fall back to icon
     engine_logo = AVAILABLE_LOGOS.get(job.engine_type)
     engine_icon = ENGINE_ICONS.get(job.engine_type, "help")
     
@@ -83,15 +81,12 @@ def create_job_card(job):
             elif job.status == "failed":
                 ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Retry')
             
-            # Edit button (not available while rendering)
             if job.status != "rendering":
                 ui.button(icon='edit', on_click=lambda j=job: show_edit_job_dialog(j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Edit')
             
-            # Open output folder button
             if job.output_folder:
                 ui.button(icon='folder_open', on_click=lambda j=job: open_folder(j.output_folder)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Open Output Folder')
             
-            # Delete button
             if job.status == "rendering":
                 ui.button(icon='delete', on_click=lambda j=job: render_app.handle_action('delete', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
             else:
@@ -118,24 +113,13 @@ def create_job_card(job):
         
         progress_parts = []
         
-        if job.engine_type == "marmoset":
-            if job.current_pass:
-                progress_parts.append(job.current_pass)
-            if job.total_passes > 0 and job.pass_total_frames > 0:
-                total_renders = job.pass_total_frames * job.total_passes
-                if job.current_frame > 0:
-                    progress_parts.append(f"Render {job.current_frame}/{total_renders}")
-            if job.rendering_frame > 0 and job.pass_total_frames > 0:
-                progress_parts.append(f"Frame {job.rendering_frame}/{job.pass_total_frames}")
-        else:
-            if job.total_passes > 1 and job.current_pass:
-                progress_parts.append(f"{job.current_pass} ({job.current_pass_num}/{job.total_passes})")
-            if job.is_animation:
-                if job.display_frame > 0:
-                    progress_parts.append(f"Frame {job.display_frame}/{job.frame_end}")
-            # samples_display now always returns "Frame X%" for consistency
-            if job.samples_display:
-                progress_parts.append(job.samples_display)
+        if job.total_passes > 1 and job.current_pass:
+            progress_parts.append(f"{job.current_pass} ({job.current_pass_num}/{job.total_passes})")
+        if job.is_animation:
+            if job.display_frame > 0:
+                progress_parts.append(f"Frame {job.display_frame}/{job.frame_end}")
+        if job.samples_display:
+            progress_parts.append(job.samples_display)
         
         render_progress = " | ".join(progress_parts)
         

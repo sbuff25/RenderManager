@@ -3,6 +3,7 @@ cd /d "%~dp0"
 
 REM ========================================
 REM  Wain - Render Queue Manager Launcher
+REM  https://github.com/Spencer-Sliffe/Wain
 REM ========================================
 
 REM Check if Python is available
@@ -25,8 +26,8 @@ if "%1"=="--install" goto :install
 if "%1"=="--debug" goto :debug
 if "%1"=="--help" goto :help
 
-REM Check if all required packages are installed
-python -c "import nicegui; import webview; import PyQt6; from PyQt6 import QtWebEngineWidgets; import qtpy; from PIL import Image" >nul 2>&1
+REM Check if all required packages are installed (including pywinauto for Vantage)
+python -c "import nicegui; import webview; import PyQt6; from PyQt6 import QtWebEngineWidgets; import qtpy; from PIL import Image; import pywinauto" >nul 2>&1
 if errorlevel 1 goto :install
 
 REM Dependencies installed - launch Wain with splash screen (no console window)
@@ -66,6 +67,7 @@ python -c "from PyQt6 import QtWebEngineWidgets; print('PyQt6-WebEngine: OK')"
 python -c "import qtpy; print('qtpy:', qtpy.__version__)"
 python -c "import webview; print('pywebview: OK')"
 python -c "from PIL import Image; print('Pillow: OK')"
+python -c "import pywinauto; print('pywinauto: OK')"
 echo.
 echo Starting Wain in debug mode...
 echo ========================================
@@ -81,6 +83,7 @@ exit
 echo.
 echo ========================================
 echo  Wain - Render Queue Manager
+echo  https://github.com/Spencer-Sliffe/Wain
 echo ========================================
 echo.
 echo Usage:

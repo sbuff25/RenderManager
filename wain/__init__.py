@@ -9,7 +9,7 @@ Built with NiceGUI + pywebview (Qt backend) for native desktop window.
 Works on Python 3.10+ (including 3.13 and 3.14)
 """
 
-__version__ = "2.9.0"
+__version__ = "2.10.3"
 __author__ = "Spencer"
 __app_name__ = "Wain"
 
@@ -29,8 +29,6 @@ from wain.config import (
 )
 
 from wain.models import RenderJob, AppSettings
-from wain.engines import RenderEngine, BlenderEngine, MarmosetEngine, VantageEngine, EngineRegistry
-from wain.app import RenderApp
 
 __all__ = [
     '__version__',
@@ -49,10 +47,4 @@ __all__ = [
     'check_assets',
     'RenderJob',
     'AppSettings',
-    'RenderEngine',
-    'BlenderEngine',
-    'MarmosetEngine',
-    'VantageEngine',
-    'EngineRegistry',
-    'RenderApp',
 ]

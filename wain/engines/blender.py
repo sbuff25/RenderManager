@@ -93,8 +93,8 @@ class BlenderEngine(RenderEngine):
             "cameras": ["Scene Default"], "active_camera": "Scene Default",
             "resolution_x": 1920, "resolution_y": 1080, "engine": "Cycles",
             "samples": 128, "frame_start": 1, "frame_end": 250,
-            "use_denoising": True, "denoiser": "OptiX",  # Use UI-friendly name
-            "use_compositing": True, "use_sequencer": False,  # Default sequencer OFF
+            "use_denoising": True, "denoiser": "OptiX",
+            "use_compositing": True, "use_sequencer": False,
             "has_compositor_denoise": False,
         }
         
@@ -132,7 +132,6 @@ print(f"FRAME_END:{scene.frame_end}")
 print(f"USE_COMPOSITING:{render.use_compositing}")
 print(f"USE_SEQUENCER:{render.use_sequencer}")
 
-# Check for compositor denoise node
 has_comp_denoise = False
 if scene.node_tree and scene.node_tree.nodes:
     for node in scene.node_tree.nodes:
@@ -154,8 +153,6 @@ print("INFO_END")
             result = subprocess.run([blender_exe, "-b", file_path, "--python", temp_path], capture_output=True, timeout=60, startupinfo=startupinfo)
             os.unlink(temp_path)
             
-            print(f"[Wain] Blender exited with code: {result.returncode}")
-            
             stdout = result.stdout.decode('utf-8', errors='replace')
             info = default_info.copy()
             in_info = in_cameras = False
@@ -176,7 +173,6 @@ print("INFO_END")
                     elif line.startswith('SAMPLES:'): info["samples"] = int(line.split(':')[1])
                     elif line.startswith('USE_DENOISING:'): info["use_denoising"] = line.split(':')[1] == 'True'
                     elif line.startswith('DENOISER:'):
-                        # CRITICAL FIX: Convert internal Blender value (OPTIX) to UI-friendly name (OptiX)
                         internal_value = line.split(':')[1].strip()
                         info["denoiser"] = BLENDER_DENOISER_FROM_INTERNAL.get(internal_value, 'OptiX')
                     elif line.startswith('FRAME_START:'): info["frame_start"] = int(line.split(':')[1])
@@ -186,7 +182,6 @@ print("INFO_END")
                     elif line.startswith('HAS_COMPOSITOR_DENOISE:'): info["has_compositor_denoise"] = line.split(':')[1] == 'True'
             
             if cameras: info["cameras"] = ["Scene Default"] + cameras
-            print(f"[Wain] Blender probe results: {info}")
             return info
         except Exception as e:
             print(f"[Wain] Error probing Blender scene: {e}")
@@ -224,30 +219,20 @@ print("INFO_END")
         
         fmt = self.OUTPUT_FORMATS.get(job.output_format, "PNG")
         
-        # Base script that sets format and resolution
         base_script = f'''import bpy
-
-# Set output format
 bpy.context.scene.render.image_settings.file_format = '{fmt}'
-
-# Set resolution from Wain job settings
 bpy.context.scene.render.resolution_x = {job.res_width}
 bpy.context.scene.render.resolution_y = {job.res_height}
 bpy.context.scene.render.resolution_percentage = 100
-
 print(f"[Wain] Resolution set to {{bpy.context.scene.render.resolution_x}}x{{bpy.context.scene.render.resolution_y}}")
 '''
         
-        # Generate script that optionally skips existing frames
         if job.is_animation and not job.overwrite_existing:
             ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}
             ext = ext_map.get(fmt, "png")
             output_base = os.path.join(job.output_folder, job.output_name).replace('\\', '\\\\')
-            
             script = base_script + f'''
 import os
-
-# Skip existing frames handler
 def skip_existing_handler(scene, depsgraph):
     frame = scene.frame_current
     output_path = f"{output_base}{{frame:04d}}.{ext}"
@@ -272,28 +257,21 @@ def skip_existing_handler(scene, depsgraph):
         else:
             cmd.extend(["-f", str(job.frame_start)])
         
-        if on_log: on_log(f"[v2.8.3] Command: {' '.join(cmd)}")
+        if on_log: on_log(f"Command: {' '.join(cmd)}")
         
         def render_thread():
-            """Render in background thread with robust encoding handling."""
             try:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 
-                # Force UTF-8 encoding to handle Unicode output from addons
                 env = os.environ.copy()
                 env['PYTHONIOENCODING'] = 'utf-8'
-                env['PYTHONLEGACYWINDOWSSTDIO'] = '0'
                 
                 self.current_process = subprocess.Popen(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.STDOUT, 
-                    startupinfo=startupinfo,
-                    env=env
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                    startupinfo=startupinfo, env=env
                 )
                 
-                # Read stdout as binary and decode ourselves to avoid encoding issues
                 while True:
                     if self.is_cancelling:
                         break
@@ -303,50 +281,23 @@ def skip_existing_handler(scene, depsgraph):
                         if not line_bytes:
                             break
                         
-                        # Decode bytes to string - use errors='replace' to handle any encoding
                         try:
                             line = line_bytes.decode('utf-8', errors='replace')
-                        except Exception:
-                            try:
-                                line = line_bytes.decode('latin-1', errors='replace')
-                            except Exception:
-                                line = str(line_bytes)
+                        except:
+                            line = str(line_bytes)
                         
                         line = line.strip()
+                        safe_line = ''.join(c if 32 <= ord(c) < 127 else '?' for c in line)
                         
-                        # AGGRESSIVELY sanitize to ASCII - this is critical for Windows
-                        # Convert ALL non-printable-ASCII characters to '?'
-                        safe_chars = []
-                        for c in line:
-                            try:
-                                code = ord(c)
-                                if 32 <= code < 127:
-                                    safe_chars.append(c)
-                                else:
-                                    safe_chars.append('?')
-                            except Exception:
-                                safe_chars.append('?')
-                        safe_line = ''.join(safe_chars)
-                        
-                        # Log the sanitized line
                         if on_log and safe_line:
-                            try:
-                                on_log(safe_line)
-                            except Exception:
-                                pass  # Skip if logging fails
+                            on_log(safe_line)
                         
-                        # Parse progress info from original line (may contain unicode)
-                        try:
-                            frame_match = re.search(r'Fra:(\d+)', line)
-                            if frame_match:
-                                on_progress(int(frame_match.group(1)), safe_line)
-                            elif "Saved:" in line:
-                                on_progress(-1, safe_line)
-                        except Exception:
-                            pass  # Skip progress parsing errors
-                            
-                    except Exception:
-                        # Skip ANY problematic lines - never fail the render
+                        frame_match = re.search(r'Fra:(\d+)', line)
+                        if frame_match:
+                            on_progress(int(frame_match.group(1)), safe_line)
+                        elif "Saved:" in line:
+                            on_progress(-1, safe_line)
+                    except:
                         continue
                 
                 return_code = self.current_process.wait()
@@ -361,13 +312,7 @@ def skip_existing_handler(scene, depsgraph):
             except Exception as e:
                 self._cleanup()
                 if not self.is_cancelling:
-                    # Sanitize error message to ASCII
-                    try:
-                        err_msg = str(e)
-                        safe_err = ''.join(c if 32 <= ord(c) < 127 else '?' for c in err_msg)
-                    except Exception:
-                        safe_err = "Unknown error"
-                    on_error(safe_err)
+                    on_error(str(e))
         
         threading.Thread(target=render_thread, daemon=True).start()
     

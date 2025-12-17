@@ -71,6 +71,9 @@ class RenderJob:
         For Marmoset (pass-based):
             - Each frame renders N passes sequentially
             - Progress = current_pass_num / total_passes
+        
+        For Vantage:
+            - Uses current_sample/total_samples set by UI automation
             
         Always displays as "Frame XX%" for consistency across all engines.
         """
@@ -81,6 +84,13 @@ class RenderJob:
                 # e.g., pass 2 of 3 just started = 1/3 = 33% (pass 1 complete)
                 completed_passes = self.current_pass_num - 1
                 pct = min(int((completed_passes / self.total_passes) * 100), 99)
+                return f"Frame {pct}%"
+            return ""
+        
+        # Vantage: frame progress set directly by UI automation
+        if self.engine_type == "vantage":
+            if self.current_sample > 0 and self.total_samples > 0:
+                pct = min(int((self.current_sample / self.total_samples) * 100), 99)
                 return f"Frame {pct}%"
             return ""
         
@@ -119,6 +129,7 @@ class RenderJob:
         Display progress information.
         
         For Marmoset multi-pass: shows "X/Y renders" (total render operations)
+        For Vantage: shows "Frame X/Y" for animations
         For Blender animations: shows "X/Y" (frames)
         For stills: shows frame number
         """
@@ -131,6 +142,15 @@ class RenderJob:
             # Show frame progress for turntable/animation
             if self.pass_frame > 0 and self.pass_total_frames > 0:
                 return f"{self.pass_frame}/{self.pass_total_frames}"
+            return ""
+        
+        # Vantage: show frame X/Y for animations
+        if self.engine_type == "vantage":
+            if self.is_animation or self.frame_end > 1:
+                frame = self.rendering_frame if self.rendering_frame > 0 else self.current_frame
+                if frame > 0:
+                    return f"{frame}/{self.frame_end}"
+                return f"1/{self.frame_end}"
             return ""
         
         # Blender: standard frame display

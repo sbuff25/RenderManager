@@ -9,27 +9,59 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.8.3-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.10.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
 
 <p align="center">
-  <em>Queue, render, and manage your Blender and Marmoset Toolbag projects with ease.</em>
+  <em>Queue, render, and manage your Blender, Marmoset Toolbag, and Chaos Vantage projects with ease.</em>
 </p>
 
 ---
 
 ## ✨ Features
 
-- **Multi-Engine Support** — Blender and Marmoset Toolbag in one unified queue
+- **Multi-Engine Support** — Blender, Marmoset Toolbag, and Chaos Vantage in one unified queue
+- **Bidirectional Communication** — Configure settings in Wain, apply to engine, get accurate progress
 - **Pause & Resume** — Stop and continue renders at any frame
 - **Scene Probing** — Auto-detects resolution, cameras, frame range, and render settings
 - **Selective Multi-Pass** — Render only the passes you need (Marmoset)
 - **Resolution Scaling** — Quick presets for 25%, 50%, 100%, 150%, 200%
 - **Native Desktop App** — Custom title bar with smooth Windows animations
 - **Auto Dependencies** — First run installs everything automatically
+
+---
+
+## 🆕 What's New in v2.10.0
+
+### Bidirectional Engine Communication Architecture
+
+This release introduces a **completely redesigned communication system** between Wain and render engines:
+
+**Settings Synchronization**
+- Configure render settings in Wain → automatically applied to engine before render starts
+- Edit settings and resubmit jobs with one click
+- Schema-driven settings with validation
+
+**Accurate Progress Tracking**
+- Real-time progress that perfectly mirrors what the engine shows
+- Frame-by-frame tracking with pass information
+- Standardized `RenderProgress` structure across all engines
+
+**Scalable Architecture**
+- New `EngineInterface` abstract class defines communication contract
+- `SettingDefinition` schema for UI generation
+- Works identically across Vantage, Blender, and Marmoset
+
+### Chaos Vantage Integration (v2.9.x → v2.10)
+
+- **UI Automation** — Full control via pywinauto when CLI unavailable
+- **Auto-launch Vantage** — Opens scene files automatically
+- **Settings Application** — Resolution, frame range, output path via UI
+- **Progress Monitoring** — Reads from "Rendering HQ Sequence" window
+- **Frame Tracking** — Parses "Frame X/Y" and percentage indicators
 
 ---
 
@@ -59,13 +91,18 @@ Wain.bat --install          # Force reinstall dependencies
   - ⚠️ Check **"Add Python to PATH"** during installation
 - **Windows 10/11**
 
+### Additional for Vantage UI Automation
+```bash
+pip install pywinauto
+```
+
 ---
 
 ## 🎨 Supported Engines
 
 <table>
 <tr>
-<td width="50%">
+<td width="33%">
 
 ### Blender
 
@@ -76,7 +113,7 @@ Wain.bat --install          # Force reinstall dependencies
 - Tiled rendering progress tracking
 
 </td>
-<td width="50%">
+<td width="33%">
 
 ### Marmoset Toolbag
 
@@ -87,8 +124,82 @@ Wain.bat --install          # Force reinstall dependencies
 - Auto file organization by pass
 
 </td>
+<td width="33%">
+
+### Chaos Vantage
+
+- Vantage 2.x and 3.x
+- UI automation (CLI-free)
+- HQ sequence rendering
+- Real-time progress tracking
+- V-Ray scene support (.vrscene)
+
+</td>
 </tr>
 </table>
+
+---
+
+## 🏗️ Architecture (v2.10)
+
+### Engine Interface
+
+All engines implement the `EngineInterface` contract:
+
+```python
+class EngineInterface(ABC):
+    @property
+    def settings_schema(self) -> EngineSettingsSchema:
+        """Define configurable settings with types, defaults, validation."""
+    
+    def read_scene_settings(self, file_path: str) -> Dict[str, Any]:
+        """Read current settings from scene file."""
+    
+    def apply_settings(self, file_path: str, settings: Dict[str, Any]) -> bool:
+        """Apply Wain settings to engine before render."""
+    
+    def get_progress(self) -> RenderProgress:
+        """Get standardized progress information."""
+    
+    def pause_render(self) -> bool: ...
+    def resume_render(self) -> bool: ...
+    def stop_render(self) -> bool: ...
+```
+
+### Settings Schema
+
+Settings are defined declaratively:
+
+```python
+SettingDefinition(
+    id="samples",
+    name="Render Samples",
+    type=SettingType.INTEGER,
+    category=SettingCategory.QUALITY,
+    default=256,
+    min_value=1,
+    max_value=65536,
+    description="Number of samples per pixel"
+)
+```
+
+### Progress Structure
+
+Unified progress across all engines:
+
+```python
+@dataclass
+class RenderProgress:
+    status: RenderStatus          # IDLE, RENDERING, PAUSED, COMPLETE, FAILED
+    total_progress: float         # 0-100
+    current_frame: int
+    total_frames: int
+    frame_progress: float         # Progress within current frame
+    current_pass: str             # For multi-pass renders
+    elapsed_seconds: float
+    estimated_remaining: float
+    message: str                  # Human-readable status
+```
 
 ---
 
@@ -96,26 +207,30 @@ Wain.bat --install          # Force reinstall dependencies
 
 ```
 wain/
-├── Wain.bat                # Windows launcher
-├── wain_launcher.pyw       # Splash screen
+├── Wain.bat                    # Windows launcher
+├── wain_launcher.pyw           # Splash screen
 ├── readme.md
-├── assets/                 # Logos and icons
-└── wain/                   # Main package
-    ├── __main__.py         # Entry point
-    ├── app.py              # Queue management
-    ├── config.py           # Theme & constants
-    ├── models.py           # Data models
-    ├── engines/            # Render engines
-    │   ├── base.py         # Abstract base class
+├── assets/                     # Logos and icons
+└── wain/                       # Main package
+    ├── __main__.py             # Entry point
+    ├── app.py                  # Queue management
+    ├── config.py               # Theme & constants
+    ├── models.py               # Data models
+    ├── engines/                # Render engines
+    │   ├── base.py             # Abstract base class
+    │   ├── interface.py        # ★ Communication interface
     │   ├── blender.py
     │   ├── marmoset.py
+    │   ├── vantage.py
+    │   ├── vantage_comm.py     # ★ Vantage communicator
+    │   ├── vantage_settings.py # ★ Vantage settings schema
     │   └── registry.py
-    ├── ui/                 # Interface
+    ├── ui/                     # Interface
     │   ├── main.py
     │   ├── components.py
     │   └── dialogs.py
-    └── utils/              # Helpers
-        ├── bootstrap.py    # Auto-installer
+    └── utils/                  # Helpers
+        ├── bootstrap.py
         └── file_dialogs.py
 ```
 
@@ -142,14 +257,12 @@ Settings persist to `wain_config.json` in the working directory, including:
 </details>
 
 <details>
-<summary><strong>Package Installation Fails</strong></summary>
+<summary><strong>Vantage not responding to automation</strong></summary>
 
-Install manually:
-```bash
-pip install nicegui PyQt6 PyQt6-WebEngine qtpy Pillow
-pip install pywebview --no-deps
-pip install proxy-tools bottle
-```
+1. Ensure Vantage is installed in default location
+2. Try running Wain as Administrator
+3. Check if Vantage window title matches expected pattern
+4. Install pywinauto: `pip install pywinauto`
 
 </details>
 
@@ -170,9 +283,10 @@ Wain.bat --debug
 Each engine requires:
 
 1. **Engine class** in `wain/engines/` implementing `RenderEngine`
-2. **Accent color** in `config.py` → `ENGINE_COLORS`
-3. **Logo** in `assets/` (optional, with icon fallback)
-4. **CSS classes** in `ui/main.py` for progress bars
+2. **Communicator class** implementing `EngineInterface` (optional but recommended)
+3. **Settings schema** defining configurable options
+4. **Accent color** in `config.py` → `ENGINE_COLORS`
+5. **Logo** in `assets/` (optional, with icon fallback)
 
 Example:
 ```python
@@ -180,7 +294,8 @@ Example:
 ENGINE_COLORS = {
     "blender": "#ea7600",    # Orange
     "marmoset": "#ef0343",   # Red
-    "cinema4d": "#0066cc",   # Blue
+    "vantage": "#77b22a",    # Green
+    "newengine": "#0066cc",  # Blue
 }
 ```
 
@@ -190,44 +305,50 @@ ENGINE_COLORS = {
 
 | Version | Highlights |
 |---------|------------|
-| **2.8.3** | Engine accent color standardization |
-| **2.8.2** | Resolution scale presets (25%–200%) |
-| **2.8.1** | Open output folder button |
-| **2.8.0** | Unified "Frame X%" progress display |
-| **2.7.x** | Unicode fixes, logo system, tiled rendering |
-| **2.5.0** | Optimized Marmoset multi-pass rendering |
+| **2.10.0** | Bidirectional engine communication architecture |
+| **2.9.6** | Vantage NoneType fix, robust window detection |
+| **2.9.5** | Frame-by-frame progress tracking |
+| **2.9.4** | Fixed progress bar jumping |
+| **2.9.3** | Vantage UI automation complete |
+| **2.8.x** | Resolution scaling, "Frame X%" display |
 
 <details>
 <summary>Full changelog</summary>
 
-### v2.8.3
-- Engine accent colors applied consistently across all UI elements
-- Blender: Orange (#ea7600), Marmoset: Red (#ef0343)
-- Default fallback changed to neutral gray
+### v2.10.0 - Bidirectional Communication
+- New `EngineInterface` abstract class for all engines
+- `SettingDefinition` schema for UI generation
+- `RenderProgress` standardized structure
+- `VantageCommunicator` for settings/progress
+- Settings validation and type checking
 
-### v2.8.2
-- Resolution scale presets: 25%, 50%, 100%, 150%, 200%
-- Shows effective resolution in real-time
+### v2.9.6
+- Fixed NoneType crash after file dialog
+- None-safety checks throughout
+- Robust window detection
+- Start button retry logic
 
-### v2.8.1
-- Open output folder button on job cards
+### v2.9.5
+- Frame-by-frame progress tracking
+- `_get_detailed_progress()` parsing
+- "Frame X/Y" and "Frame %" indicators
 
-### v2.8.0
-- All engines show "Frame X%" for current frame progress
-- Marmoset tracks pass-within-frame completion
+### v2.9.4
+- Fixed progress bar jumping
+- Detect "Rendering HQ Sequence" window
+- Read "Total" percentage accurately
 
-### v2.7.9
-- Renamed project from "Wane" to "Wain"
+### v2.9.3
+- Complete Vantage UI automation
+- Auto-launch, menu navigation
+- Resolution/frame range/output path setting
+- Progress monitoring, cancel control
 
-### v2.7.0 – v2.7.8
-- Fixed denoiser case mismatch crash
-- Unicode encoding fixes for addon output
-- Tiled rendering progress display
-- Logo fallback system
-
-### v2.5.0
-- Optimized Marmoset rendering with `renderCamera()`
-- Selective pass rendering (no wasted renders)
+### v2.8.x
+- Engine accent color standardization
+- Resolution scale presets (25%–200%)
+- Open output folder button
+- Unified "Frame X%" progress display
 
 </details>
 
@@ -239,6 +360,12 @@ MIT License — Free for personal and commercial use.
 
 ---
 
+## 🔗 Links
+
+- **GitHub**: [https://github.com/Spencer-Sliffe/Wain](https://github.com/Spencer-Sliffe/Wain)
+
+---
+
 <p align="center">
-  <em>Wain v2.8.3 — Something to carry your renders</em>
+  <em>Wain v2.10.0 — Bidirectional engine communication for professional rendering</em>
 </p>

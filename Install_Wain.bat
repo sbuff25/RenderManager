@@ -162,6 +162,16 @@ if errorlevel 1 (
     echo        [OK] pywebview
 )
 
+REM --- pywinauto (required for Vantage UI automation) ---
+echo        Installing pywinauto...
+python -m pip install pywinauto --quiet
+if errorlevel 1 (
+    echo        [X] Failed to install pywinauto
+    set INSTALL_FAILED=1
+) else (
+    echo        [OK] pywinauto
+)
+
 echo.
 
 REM Check if any installs failed
@@ -173,7 +183,7 @@ if %INSTALL_FAILED% EQU 1 (
     echo  ║  Try running this installer again, or install manually:  ║
     echo  ║                                                          ║
     echo  ║  pip install nicegui PyQt6 PyQt6-WebEngine qtpy Pillow   ║
-    echo  ║  pip install pywebview                                   ║
+    echo  ║  pip install pywebview pywinauto                         ║
     echo  ╚══════════════════════════════════════════════════════════╝
     echo.
 )
@@ -232,6 +242,14 @@ if errorlevel 1 (
     set VERIFY_FAILED=1
 ) else (
     echo        [OK] Pillow
+)
+
+python -c "import pywinauto" >nul 2>&1
+if errorlevel 1 (
+    echo        [X] pywinauto - NOT FOUND
+    set VERIFY_FAILED=1
+) else (
+    echo        [OK] pywinauto
 )
 
 echo.

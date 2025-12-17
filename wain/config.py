@@ -8,11 +8,11 @@ Theme colors, engine configurations, and application constants.
 import os
 
 # Cache busting - increment to force browser asset refresh
-ASSET_VERSION = "v8"
+ASSET_VERSION = "v10"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.9.0"
+APP_VERSION = "2.10.3"
 CONFIG_FILE = "wain_config.json"
 
 # Required Python version

@@ -15,6 +15,7 @@ REQUIRED_PACKAGES = [
     ('qtpy', 'qtpy', True),
     ('webview', 'pywebview', True),
     ('PIL', 'Pillow', True),
+    ('pywinauto', 'pywinauto', True),  # Required for Vantage UI automation
 ]
 
 

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.10.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.14.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,20 +34,72 @@
 
 ---
 
-## 🆕 What's New in v2.10.0
+## 🆕 What's New in v2.14.0
 
-### Bidirectional Engine Communication Architecture
+### Accurate Progress Tracking for Vantage 3.x
 
-This release introduces a **completely redesigned communication system** between Wain and render engines:
+**Fixed Progress Dialog Detection**
+- In Vantage 3.x, the progress dialog is a child window inside the main window
+- Now properly searches within the Vantage window hierarchy
+- Finds dialog by class name `LavinaRenderProgressDialog`
 
-**Settings Synchronization**
-- Configure render settings in Wain → automatically applied to engine before render starts
-- Edit settings and resubmit jobs with one click
-- Schema-driven settings with validation
+**Frame-Based Progress Parsing**
+- Reads "HQ sequence frame X of Y" text to track render progress
+- Captures elapsed and remaining time from Vantage
+- Calculates total percentage from frame count
 
-**Accurate Progress Tracking**
-- Real-time progress that perfectly mirrors what the engine shows
-- Frame-by-frame tracking with pass information
+**Improved Status Display**
+- Shows "Frame 5/301 (1%)" style progress
+- Logs elapsed and remaining time when available
+- Detects completion when all frames are rendered
+
+### Previous v2.13.2 - Click Verification
+
+Fixed issue where Start button click wasn't actually triggering the render:
+
+**Verified Click**
+- After clicking Start, checks if progress window appears
+- If Start button still visible, click didn't work - retry automatically
+- Falls back to `invoke()` method if `click_input()` fails
+- Up to 3 click attempts before giving up
+
+**Better Debugging**
+- Logs button name and enabled state before clicking
+- Reports which click method succeeded
+- Clear error message if all attempts fail
+
+### Previous v2.13.1 - Speed Optimizations
+
+**Eliminated Fixed Delays**
+- Removed 4-second scene load wait - no longer waits for scene to fully load
+- Ctrl+R sent immediately when Vantage window appears
+- Start button clicked as soon as it's detected
+
+**Aggressive Polling**
+- 0.2s polling intervals for window detection (was 0.5s)
+- 0.15s polling intervals for Start button (was fixed delays)
+- Automatic Ctrl+R retry every 2 seconds if button not found
+
+**Result**: Renders start within seconds of Vantage window appearing, not 5-10 seconds later.
+
+### Previous v2.13.0 Features
+
+**Multi-Level Button Detection**
+- Four-tier button search strategy (direct descendants, iterative depth, automation IDs, partial match)
+- Debug output listing all available buttons when detection fails
+
+**Dual Keyboard Input Methods**
+- Primary: pywinauto keyboard module
+- Fallback: Native Windows keybd_event API for Ctrl+R
+
+**HTTP API Foundation**
+- Live Link port detection (20701)
+- JSON command framework for future API integration
+
+### Architecture Notes
+
+HQ render settings (output path, resolution, frame range) are **not stored in .vantage files**.
+Users must configure these settings once in Vantage's HQ Render panel — Wain then reuses them.
 - Standardized `RenderProgress` structure across all engines
 
 **Scalable Architecture**
@@ -305,7 +357,7 @@ ENGINE_COLORS = {
 
 | Version | Highlights |
 |---------|------------|
-| **2.10.0** | Bidirectional engine communication architecture |
+| **2.10.3** | Bidirectional engine communication architecture |
 | **2.9.6** | Vantage NoneType fix, robust window detection |
 | **2.9.5** | Frame-by-frame progress tracking |
 | **2.9.4** | Fixed progress bar jumping |
@@ -315,7 +367,7 @@ ENGINE_COLORS = {
 <details>
 <summary>Full changelog</summary>
 
-### v2.10.0 - Bidirectional Communication
+### v2.10.3 - Bidirectional Communication
 - New `EngineInterface` abstract class for all engines
 - `SettingDefinition` schema for UI generation
 - `RenderProgress` standardized structure
@@ -367,5 +419,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.10.0 — Bidirectional engine communication for professional rendering</em>
+  <em>Wain v2.13.2 — Multi-engine render queue manager with verified automation</em>
 </p>

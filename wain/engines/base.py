@@ -16,18 +16,13 @@ class RenderEngine(ABC):
     
     All render engines (Blender, Marmoset, etc.) must inherit from this
     class and implement the abstract methods.
-    
-    Each engine MUST have a unique accent color defined in config.ENGINE_COLORS.
-    This color is used throughout the UI for status badges, progress bars,
-    action buttons, and other engine-specific visual elements.
     """
     
-    # Class attributes - override in subclasses
-    name: str = "Unknown"           # Display name (e.g., "Blender", "Marmoset Toolbag")
-    engine_type: str = "unknown"    # Internal ID (e.g., "blender", "marmoset")
-    file_extensions: List[str] = [] # Supported file extensions (e.g., [".blend"])
-    icon: str = "help"              # Material icon fallback when logo unavailable
-    color: str = "#888888"          # Accent color (also define in config.ENGINE_COLORS)
+    name: str = "Unknown"
+    engine_type: str = "unknown"
+    file_extensions: List[str] = []
+    icon: str = "help"
+    color: str = "#888888"
     
     def __init__(self):
         self.installed_versions: Dict[str, str] = {}
@@ -41,27 +36,12 @@ class RenderEngine(ABC):
     
     @abstractmethod
     def get_scene_info(self, file_path: str) -> Dict[str, Any]:
-        """
-        Probe a scene file and return information about it.
-        
-        Returns dict with keys like: cameras, active_camera, resolution_x,
-        resolution_y, frame_start, frame_end, etc.
-        """
+        """Probe a scene file and return information about it."""
         pass
     
     @abstractmethod
     def start_render(self, job, start_frame, on_progress, on_complete, on_error, on_log=None):
-        """
-        Start rendering a job.
-        
-        Args:
-            job: RenderJob instance
-            start_frame: Frame to start rendering from (for resume support)
-            on_progress: Callback(frame, message) for progress updates
-            on_complete: Callback() when render finishes successfully
-            on_error: Callback(error_message) when render fails
-            on_log: Optional callback(message) for log output
-        """
+        """Start rendering a job."""
         pass
     
     @abstractmethod
@@ -70,15 +50,7 @@ class RenderEngine(ABC):
         pass
     
     def pause_render(self):
-        """
-        Pause the currently running render.
-        
-        Default implementation calls cancel_render() for engines that don't
-        support native pause. Engines with native pause (like Vantage) should
-        override this method.
-        
-        Returns True if pause was successful.
-        """
+        """Pause the currently running render."""
         self.cancel_render()
         return True
     
@@ -93,16 +65,12 @@ class RenderEngine(ABC):
         pass
     
     def add_custom_path(self, path: str) -> Optional[str]:
-        """
-        Add a custom executable path for this engine.
-        
-        Returns the version string if successful, None otherwise.
-        """
+        """Add a custom executable path for this engine."""
         return None
     
     @property
     def is_available(self) -> bool:
-        """Check if this engine is available (has at least one installed version)."""
+        """Check if this engine is available."""
         return len(self.installed_versions) > 0
     
     @property
@@ -114,7 +82,7 @@ class RenderEngine(ABC):
         return f"{self.name} not detected"
     
     def open_file_in_app(self, file_path: str, version: str = None):
-        """Open a scene file in the application (for editing)."""
+        """Open a scene file in the application."""
         pass
     
     def get_file_dialog_filter(self) -> List[tuple]:

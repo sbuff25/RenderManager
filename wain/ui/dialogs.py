@@ -3,7 +3,6 @@ Wain UI Dialogs
 ===============
 
 Modal dialogs for adding jobs and configuring settings.
-v2.10.0 - Added engine settings schema support
 """
 
 import os
@@ -19,7 +18,6 @@ from wain.utils.file_dialogs import open_file_dialog_async, open_folder_dialog_a
 
 
 def _normalize_denoiser_value(value: str) -> str:
-    """Normalize denoiser value to match dropdown options."""
     if value is None:
         return 'OpenImageDenoise'
     normalized = BLENDER_DENOISER_FROM_INTERNAL.get(value.upper(), None)
@@ -34,44 +32,23 @@ async def show_add_job_dialog():
     """Add Job dialog with all fields visible."""
     
     form = {
-        'engine_type': 'blender',
-        'name': '',
-        'file_path': '',
-        'output_folder': '',
-        'output_name': 'render_',
-        'output_format': 'PNG',
-        'camera': 'Scene Default',
-        'is_animation': False,
-        'frame_start': 1,
-        'frame_end': 250,
-        'res_width': 1920,
-        'res_height': 1080,
-        'base_res_width': 1920,
-        'base_res_height': 1080,
-        'submit_paused': False,
-        'overwrite_existing': True,
+        'engine_type': 'blender', 'name': '', 'file_path': '', 'output_folder': '',
+        'output_name': 'render_', 'output_format': 'PNG', 'camera': 'Scene Default',
+        'is_animation': False, 'frame_start': 1, 'frame_end': 250,
+        'res_width': 1920, 'res_height': 1080, 'base_res_width': 1920, 'base_res_height': 1080,
+        'submit_paused': False, 'overwrite_existing': True,
         # Vantage-specific
-        'vantage_samples': 256,
-        'vantage_denoiser': 'nvidia',
-        'vantage_quality': 'high',
+        'vantage_use_scene_settings': True,  # Use settings configured in Vantage
+        'vantage_samples': 256, 'vantage_denoiser': 'nvidia', 'vantage_quality': 'high',
         # Marmoset-specific
-        'render_type': 'still',
-        'samples': 256,
-        'render_passes': ['beauty'],
+        'render_type': 'still', 'samples': 256, 'render_passes': ['beauty'],
         # Blender-specific
         'blender_denoiser': 'OptiX',
     }
     
-    camera_select = None
-    res_w_input = None
-    res_h_input = None
-    res_scale_container = None
-    frame_start_input = None
-    frame_end_input = None
-    anim_checkbox = None
-    status_label = None
-    output_input = None
-    name_input = None
+    camera_select = res_w_input = res_h_input = res_scale_container = None
+    frame_start_input = frame_end_input = anim_checkbox = status_label = None
+    output_input = name_input = None
     engine_buttons = {}
     accent_elements = {}
     
@@ -85,12 +62,9 @@ async def show_add_job_dialog():
         new_h = max(1, int(form['base_res_height'] * scale))
         form['res_width'] = new_w
         form['res_height'] = new_h
-        if res_w_input:
-            res_w_input.value = new_w
-        if res_h_input:
-            res_h_input.value = new_h
-        if res_scale_container:
-            res_scale_container.refresh()
+        if res_w_input: res_w_input.value = new_w
+        if res_h_input: res_h_input.value = new_h
+        if res_scale_container: res_scale_container.refresh()
     
     def select_engine(eng_type):
         form['engine_type'] = eng_type
@@ -98,25 +72,21 @@ async def show_add_job_dialog():
         
         for et, btn in engine_buttons.items():
             if et == eng_type:
-                btn.classes(replace='px-3 py-2 rounded engine-btn-selected')
                 btn.style(f'background-color: {ENGINE_COLORS.get(et, "#71717a")} !important; color: white !important;')
             else:
-                btn.classes(replace='px-3 py-2 rounded engine-btn-unselected')
                 btn.style('background-color: transparent !important; color: #52525b !important;')
         
         if 'submit_btn' in accent_elements:
             accent_elements['submit_btn'].style(f'background-color: {accent_color} !important;')
-        
         if 'engine_settings' in accent_elements:
             accent_elements['engine_settings'].refresh()
     
-    with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;').classes('accent-dialog'):
+    with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
         with ui.row().classes('w-full items-center justify-between p-4'):
             ui.label('Add Render Job').classes('text-lg font-bold')
             ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
         
         with ui.column().classes('w-full p-4 gap-3').style('max-height: 70vh; overflow-y: auto;'):
-            # Engine selector
             with ui.row().classes('w-full items-center gap-2'):
                 ui.label('Engine:').classes('text-gray-400 w-20')
                 with ui.row().classes('gap-2'):
@@ -126,20 +96,14 @@ async def show_add_job_dialog():
                         eng_type = engine.engine_type
                         accent_color = ENGINE_COLORS.get(eng_type, "#71717a")
                         
-                        if is_selected:
-                            btn_class = 'px-3 py-2 rounded engine-btn-selected'
-                            btn_style = f'background-color: {accent_color} !important; color: white !important;'
-                        else:
-                            btn_class = 'px-3 py-2 rounded engine-btn-unselected'
-                            btn_style = 'background-color: transparent !important; color: #52525b !important;'
+                        btn_style = f'background-color: {accent_color} !important; color: white !important;' if is_selected else 'background-color: transparent !important; color: #52525b !important;'
                         
-                        with ui.button(on_click=lambda et=eng_type: select_engine(et)).props('flat dense').classes(btn_class).style(btn_style) as btn:
+                        with ui.button(on_click=lambda et=eng_type: select_engine(et)).props('flat dense').style(btn_style) as btn:
                             with ui.row().classes('items-center gap-2'):
                                 if engine_logo:
                                     ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-5 h-5 object-contain')
                                 else:
-                                    engine_icon = ENGINE_ICONS.get(eng_type, 'help')
-                                    ui.icon(engine_icon).classes('text-lg')
+                                    ui.icon(ENGINE_ICONS.get(eng_type, 'help')).classes('text-lg')
                                 ui.label(engine.name).classes('text-sm')
                         engine_buttons[engine.engine_type] = btn
             
@@ -159,7 +123,6 @@ async def show_add_job_dialog():
                     
                     select_engine(detected.engine_type)
                     status_label.set_text('Probing scene...')
-                    status_label.classes(replace='text-xs text-yellow-500')
                     
                     async def do_probe_async():
                         loop = asyncio.get_event_loop()
@@ -185,23 +148,13 @@ async def show_add_job_dialog():
                                 form['camera'] = active_cam
                             camera_select.update()
                         
-                        if info.get('frame_start'):
-                            frame_start_input.value = info['frame_start']
-                            form['frame_start'] = info['frame_start']
-                        if info.get('frame_end'):
-                            frame_end_input.value = info['frame_end']
-                            form['frame_end'] = info['frame_end']
+                        if info.get('frame_start'): frame_start_input.value = info['frame_start']; form['frame_start'] = info['frame_start']
+                        if info.get('frame_end'): frame_end_input.value = info['frame_end']; form['frame_end'] = info['frame_end']
                         
-                        has_anim = info.get('has_animation', False)
-                        if not has_anim and info.get('frame_end', 1) > info.get('frame_start', 1):
-                            has_anim = True
-                        if has_anim:
-                            anim_checkbox.value = True
-                            form['is_animation'] = True
+                        has_anim = info.get('has_animation', False) or info.get('frame_end', 1) > info.get('frame_start', 1)
+                        if has_anim: anim_checkbox.value = True; form['is_animation'] = True
                         
-                        res_str = f"{info.get('resolution_x', '?')}x{info.get('resolution_y', '?')}"
-                        status_label.set_text(f'Scene loaded: {res_str}')
-                        status_label.classes(replace='text-xs text-green-500')
+                        status_label.set_text(f'Scene loaded: {info.get("resolution_x", "?")}x{info.get("resolution_y", "?")}')
                     
                     asyncio.create_task(do_probe_async())
                 
@@ -209,10 +162,8 @@ async def show_add_job_dialog():
                     def on_file_selected(result):
                         if result:
                             file_input.value = result
-                            if not form['name']:
-                                name_input.value = os.path.splitext(os.path.basename(result))[0]
-                            if not form['output_folder']:
-                                output_input.value = os.path.dirname(result)
+                            if not form['name']: name_input.value = os.path.splitext(os.path.basename(result))[0]
+                            if not form['output_folder']: output_input.value = os.path.dirname(result)
                             probe_scene(result)
                     
                     filters = render_app.engine_registry.get_all_file_filters()
@@ -220,8 +171,7 @@ async def show_add_job_dialog():
                 
                 ui.button('Browse', icon='folder_open', on_click=browse_file).props('flat dense')
             
-            with ui.row().classes('w-full items-center gap-2'):
-                status_label = ui.label('Select a scene file to load settings').classes('text-xs text-gray-500 flex-grow')
+            status_label = ui.label('Select a scene file').classes('text-xs text-gray-500')
             
             ui.label('Output Folder:').classes('text-sm text-gray-400')
             with ui.row().classes('w-full gap-2 items-center'):
@@ -230,8 +180,7 @@ async def show_add_job_dialog():
                 
                 def browse_output():
                     def on_folder_selected(result):
-                        if result:
-                            output_input.value = result
+                        if result: output_input.value = result
                     open_folder_dialog_async("Select Output Folder", None, on_folder_selected)
                 
                 ui.button('Browse', icon='folder_open', on_click=browse_output).props('flat dense')
@@ -240,7 +189,6 @@ async def show_add_job_dialog():
                 ui.input('Prefix', value='render_').bind_value(form, 'output_name').classes('flex-grow')
                 ui.select(['PNG', 'JPEG', 'OpenEXR', 'TIFF'], value='PNG', label='Format').bind_value(form, 'output_format').classes('w-28')
             
-            # Resolution
             ui.label('Resolution:').classes('text-sm text-gray-400')
             with ui.row().classes('w-full items-center gap-2'):
                 res_w_input = ui.number('Width', value=1920, min=1).classes('w-24')
@@ -276,40 +224,28 @@ async def show_add_job_dialog():
                 frame_end_input = ui.number('End', value=250, min=1).classes('w-20')
                 frame_end_input.bind_value(form, 'frame_end')
             
-            # Engine-specific settings section
             @ui.refreshable
             def engine_settings_section():
                 if form['engine_type'] == 'vantage':
                     ui.separator()
                     ui.label('Vantage Settings').classes('text-sm font-bold text-gray-400')
                     
-                    with ui.row().classes('w-full items-center gap-2'):
-                        ui.select(
-                            options=[('high', 'High'), ('medium', 'Medium'), ('low', 'Low'), ('ultra', 'Ultra')],
-                            value=form.get('vantage_quality', 'high'),
-                            label='Quality'
-                        ).bind_value(form, 'vantage_quality').classes('w-28')
-                        
-                        ui.number('Samples', value=form.get('vantage_samples', 256), min=1, max=65536).bind_value(form, 'vantage_samples').classes('w-28')
-                        
-                        ui.select(
-                            options=[('nvidia', 'NVIDIA AI'), ('oidn', 'Intel OIDN'), ('off', 'Off')],
-                            value=form.get('vantage_denoiser', 'nvidia'),
-                            label='Denoiser'
-                        ).bind_value(form, 'vantage_denoiser').classes('w-28')
-                
+                    # Use Scene Settings checkbox
+                    use_scene_cb = ui.checkbox('Use Scene Settings', value=True).props('dense')
+                    use_scene_cb.bind_value(form, 'vantage_use_scene_settings')
+                    ui.label('Uses resolution, samples, and output configured in Vantage').classes('text-xs text-gray-500 ml-6 -mt-1')
+                    
+                    # Only show custom settings when not using scene settings
+                    with ui.row().classes('w-full items-center gap-2').bind_visibility_from(form, 'vantage_use_scene_settings', value=False):
+                        ui.select(options=[('high', 'High'), ('medium', 'Medium'), ('low', 'Low'), ('ultra', 'Ultra')], value='high', label='Quality').bind_value(form, 'vantage_quality').classes('w-28')
+                        ui.number('Samples', value=256, min=1, max=65536).bind_value(form, 'vantage_samples').classes('w-28')
+                        ui.select(options=[('nvidia', 'NVIDIA AI'), ('oidn', 'Intel OIDN'), ('off', 'Off')], value='nvidia', label='Denoiser').bind_value(form, 'vantage_denoiser').classes('w-28')
                 elif form['engine_type'] == 'marmoset':
                     ui.separator()
                     ui.label('Marmoset Settings').classes('text-sm font-bold text-gray-400')
-                    
                     with ui.row().classes('w-full items-center gap-2'):
-                        ui.select(
-                            options=['still', 'turntable', 'animation'],
-                            value=form.get('render_type', 'still'),
-                            label='Render Type'
-                        ).bind_value(form, 'render_type').classes('w-32')
-                        
-                        ui.number('Samples', value=form.get('samples', 256), min=1, max=4096).bind_value(form, 'samples').classes('w-24')
+                        ui.select(options=['still', 'turntable', 'animation'], value='still', label='Render Type').bind_value(form, 'render_type').classes('w-32')
+                        ui.number('Samples', value=256, min=1, max=4096).bind_value(form, 'samples').classes('w-24')
             
             accent_elements['engine_settings'] = engine_settings_section
             engine_settings_section()
@@ -329,35 +265,22 @@ async def show_add_job_dialog():
                 engine_settings = {}
                 if form['engine_type'] == 'vantage':
                     engine_settings = {
+                        "use_scene_settings": form.get('vantage_use_scene_settings', True),
                         "quality_preset": form.get('vantage_quality', 'high'),
                         "samples": int(form.get('vantage_samples', 256)),
                         "denoiser": form.get('vantage_denoiser', 'nvidia'),
                     }
                 elif form['engine_type'] == 'marmoset':
-                    engine_settings = {
-                        "render_type": form.get('render_type', 'still'),
-                        "samples": int(form.get('samples', 256)),
-                        "render_passes": form.get('render_passes', ['beauty']),
-                    }
-                else:
-                    engine_settings = {
-                        "blender_denoiser": form.get('blender_denoiser', 'OptiX'),
-                    }
+                    engine_settings = {"render_type": form.get('render_type', 'still'), "samples": int(form.get('samples', 256)), "render_passes": form.get('render_passes', ['beauty'])}
                 
                 job = RenderJob(
-                    name=form['name'] or "Untitled",
-                    engine_type=form['engine_type'],
-                    file_path=form['file_path'],
-                    output_folder=form['output_folder'],
-                    output_name=form['output_name'],
-                    output_format=form['output_format'],
-                    camera=form['camera'],
-                    is_animation=form['is_animation'],
-                    frame_start=int(form['frame_start']),
-                    frame_end=int(form['frame_end']),
+                    name=form['name'] or "Untitled", engine_type=form['engine_type'],
+                    file_path=form['file_path'], output_folder=form['output_folder'],
+                    output_name=form['output_name'], output_format=form['output_format'],
+                    camera=form['camera'], is_animation=form['is_animation'],
+                    frame_start=int(form['frame_start']), frame_end=int(form['frame_end']),
                     original_start=int(form['frame_start']),
-                    res_width=int(form['res_width']),
-                    res_height=int(form['res_height']),
+                    res_width=int(form['res_width']), res_height=int(form['res_height']),
                     overwrite_existing=form.get('overwrite_existing', True),
                     status='paused' if form['submit_paused'] else 'queued',
                     engine_settings=engine_settings,
@@ -367,30 +290,16 @@ async def show_add_job_dialog():
                 dialog.close()
             
             initial_accent = ENGINE_COLORS.get(form['engine_type'], "#ea7600")
-            submit_btn = ui.button('Submit Job', on_click=submit).classes('engine-accent').style(f'background-color: {initial_accent} !important;')
+            submit_btn = ui.button('Submit Job', on_click=submit).style(f'background-color: {initial_accent} !important;')
             accent_elements['submit_btn'] = submit_btn
     
     dialog.open()
 
 
 async def show_edit_job_dialog(job):
-    """Edit an existing job's settings."""
     accent_color = ENGINE_COLORS.get(job.engine_type, "#71717a")
     
-    form = {
-        'name': job.name,
-        'file_path': job.file_path,
-        'output_folder': job.output_folder,
-        'output_name': job.output_name,
-        'output_format': job.output_format,
-        'camera': job.camera,
-        'is_animation': job.is_animation,
-        'frame_start': job.frame_start,
-        'frame_end': job.frame_end,
-        'res_width': job.res_width,
-        'res_height': job.res_height,
-        'overwrite_existing': job.overwrite_existing,
-    }
+    form = {'name': job.name, 'file_path': job.file_path, 'output_folder': job.output_folder, 'output_name': job.output_name, 'output_format': job.output_format, 'camera': job.camera, 'is_animation': job.is_animation, 'frame_start': job.frame_start, 'frame_end': job.frame_end, 'res_width': job.res_width, 'res_height': job.res_height, 'overwrite_existing': job.overwrite_existing}
     
     with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
         with ui.row().classes('w-full items-center justify-between p-4'):
@@ -398,7 +307,6 @@ async def show_edit_job_dialog(job):
             ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
         
         with ui.column().classes('w-full p-4 gap-3').style('max-height: 70vh; overflow-y: auto;'):
-            # Engine display
             with ui.row().classes('w-full items-center gap-2'):
                 ui.label('Engine:').classes('text-gray-400 w-20')
                 engine_logo = AVAILABLE_LOGOS.get(job.engine_type)
@@ -411,10 +319,8 @@ async def show_edit_job_dialog(job):
                     ui.label(engine.name if engine else job.engine_type).classes('text-sm')
             
             ui.input('Job Name', value=form['name']).bind_value(form, 'name').classes('w-full')
-            
             ui.label('Scene File:').classes('text-sm text-gray-400')
             ui.input(value=form['file_path']).bind_value(form, 'file_path').classes('w-full')
-            
             ui.label('Output Folder:').classes('text-sm text-gray-400')
             ui.input(value=form['output_folder']).bind_value(form, 'output_folder').classes('w-full')
             
@@ -436,11 +342,8 @@ async def show_edit_job_dialog(job):
             ui.separator()
             ui.checkbox('Overwrite Existing', value=form['overwrite_existing']).props('dense').bind_value(form, 'overwrite_existing')
             
-            # Status info
             ui.separator()
-            status_text = f"Status: {job.status.upper()}"
-            if job.progress > 0:
-                status_text += f" ({job.progress}%)"
+            status_text = f"Status: {job.status.upper()}" + (f" ({job.progress}%)" if job.progress > 0 else "")
             ui.label(status_text).classes('text-sm text-gray-500')
         
         with ui.row().classes('w-full justify-end gap-2 p-4 border-t border-zinc-700'):
@@ -461,8 +364,7 @@ async def show_edit_job_dialog(job):
                 
                 render_app.save_config()
                 render_app.log(f"Updated: {job.name}")
-                if render_app.queue_container:
-                    render_app.queue_container.refresh()
+                if render_app.queue_container: render_app.queue_container.refresh()
                 dialog.close()
             
             def resubmit():
@@ -472,10 +374,8 @@ async def show_edit_job_dialog(job):
                 job.current_frame = 0
                 job.error_message = ""
                 render_app.save_config()
-                if render_app.queue_container:
-                    render_app.queue_container.refresh()
-                if render_app.stats_container:
-                    render_app.stats_container.refresh()
+                if render_app.queue_container: render_app.queue_container.refresh()
+                if render_app.stats_container: render_app.stats_container.refresh()
             
             if job.status in ['completed', 'failed']:
                 ui.button('Resubmit', icon='refresh', on_click=resubmit).style(f'background-color: {accent_color} !important;')

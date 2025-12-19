@@ -4,10 +4,7 @@ Wain Render Engines
 
 Render engine implementations and registry.
 
-Architecture v2.10:
-- interface.py: Defines EngineInterface and RenderProgress structures
-- Each engine implements the interface for consistent communication
-- Settings are schema-driven for UI generation
+v2.15.0 - Added VantageINIManager for full HQ settings control
 """
 
 from wain.engines.base import RenderEngine
@@ -16,7 +13,6 @@ from wain.engines.marmoset import MarmosetEngine
 from wain.engines.vantage import VantageEngine
 from wain.engines.registry import EngineRegistry
 
-# New communication interface
 from wain.engines.interface import (
     EngineInterface,
     EngineSettingsSchema,
@@ -27,13 +23,20 @@ from wain.engines.interface import (
     RenderStatus,
 )
 
+# Vantage INI settings manager (v2.15.0)
+from wain.engines.vantage_settings import (
+    VantageINIManager,
+    VantageHQSettings,
+    read_vantage_settings,
+    apply_render_settings,
+)
+
 __all__ = [
     'RenderEngine',
     'BlenderEngine',
     'MarmosetEngine',
     'VantageEngine',
     'EngineRegistry',
-    # Interface classes
     'EngineInterface',
     'EngineSettingsSchema',
     'SettingDefinition',
@@ -41,4 +44,9 @@ __all__ = [
     'SettingCategory',
     'RenderProgress',
     'RenderStatus',
+    # Vantage settings (v2.15.0)
+    'VantageINIManager',
+    'VantageHQSettings',
+    'read_vantage_settings',
+    'apply_render_settings',
 ]

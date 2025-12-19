@@ -21,7 +21,6 @@ from wain.engines.registry import EngineRegistry
 
 
 def sanitize_to_ascii(message: str) -> str:
-    """Convert message to safe ASCII characters."""
     if not message:
         return ""
     try:
@@ -77,7 +76,6 @@ class RenderApp:
                     job.accumulated_seconds += int((datetime.now() - self.render_start_time).total_seconds())
                 engine = self.engine_registry.get(job.engine_type)
                 if engine:
-                    # Use pause_render if available (native pause), otherwise cancel
                     if hasattr(engine, 'pause_render'):
                         engine.pause_render()
                     else:
@@ -107,7 +105,6 @@ class RenderApp:
                 if engine: engine.cancel_render()
                 self.current_job = None
             elif job.status == "paused" and job.engine_type == "vantage":
-                # For paused Vantage jobs, we need to abort and close even though current_job is None
                 engine = self.engine_registry.get(job.engine_type)
                 if engine: engine.cancel_render()
             self.jobs = [j for j in self.jobs if j.id != job.id]
@@ -128,15 +125,8 @@ class RenderApp:
             self.current_job.elapsed_time = elapsed
             
             job = self.current_job
-            frames_display = job.frames_display
-            samples_display = job.samples_display
-            pass_display = job.pass_display
-            
             try:
-                safe_frames = frames_display.replace('"', '\\"').replace("'", "\\'")
-                safe_samples = samples_display.replace('"', '\\"').replace("'", "\\'")
-                safe_pass = pass_display.replace('"', '\\"').replace("'", "\\'")
-                ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job.id}", {job.progress}, "{elapsed}", "{safe_frames}", "{safe_samples}", "{safe_pass}");')
+                ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job.id}", {job.progress}, "{elapsed}", "{job.frames_display}", "{job.samples_display}", "{job.pass_display}");')
             except:
                 pass
         
@@ -145,10 +135,7 @@ class RenderApp:
             self._progress_updates.clear()
             for job_id, progress, elapsed, frame, frames_display, samples_display, pass_display in updates:
                 try:
-                    safe_frames = frames_display.replace('"', '\\"').replace("'", "\\'")
-                    safe_samples = samples_display.replace('"', '\\"').replace("'", "\\'")
-                    safe_pass = pass_display.replace('"', '\\"').replace("'", "\\'")
-                    ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{safe_frames}", "{safe_samples}", "{safe_pass}");')
+                    ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{frames_display}", "{samples_display}", "{pass_display}");')
                 except:
                     pass
         
@@ -193,9 +180,8 @@ class RenderApp:
         self.render_start_time = datetime.now()
         
         start_frame = job.frame_start
-        if job.is_animation:
-            if job.current_frame > 0:
-                start_frame = job.current_frame + 1
+        if job.is_animation and job.current_frame > 0:
+            start_frame = job.current_frame + 1
         
         if job.original_start == 0:
             job.original_start = job.frame_start
@@ -224,10 +210,9 @@ class RenderApp:
             if job.is_animation:
                 if frame > 0:
                     job.rendering_frame = frame
-                if frame == -1:
-                    if job.rendering_frame > 0:
-                        job.current_frame = job.rendering_frame
-                        job.current_sample = 0
+                if frame == -1 and job.rendering_frame > 0:
+                    job.current_frame = job.rendering_frame
+                    job.current_sample = 0
                     job.progress = min(int((job.current_frame / job.frame_end) * 100), 99)
                 else:
                     completed_frames = job.rendering_frame - 1 if job.rendering_frame > 0 else 0

@@ -7,7 +7,9 @@ Entry point for running as a package: python -m wain
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.10.0 - Bidirectional engine communication architecture
+v2.14.4 - Maximum speed UI automation with accurate progress tracking
+
+https://github.com/Spencer-Sliffe/Wain
 """
 
 # ============================================================================

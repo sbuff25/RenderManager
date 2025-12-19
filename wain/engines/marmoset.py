@@ -1,10 +1,8 @@
 """
-Wain Marmoset Engine - Optimized Frame-by-Frame Rendering
-==========================================================
+Wain Marmoset Engine
+====================
 
-Uses renderCamera() for ALL render types to ensure only requested passes
-are rendered. This is more efficient than renderVideos() which renders
-ALL scene passes regardless of selection.
+Marmoset Toolbag render engine integration.
 """
 
 import os
@@ -38,16 +36,6 @@ class MarmosetEngine(RenderEngine):
         "PNG": "PNG", "JPEG": "JPEG", "TGA": "TGA", "PSD": "PSD",
         "PSD (16-bit)": "PSD (16-bit)", "EXR (16-bit)": "EXR (16-bit)", "EXR (32-bit)": "EXR (32-bit)",
     }
-    
-    RENDER_PASSES = [
-        {"id": "beauty", "name": "Final Composite (Beauty)", "pass": "", "category": "Common"},
-        {"id": "wireframe", "name": "Wireframe", "pass": "wireframe", "category": "Common"},
-        {"id": "alpha_mask", "name": "Alpha Mask", "pass": "alpha mask", "category": "Geometry"},
-        {"id": "depth", "name": "Depth", "pass": "depth", "category": "Geometry"},
-        {"id": "normals", "name": "Normals", "pass": "normals", "category": "Geometry"},
-        {"id": "ambient_occlusion", "name": "Ambient Occlusion", "pass": "ambient occlusion", "category": "Lighting"},
-        {"id": "albedo", "name": "Albedo", "pass": "albedo", "category": "Material"},
-    ]
     
     def __init__(self):
         super().__init__()
@@ -97,19 +85,12 @@ class MarmosetEngine(RenderEngine):
                 print(f"Failed to open in Toolbag: {e}")
     
     def get_scene_info(self, file_path: str) -> Dict[str, Any]:
-        default_info = {
+        return {
             "cameras": ["Main Camera"], "active_camera": "Main Camera",
             "resolution_x": 1920, "resolution_y": 1080, "renderer": "Ray Tracing",
             "samples": 256, "frame_start": 1, "frame_end": 1, "total_frames": 1,
             "has_animation": False, "has_turntable": False,
         }
-        
-        toolbag_exe = self.get_best_toolbag()
-        if not toolbag_exe or not os.path.exists(file_path):
-            return default_info
-        
-        # Scene probing would go here - simplified for now
-        return default_info
     
     def start_render(self, job, start_frame: int, on_progress, on_complete, on_error, on_log=None):
         toolbag_exe = self.get_best_toolbag()
@@ -124,13 +105,10 @@ class MarmosetEngine(RenderEngine):
         self.is_cancelling = False
         os.makedirs(job.output_folder, exist_ok=True)
         
-        render_type = job.get_setting("render_type", "still")
-        
         script_dir = os.path.dirname(job.file_path) or tempfile.gettempdir()
         self._temp_script_path = os.path.join(script_dir, f"_wain_render_{job.id}.py")
         self._progress_file_path = os.path.join(script_dir, f"_wain_progress_{job.id}.json")
         
-        # Generate render script
         script_code = self._generate_render_script(job, start_frame)
         
         try:
@@ -153,7 +131,6 @@ class MarmosetEngine(RenderEngine):
                     if on_log:
                         on_log(f"Started Toolbag PID: {self.current_process.pid}")
                     
-                    # Monitor progress
                     self._monitoring = True
                     while self._monitoring and not self.is_cancelling:
                         if self.current_process.poll() is not None:

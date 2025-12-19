@@ -3,14 +3,6 @@ Wain - Blender Engine
 =====================
 
 Render engine implementation for Blender.
-v2.7.0 - Fixed denoiser value normalization (OPTIX -> OptiX)
-
-Note on "double rendering": At high resolutions (e.g. 3840x2048), Blender
-splits the frame into multiple tiles and renders them sequentially. This
-is normal GPU rendering behavior, not a bug. The log will show:
-  "Rendered 0/2 Tiles, Sample 1024/1024"
-  "Rendered 1/2 Tiles, Sample 1/1024"
-This means tile 1 is starting, not the frame re-rendering.
 """
 
 import os
@@ -131,7 +123,6 @@ print(f"FRAME_START:{scene.frame_start}")
 print(f"FRAME_END:{scene.frame_end}")
 print(f"USE_COMPOSITING:{render.use_compositing}")
 print(f"USE_SEQUENCER:{render.use_sequencer}")
-
 has_comp_denoise = False
 if scene.node_tree and scene.node_tree.nodes:
     for node in scene.node_tree.nodes:
@@ -145,8 +136,6 @@ print("INFO_END")
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                 f.write(script)
                 temp_path = f.name
-            
-            print(f"[Wain] Probing Blender scene: {file_path}")
             
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -206,7 +195,6 @@ print("INFO_END")
             on_log(f"Resolution: {job.res_width}x{job.res_height}")
             on_log(f"Overwrite existing: {job.overwrite_existing}")
         
-        # For single frame renders, check if output already exists
         if not job.is_animation and not job.overwrite_existing:
             ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}
             ext = ext_map.get(self.OUTPUT_FORMATS.get(job.output_format, "PNG"), "png")
@@ -227,22 +215,7 @@ bpy.context.scene.render.resolution_percentage = 100
 print(f"[Wain] Resolution set to {{bpy.context.scene.render.resolution_x}}x{{bpy.context.scene.render.resolution_y}}")
 '''
         
-        if job.is_animation and not job.overwrite_existing:
-            ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}
-            ext = ext_map.get(fmt, "png")
-            output_base = os.path.join(job.output_folder, job.output_name).replace('\\', '\\\\')
-            script = base_script + f'''
-import os
-def skip_existing_handler(scene, depsgraph):
-    frame = scene.frame_current
-    output_path = f"{output_base}{{frame:04d}}.{ext}"
-    if os.path.exists(output_path):
-        print(f"[Wain] Skipping frame {{frame}} - already exists")
-        bpy.context.scene.render.use_lock_interface = False
-        raise Exception("SKIP_FRAME")
-'''
-        else:
-            script = base_script
+        script = base_script
         
         script_dir = os.path.dirname(job.file_path) or os.getcwd()
         self.temp_script_path = os.path.join(script_dir, f"_wain_render_{job.id}.py")

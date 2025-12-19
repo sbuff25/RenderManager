@@ -64,16 +64,15 @@ def create_job_card(job):
                 ui.label(job.file_name).classes('text-sm text-gray-400')
             
             if job.status == "rendering":
-                with ui.element('div').classes(f'px-2 py-1 rounded text-xs font-bold status-badge').style(f'background-color: rgba(255,255,255,0.1); color: {engine_color};'):
+                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style(f'background-color: rgba(255,255,255,0.1); color: {engine_color};'):
                     ui.label(job.status.upper())
             elif job.status == "paused":
-                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold status-badge').style('background-color: rgba(161,161,170,0.15); color: #a1a1aa;'):
+                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style('background-color: rgba(161,161,170,0.15); color: #a1a1aa;'):
                     ui.label(job.status.upper())
             else:
-                with ui.element('div').classes(f'px-2 py-1 rounded bg-{config["bg"]} text-{config["color"]}-400 text-xs font-bold status-badge'):
+                with ui.element('div').classes(f'px-2 py-1 rounded bg-{config["bg"]} text-{config["color"]}-400 text-xs font-bold'):
                     ui.label(job.status.upper())
             
-            # Action buttons
             if job.status == "rendering":
                 ui.button(icon='pause', on_click=lambda j=job: render_app.handle_action('pause', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
             elif job.status in ["queued", "paused"]:
@@ -112,7 +111,6 @@ def create_job_card(job):
             info_parts.append(f"Time: {job.elapsed_time}")
         
         progress_parts = []
-        
         if job.total_passes > 1 and job.current_pass:
             progress_parts.append(f"{job.current_pass} ({job.current_pass_num}/{job.total_passes})")
         if job.is_animation:

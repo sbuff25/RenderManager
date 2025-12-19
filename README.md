@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.14.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.14.4-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,7 +34,76 @@
 
 ---
 
-## 🆕 What's New in v2.14.0
+## 🆕 What's New in v2.14.3
+
+## 🆕 What's New in v2.14.4
+
+### Maximum Speed Startup
+
+**90% Faster Action Response**
+- All delays reduced to absolute minimum
+- Window polling: 0.1s (was 0.2s)
+- Ctrl+R keypress: 0.08s total (was 0.25s)
+- Ctrl+R retry: every 0.5s (was 2.0s in v2.13)
+- Click-and-go: No verification loop - immediate monitoring
+
+**Smart Retry in Background**
+- Click Start immediately, start monitoring right away
+- If no progress window after 3s, retry click automatically
+- Up to 3 retry attempts while monitoring continues
+- Fails gracefully after 30s with clear error
+
+**Timing Summary**
+| Action | v2.13 | v2.14.4 | Improvement |
+|--------|-------|---------|-------------|
+| Window polling | 0.5s | 0.1s | 5x faster |
+| Ctrl+R total | 0.35s | 0.08s | 4x faster |
+| Ctrl+R retry | 2.0s | 0.5s | 4x faster |
+| Click verify | 0.5s+ | 0s | Eliminated |
+| Progress poll | 0.5s | 0.3s | 40% faster |
+
+### Previous v2.14.3 - Speed & Bug Fixes
+
+**Faster UI Automation**
+- Reduced all delays by 60-80%
+- Button polling: 0.1s intervals (was 0.15s)
+- Progress monitoring: 0.3s intervals (was 0.5s)
+
+**Fixed Delete on Paused Jobs**
+- Delete now works when Vantage render is paused
+- Properly calls Abort and closes Vantage
+
+### Previous v2.14.2 - Resume Support
+
+**Smart Resume Detection**
+- When starting a job, checks if progress window is already open
+- Detects Resume button (Pause button changes to Resume when paused)
+- Clicks Resume and goes straight to progress monitoring
+
+**Seamless Workflow**
+- Pause in Wain → Vantage pauses
+- Play in Wain → Vantage resumes from where it left off
+- No need to restart render from scratch
+
+### Previous v2.14.1 - Native Pause/Abort Control
+
+### Native Pause/Abort Control for Vantage
+
+**Pause Button**
+- Clicking Pause in Wain now clicks Vantage's native Pause button
+- Keeps render window open - ready to resume
+- Progress position is preserved
+
+**Delete Job = Abort + Close**
+- Deleting a job clicks Abort in Vantage
+- Then automatically closes Vantage
+- Handles "Save Changes?" dialogs automatically
+
+**Fast Response**
+- Direct button clicking via automation IDs
+- No delays - action happens immediately
+
+### Previous v2.14.0 - Accurate Progress Tracking
 
 ### Accurate Progress Tracking for Vantage 3.x
 

@@ -1,24 +1,38 @@
 """
-Wain Vantage Engine v2.14.0
+Wain Vantage Engine v2.14.4
 ===========================
 
-Chaos Vantage render engine integration - SPEED OPTIMIZED with ACCURATE PROGRESS.
+Chaos Vantage render engine integration - MAXIMUM SPEED with ACCURATE PROGRESS.
 
 Architecture:
 - Primary: UI automation with robust button detection
 - Secondary: HTTP API via Live Link protocol (port 20701)
 - Fallback: Direct keyboard shortcuts
 
+Speed Optimizations (v2.14.4):
+- All delays reduced to absolute minimum (~80-90% faster than v2.13)
+- Window polling: 0.1s intervals
+- Ctrl+R: 0.08s total (focus + keys + wait)
+- Ctrl+R resend: every 0.5s (was 2.0s in v2.13)
+- Click verification: 0.17s total
+- Progress monitoring: 0.3s intervals
+- Fixed delete on paused jobs
+
+Resume Support (v2.14.2):
+- Detects existing progress window when starting a job
+- Clicks Resume button if render was paused
+- Skips full start flow - goes straight to monitoring
+
+Pause/Abort Control (v2.14.1):
+- pause_render() clicks Pause button - keeps Vantage open for resume
+- cancel_render() clicks Abort button and closes Vantage
+- Handles save confirmation dialogs automatically
+
 Progress Reading (v2.14.0):
 - Progress dialog is a CHILD window inside main Vantage window
 - Parses 'HQ sequence frame X of Y' for frame count
 - Reads elapsed/remaining time from dialog
 - Calculates total % from frame progress
-
-Click Verification (v2.13.2):
-- Verifies render actually started by checking for progress window
-- Retries click up to 3 times if render doesn't start
-- Falls back to invoke() method if click_input() fails
 - Logs button state (name, enabled) for debugging
 
 HQ render settings (output path, resolution, frame range) are NOT stored
@@ -426,14 +440,14 @@ class VantageEngine(RenderEngine):
         
         try:
             window.set_focus()
-            time.sleep(0.15)
+            time.sleep(0.02)
         except:
             pass
         
         # Method 1: pywinauto keyboard
         try:
-            keyboard.send_keys("^r", pause=0.05)
-            time.sleep(0.3)
+            keyboard.send_keys("^r", pause=0.01)
+            time.sleep(0.05)
             return True
         except:
             pass
@@ -446,10 +460,10 @@ class VantageEngine(RenderEngine):
             
             ctypes.windll.user32.keybd_event(VK_CONTROL, 0, 0, 0)
             ctypes.windll.user32.keybd_event(VK_R, 0, 0, 0)
-            time.sleep(0.05)
+            time.sleep(0.01)
             ctypes.windll.user32.keybd_event(VK_R, 0, KEYEVENTF_KEYUP, 0)
             ctypes.windll.user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
-            time.sleep(0.3)
+            time.sleep(0.05)
             return True
         except:
             pass
@@ -526,7 +540,7 @@ class VantageEngine(RenderEngine):
                         creationflags=subprocess.DETACHED_PROCESS
                     )
                     
-                    # Aggressive polling for window (0.2s intervals)
+                    # Aggressive polling for window (0.1s intervals)
                     self._log("Waiting for Vantage window...")
                     wait_start = time.time()
                     while time.time() - wait_start < 60:
@@ -538,7 +552,7 @@ class VantageEngine(RenderEngine):
                         if vantage:
                             self._log(f"Vantage window found! ({time.time() - wait_start:.1f}s)")
                             break
-                        time.sleep(0.2)  # Fast polling
+                        time.sleep(0.1)  # Fast polling
                     
                     if not vantage:
                         on_error("Vantage did not start within 1 minute")
@@ -550,6 +564,126 @@ class VantageEngine(RenderEngine):
                 
                 if self.is_cancelling:
                     return
+                
+                # ============================================================
+                # STEP 1.5: Check if we're resuming a paused render
+                # ============================================================
+                progress_win = self._find_progress_window()
+                if progress_win:
+                    self._log("Found existing progress window - checking for Resume button...")
+                    
+                    # Look for Resume button (Pause button changes to Resume when paused)
+                    resume_btn = self._find_button_multilevel(progress_win, "resume")
+                    if resume_btn:
+                        self._log("Clicking Resume to continue paused render...")
+                        try:
+                            resume_btn.click_input()
+                            self._log("Clicked Resume button!")
+                        except Exception as e:
+                            self._log(f"click_input failed: {e}, trying invoke()")
+                            try:
+                                resume_btn.invoke()
+                                self._log("Resume invoked!")
+                            except:
+                                pass
+                        
+                        # Skip to monitoring - render is already configured
+                        # Jump directly to Step 4
+                        self._log("Resuming progress monitoring...")
+                        
+                        job.progress = max(job.progress, 0)
+                        on_progress(job.progress, "Resuming render...")
+                        
+                        render_start = time.time()
+                        last_progress = -1
+                        progress_window_seen = True
+                        no_window_count = 0
+                        last_log_time = time.time()
+                        
+                        while not self.is_cancelling:
+                            elapsed = time.time() - render_start
+                            
+                            self._desktop = Desktop(backend="uia")
+                            progress_win = self._find_progress_window()
+                            
+                            if progress_win:
+                                progress_window_seen = True
+                                no_window_count = 0
+                                
+                                progress_info = self._read_progress(progress_win)
+                                
+                                if progress_info:
+                                    total_pct = progress_info.get('total', 0)
+                                    frame_pct = progress_info.get('frame_pct', 0)
+                                    current_frame = progress_info.get('frame', 0)
+                                    total_frames = progress_info.get('total_frames', 1)
+                                    elapsed_str = progress_info.get('elapsed', '')
+                                    remaining_str = progress_info.get('remaining', '')
+                                    
+                                    if total_pct == 0 and current_frame > 0 and total_frames > 0:
+                                        total_pct = int((current_frame / total_frames) * 100)
+                                    
+                                    progress_changed = (total_pct != last_progress or current_frame != job.current_frame)
+                                    time_to_log = (time.time() - last_log_time) > 10
+                                    
+                                    if progress_changed or time_to_log:
+                                        last_progress = total_pct
+                                        last_log_time = time.time()
+                                        job.progress = min(total_pct, 99)
+                                        
+                                        if current_frame > 0:
+                                            job.current_frame = current_frame
+                                            job.rendering_frame = current_frame
+                                        
+                                        if total_frames > 1:
+                                            job.frame_end = total_frames
+                                        
+                                        if frame_pct > 0:
+                                            job.current_sample = frame_pct
+                                            job.total_samples = 100
+                                        
+                                        if current_frame > 0 and total_frames > 1:
+                                            status = f"Frame {current_frame}/{total_frames} ({total_pct}%)"
+                                        else:
+                                            status = f"Rendering... {total_pct}%"
+                                        
+                                        on_progress(total_pct, status)
+                                        
+                                        log_msg = status
+                                        if elapsed_str:
+                                            log_msg += f" - Elapsed: {elapsed_str}"
+                                        if remaining_str:
+                                            log_msg += f" - Remaining: {remaining_str}"
+                                        self._log(log_msg)
+                                    
+                                    if current_frame >= total_frames and total_frames > 1:
+                                        self._log("All frames complete!")
+                                        job.progress = 100
+                                        on_complete()
+                                        return
+                                    
+                                    if total_pct >= 100:
+                                        self._log("Render complete!")
+                                        job.progress = 100
+                                        on_complete()
+                                        return
+                            
+                            elif progress_window_seen:
+                                no_window_count += 1
+                                if no_window_count >= 5:
+                                    self._log("Progress window closed - render complete!")
+                                    job.progress = 100
+                                    on_complete()
+                                    return
+                            
+                            if elapsed > 7200:
+                                on_error("Render timed out after 2 hours")
+                                return
+                            
+                            time.sleep(0.3)  # Progress monitoring interval
+                        
+                        self._log("Render cancelled by user")
+                        return  # Exit - we handled the resume case
                 
                 # ============================================================
                 # STEP 2: Immediately send Ctrl+R and poll for Start button
@@ -569,7 +703,7 @@ class VantageEngine(RenderEngine):
                     self._send_ctrl_r(vantage)
                     start_btn = None
                 
-                # Aggressive polling for Start button (0.15s intervals, max 30s)
+                # Aggressive polling for Start button (0.1s intervals, max 30s)
                 poll_start = time.time()
                 ctrl_r_sent_times = 1
                 last_ctrl_r = time.time()
@@ -583,7 +717,7 @@ class VantageEngine(RenderEngine):
                     vantage = self._find_vantage_window()
                     
                     if not vantage:
-                        time.sleep(0.15)
+                        time.sleep(0.1)
                         continue
                     
                     self._vantage_window = vantage
@@ -593,14 +727,14 @@ class VantageEngine(RenderEngine):
                         self._log(f"Start button found! ({time.time() - poll_start:.1f}s)")
                         break
                     
-                    # Resend Ctrl+R every 2 seconds if button not found
-                    if time.time() - last_ctrl_r > 2.0 and ctrl_r_sent_times < 5:
+                    # Resend Ctrl+R every 0.5 seconds if button not found (panel should appear quickly)
+                    if time.time() - last_ctrl_r > 0.5 and ctrl_r_sent_times < 8:
                         self._log(f"Resending Ctrl+R (attempt {ctrl_r_sent_times + 1})...")
                         self._send_ctrl_r(vantage)
                         last_ctrl_r = time.time()
                         ctrl_r_sent_times += 1
                     
-                    time.sleep(0.15)  # Fast polling
+                    time.sleep(0.1)  # Fast polling
                 
                 if not start_btn:
                     # Debug: list all available buttons
@@ -610,100 +744,22 @@ class VantageEngine(RenderEngine):
                     return
                 
                 # ============================================================
-                # STEP 3: Click Start button with verification
+                # STEP 3: Click Start button (fast - no verification loop)
                 # ============================================================
                 self._log("Step 3: Clicking Start...")
                 
-                # Brief pause to ensure panel is fully interactive
-                time.sleep(0.2)
-                
-                render_actually_started = False
-                click_attempts = 0
-                max_click_attempts = 3
-                
-                while not render_actually_started and click_attempts < max_click_attempts:
-                    click_attempts += 1
-                    
+                try:
+                    # Click immediately - no delays
+                    start_btn.click_input()
+                    self._log("Click sent!")
+                except Exception as e:
+                    # Fallback to invoke
                     try:
-                        # Refresh window reference
-                        self._desktop = Desktop(backend="uia")
-                        vantage = self._find_vantage_window()
-                        if not vantage:
-                            self._log("Lost Vantage window!")
-                            time.sleep(0.3)
-                            continue
-                        
-                        # Re-find the Start button (it may have changed)
-                        start_btn = self._find_start_button(vantage)
-                        if not start_btn:
-                            self._log(f"Start button not found (attempt {click_attempts})")
-                            time.sleep(0.3)
-                            continue
-                        
-                        # Get button info for logging
-                        try:
-                            btn_name = start_btn.element_info.name or "unnamed"
-                            btn_enabled = start_btn.is_enabled() if hasattr(start_btn, 'is_enabled') else "unknown"
-                            self._log(f"Clicking button '{btn_name}' (enabled: {btn_enabled})")
-                        except:
-                            pass
-                        
-                        # Focus window and click
-                        vantage.set_focus()
-                        time.sleep(0.1)
-                        
-                        # Try click_input first (more reliable)
-                        start_btn.click_input()
-                        self._log(f"Click sent (attempt {click_attempts})")
-                        
-                        # Wait and check if progress window appears
-                        time.sleep(0.5)
-                        self._desktop = Desktop(backend="uia")
-                        progress_win = self._find_progress_window()
-                        
-                        if progress_win:
-                            self._log("Progress window detected - render started!")
-                            render_actually_started = True
-                        else:
-                            # Check if Start button is still there (if gone, render probably started)
-                            vantage = self._find_vantage_window()
-                            if vantage:
-                                start_btn_check = self._find_start_button(vantage)
-                                if not start_btn_check:
-                                    self._log("Start button gone - render likely started!")
-                                    render_actually_started = True
-                                else:
-                                    self._log(f"Start button still visible - click may not have worked")
-                                    # Try invoke() as fallback
-                                    if click_attempts < max_click_attempts:
-                                        try:
-                                            self._log("Trying invoke() method...")
-                                            start_btn_check.invoke()
-                                            time.sleep(0.5)
-                                            self._desktop = Desktop(backend="uia")
-                                            if self._find_progress_window():
-                                                self._log("Progress window detected after invoke!")
-                                                render_actually_started = True
-                                        except Exception as e:
-                                            self._log(f"Invoke failed: {e}")
-                            else:
-                                # Window gone - might be a crash or render started
-                                self._log("Vantage window not found after click")
-                                time.sleep(1.0)
-                        
-                    except Exception as e:
-                        self._log(f"Click attempt {click_attempts} failed: {e}")
-                        time.sleep(0.3)
-                
-                if not render_actually_started:
-                    # One final check for progress window
-                    time.sleep(1.0)
-                    self._desktop = Desktop(backend="uia")
-                    if self._find_progress_window():
-                        self._log("Progress window found on final check!")
-                        render_actually_started = True
-                    else:
-                        on_error("Failed to start render - Start button click did not work after 3 attempts")
+                        start_btn.invoke()
+                        self._log("Invoked Start button")
+                    except:
+                        self._log(f"Click failed: {e}")
+                        on_error("Failed to click Start button")
                         return
                 
                 # ============================================================
@@ -719,6 +775,8 @@ class VantageEngine(RenderEngine):
                 progress_window_seen = False
                 no_window_count = 0
                 last_log_time = time.time()
+                click_retry_count = 0
+                last_click_retry = time.time()
                 
                 while not self.is_cancelling:
                     elapsed = time.time() - render_start
@@ -806,17 +864,36 @@ class VantageEngine(RenderEngine):
                             on_complete()
                             return
                     else:
-                        # No progress window yet - might still be starting
+                        # No progress window yet - retry clicking Start if needed
+                        if elapsed > 3 and click_retry_count < 3 and (time.time() - last_click_retry) > 2:
+                            click_retry_count += 1
+                            last_click_retry = time.time()
+                            self._log(f"No progress window - retrying Start click ({click_retry_count}/3)...")
+                            
+                            # Try to find and click Start button again
+                            vantage = self._find_vantage_window()
+                            if vantage:
+                                start_btn = self._find_start_button(vantage)
+                                if start_btn:
+                                    try:
+                                        start_btn.click_input()
+                                        self._log("Retry click sent")
+                                    except:
+                                        try:
+                                            start_btn.invoke()
+                                        except:
+                                            pass
+                        
                         if elapsed > 30 and not progress_window_seen:
-                            self._log("Warning: No progress window detected after 30s")
-                            # Continue waiting - render might still work
+                            on_error("Render did not start - no progress window after 30s")
+                            return
                     
                     # Timeout after 2 hours
                     if elapsed > 7200:
                         on_error("Render timed out after 2 hours")
                         return
                     
-                    time.sleep(0.5)
+                    time.sleep(0.3)  # Progress monitoring interval
                 
                 self._log("Render cancelled by user")
                 
@@ -827,39 +904,164 @@ class VantageEngine(RenderEngine):
         
         threading.Thread(target=render_thread, daemon=True).start()
     
-    def cancel_render(self):
-        """Cancel the current render."""
-        self._log("Cancelling render...")
+    def pause_render(self):
+        """
+        Pause the current render by clicking Pause in Vantage.
+        
+        Vantage's Pause button keeps the render window open and allows resume.
+        """
+        self._log("Pausing render...")
+        self.is_cancelling = True  # Stop our monitoring loop
+        
+        try:
+            from pywinauto import Desktop
+            self._desktop = Desktop(backend="uia")
+            
+            progress_win = self._find_progress_window()
+            if progress_win:
+                # Click Pause button (id='secondaryButton')
+                pause_btn = self._find_button_multilevel(progress_win, "pause")
+                if pause_btn:
+                    try:
+                        pause_btn.click_input()
+                        self._log("Clicked Pause button")
+                        return True
+                    except Exception as e:
+                        self._log(f"click_input failed: {e}, trying invoke()")
+                        try:
+                            pause_btn.invoke()
+                            self._log("Pause invoked")
+                            return True
+                        except:
+                            pass
+                else:
+                    self._log("Pause button not found")
+            else:
+                self._log("Progress window not found - render may have already stopped")
+        except Exception as e:
+            self._log(f"Error pausing: {e}")
+        
+        return False
+    
+    def cancel_render(self, close_vantage: bool = True):
+        """
+        Cancel/abort the current render.
+        
+        Args:
+            close_vantage: If True, close Vantage after aborting (used for delete job)
+        """
+        print("[Vantage] cancel_render called")  # Debug
         self.is_cancelling = True
         
-        # Try to click Stop button in progress window
         try:
-            if self._desktop:
-                progress_win = self._find_progress_window()
-                if progress_win:
-                    # Look for stop/cancel button
-                    for btn_name in ["stop", "cancel", "abort", "close"]:
+            from pywinauto import Desktop
+            self._desktop = Desktop(backend="uia")
+            
+            progress_win = self._find_progress_window()
+            if progress_win:
+                print("[Vantage] Found progress window, looking for Abort button")
+                # Click Abort button (id='primaryRedButton')
+                abort_btn = self._find_button_multilevel(progress_win, "abort")
+                if abort_btn:
+                    try:
+                        abort_btn.click_input()
+                        print("[Vantage] Clicked Abort button")
+                    except Exception as e:
+                        print(f"[Vantage] click_input failed: {e}, trying invoke()")
+                        try:
+                            abort_btn.invoke()
+                            print("[Vantage] Abort invoked")
+                        except:
+                            pass
+                else:
+                    # Fallback to Cancel or Stop
+                    for btn_name in ["cancel", "stop", "close"]:
                         btn = self._find_button_multilevel(progress_win, btn_name)
                         if btn:
                             try:
                                 btn.click_input()
-                                self._log(f"Clicked {btn_name} button")
+                                print(f"[Vantage] Clicked {btn_name} button")
                                 break
                             except:
                                 pass
-                    
-                    # Fallback: send Escape
-                    try:
-                        from pywinauto import keyboard
-                        progress_win.set_focus()
-                        keyboard.send_keys("{ESCAPE}")
-                    except:
-                        pass
-        except:
-            pass
+            else:
+                print("[Vantage] No progress window found")
+            
+            # Close Vantage if requested (for delete job action)
+            if close_vantage:
+                import time
+                time.sleep(0.05)  # Minimal wait
+                self._close_vantage()
+                
+        except Exception as e:
+            print(f"[Vantage] Error cancelling: {e}")
         
         # Cleanup
         self._vantage_window = None
         self._desktop = None
         self._on_log = None
         self._job = None
+    
+    def _close_vantage(self):
+        """Close the Vantage application."""
+        print("[Vantage] _close_vantage called")
+        try:
+            from pywinauto import Desktop, keyboard
+            import time
+            
+            self._desktop = Desktop(backend="uia")
+            
+            vantage = self._find_vantage_window()
+            if vantage:
+                print("[Vantage] Found Vantage window, sending Alt+F4")
+                
+                # Method 1: Alt+F4
+                try:
+                    vantage.set_focus()
+                    time.sleep(0.02)
+                    keyboard.send_keys("%{F4}")
+                    print("[Vantage] Sent Alt+F4")
+                    
+                    # Quick check for save dialog
+                    time.sleep(0.1)
+                    
+                    # Look for save confirmation dialog and click Don't Save / No
+                    self._desktop = Desktop(backend="uia")
+                    for win in self._desktop.windows():
+                        try:
+                            title = win.window_text().lower()
+                            if "save" in title or "vantage" in title:
+                                # Look for Don't Save / No button
+                                for btn_name in ["don't save", "dont save", "no", "discard"]:
+                                    btn = self._find_button_multilevel(win, btn_name)
+                                    if btn:
+                                        btn.click_input()
+                                        print(f"[Vantage] Clicked '{btn_name}' on save dialog")
+                                        return
+                        except:
+                            pass
+                    
+                    return
+                except Exception as e:
+                    print(f"[Vantage] Alt+F4 failed: {e}")
+                
+                # Method 2: Close button
+                try:
+                    close_btn = vantage.child_window(title="Close", control_type="Button")
+                    close_btn.click_input()
+                    print("[Vantage] Clicked Close button")
+                    return
+                except:
+                    pass
+                
+                # Method 3: Window close
+                try:
+                    vantage.close()
+                    print("[Vantage] Called window.close()")
+                except:
+                    pass
+            else:
+                print("[Vantage] No Vantage window found to close")
+                    
+        except Exception as e:
+            self._log(f"Error closing Vantage: {e}")

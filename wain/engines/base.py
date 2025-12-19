@@ -69,6 +69,19 @@ class RenderEngine(ABC):
         """Cancel the currently running render."""
         pass
     
+    def pause_render(self):
+        """
+        Pause the currently running render.
+        
+        Default implementation calls cancel_render() for engines that don't
+        support native pause. Engines with native pause (like Vantage) should
+        override this method.
+        
+        Returns True if pause was successful.
+        """
+        self.cancel_render()
+        return True
+    
     @abstractmethod
     def get_output_formats(self) -> Dict[str, str]:
         """Return dict of {display_name: internal_format} for output formats."""

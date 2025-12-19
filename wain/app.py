@@ -76,7 +76,12 @@ class RenderApp:
                 if self.render_start_time:
                     job.accumulated_seconds += int((datetime.now() - self.render_start_time).total_seconds())
                 engine = self.engine_registry.get(job.engine_type)
-                if engine: engine.cancel_render()
+                if engine:
+                    # Use pause_render if available (native pause), otherwise cancel
+                    if hasattr(engine, 'pause_render'):
+                        engine.pause_render()
+                    else:
+                        engine.cancel_render()
                 self.current_job = None
                 self.render_start_time = None
             job.status = "paused"
@@ -101,6 +106,10 @@ class RenderApp:
                 engine = self.engine_registry.get(job.engine_type)
                 if engine: engine.cancel_render()
                 self.current_job = None
+            elif job.status == "paused" and job.engine_type == "vantage":
+                # For paused Vantage jobs, we need to abort and close even though current_job is None
+                engine = self.engine_registry.get(job.engine_type)
+                if engine: engine.cancel_render()
             self.jobs = [j for j in self.jobs if j.id != job.id]
         
         self.save_config()

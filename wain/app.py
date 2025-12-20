@@ -125,17 +125,21 @@ class RenderApp:
             self.current_job.elapsed_time = elapsed
             
             job = self.current_job
+            status_msg = job.status_message.replace('"', '\\"').replace("'", "\\'") if job.status_message else ""
             try:
-                ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job.id}", {job.progress}, "{elapsed}", "{job.frames_display}", "{job.samples_display}", "{job.pass_display}");')
+                ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job.id}", {job.progress}, "{elapsed}", "{job.frames_display}", "{job.samples_display}", "{job.pass_display}", "{status_msg}");')
             except:
                 pass
         
         if self._progress_updates:
             updates = self._progress_updates.copy()
             self._progress_updates.clear()
-            for job_id, progress, elapsed, frame, frames_display, samples_display, pass_display in updates:
+            for update in updates:
                 try:
-                    ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{frames_display}", "{samples_display}", "{pass_display}");')
+                    job_id, progress, elapsed, frame, frames_display, samples_display, pass_display = update[:7]
+                    status_msg = update[7] if len(update) > 7 else ""
+                    status_msg = status_msg.replace('"', '\\"').replace("'", "\\'") if status_msg else ""
+                    ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{frames_display}", "{samples_display}", "{pass_display}", "{status_msg}");')
                 except:
                     pass
         
@@ -202,6 +206,9 @@ class RenderApp:
             m, s = divmod(rem, 60)
             job.elapsed_time = f"{h}:{m:02d}:{s:02d}"
             
+            # Store status message for UI display
+            job.status_message = msg if msg else ""
+            
             sample_match = re.search(r'Sample (\d+)/(\d+)', msg)
             if sample_match:
                 job.current_sample = int(sample_match.group(1))
@@ -223,7 +230,7 @@ class RenderApp:
                 elif sample_match:
                     job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
             
-            self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display))
+            self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display, job.status_message))
         
         def on_complete():
             job.status = "completed"

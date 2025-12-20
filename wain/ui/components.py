@@ -126,3 +126,11 @@ def create_job_card(job):
                 {" | ".join(info_parts)}<span id="job-render-progress-{job.id}">{(" | " + render_progress) if render_progress else ""}</span>
             </div>
         ''', sanitize=False)
+        
+        # Status message - shows current activity for rendering jobs
+        if job.status_message and job.status in ["rendering", "queued"]:
+            ui.html(f'''
+                <div id="job-status-msg-{job.id}" class="job-status-message">
+                    {job.status_message}
+                </div>
+            ''', sanitize=False)

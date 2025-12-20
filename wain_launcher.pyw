@@ -107,7 +107,7 @@ def create_splash():
                            fg=TEXT_SECONDARY, bg=BG_COLOR)
     status_label.pack(pady=(10, 0))
     
-    version_label = tk.Label(frame, text="v2.15.3", font=('Segoe UI', 9),
+    version_label = tk.Label(frame, text="v2.15.16", font=('Segoe UI', 9),
                             fg=TEXT_TERTIARY, bg=BG_COLOR)
     version_label.pack(side='bottom', pady=(0, 20))
     

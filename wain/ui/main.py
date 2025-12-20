@@ -24,6 +24,14 @@ def main_page():
         .stat-card { min-width: 150px; flex: 1 1 200px; }
         .job-card { width: 100%; }
         
+        /* Hide NiceGUI reconnection notification - we're a desktop app */
+        .q-notification, .q-notifications, .nicegui-reconnecting, 
+        div[class*="reconnect"], div[class*="connection"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+        
         .header-btn, .header-btn.q-btn { color: #a1a1aa !important; background-color: transparent !important; }
         .header-btn:hover, .header-btn.q-btn:hover { color: #ffffff !important; background-color: rgba(255, 255, 255, 0.1) !important; }
         .header-btn-primary, .header-btn-primary.q-btn { background-color: #3f3f46 !important; color: #ffffff !important; }
@@ -64,17 +72,36 @@ def main_page():
             animation: shimmer 2s ease-in-out infinite;
         }
         @keyframes shimmer { 0% { transform: translateX(-100%); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(200%); opacity: 0; } }
+        
+        /* Status message styling with 3-dot loading animation */
+        .job-status-message { 
+            font-size: 12px; 
+            color: #a1a1aa; 
+            font-style: italic;
+            margin-top: 4px;
+        }
+        .job-status-message::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
     </style>''')
     
     # Add JavaScript for progress animation
     ui.add_head_html('''<script>
         document.addEventListener('DOMContentLoaded', function() {
             const progressState = {};
-            window.updateJobProgress = function(jobId, progress, elapsed, framesDisplay, samplesDisplay, passDisplay) {
+            window.updateJobProgress = function(jobId, progress, elapsed, framesDisplay, samplesDisplay, passDisplay, statusMsg) {
                 const fill = document.getElementById('progress-fill-' + jobId);
                 const label = document.getElementById('progress-label-' + jobId);
                 const info = document.getElementById('job-info-' + jobId);
                 const renderProgress = document.getElementById('job-render-progress-' + jobId);
+                const statusMsgEl = document.getElementById('job-status-msg-' + jobId);
                 
                 if (fill) fill.dataset.target = progress;
                 if (label) label.textContent = progress + '%';
@@ -94,6 +121,25 @@ def main_page():
                     }
                     var progressText = progressParts.length > 0 ? ' | ' + progressParts.join(' | ') : '';
                     info.innerHTML = baseText + '<span id="job-render-progress-' + jobId + '">' + progressText + '</span>';
+                }
+                
+                // Update status message
+                if (statusMsg && statusMsg.length > 0) {
+                    if (statusMsgEl) {
+                        statusMsgEl.textContent = statusMsg;
+                    } else {
+                        // Create status message element if it doesn't exist
+                        var infoEl = document.getElementById('job-info-' + jobId);
+                        if (infoEl && infoEl.parentNode) {
+                            var msgDiv = document.createElement('div');
+                            msgDiv.id = 'job-status-msg-' + jobId;
+                            msgDiv.className = 'job-status-message';
+                            msgDiv.textContent = statusMsg;
+                            infoEl.parentNode.insertBefore(msgDiv, infoEl.nextSibling);
+                        }
+                    }
+                } else if (statusMsgEl) {
+                    statusMsgEl.textContent = '';
                 }
             };
             

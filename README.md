@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.15.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.15.16-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -24,7 +24,7 @@
 ## ✨ Features
 
 - **Multi-Engine Support** — Blender, Marmoset Toolbag, and Chaos Vantage in one unified queue
-- **Full Settings Control** — Wain configures resolution, samples, output path automatically
+- **Per-Job Settings** — Configure resolution, samples, and denoiser for each Vantage job
 - **Pause & Resume** — Stop and continue renders at any frame
 - **Scene Probing** — Auto-detects resolution, cameras, frame range, and render settings
 - **Selective Multi-Pass** — Render only the passes you need (Marmoset)
@@ -34,60 +34,42 @@
 
 ---
 
-## 🆕 What's New in v2.15.0
+## 🆕 What's New in v2.15.16
 
-### Full HQ Settings Control for Vantage! 🎉
+### Vantage Scene Probing
 
-**BREAKTHROUGH: Wain now programmatically controls Vantage HQ render settings!**
+**v2.15.16** now reads your actual Vantage HQ settings when loading a scene file:
 
-Previously, users had to manually configure HQ settings in Vantage. Now Wain automatically applies job settings before launching Vantage:
+**Auto-Detection:**
+When you load a `.vantage` file, Wain reads `vantage.ini` and shows:
+- Resolution (e.g., 3840×2160)
+- Samples (e.g., 100)
+- Denoiser (NVIDIA/OIDN/Off)
 
-| Setting | INI Key | Controlled by Wain |
-|---------|---------|-------------------|
-| **Resolution** | `snapshotResDefault=@Size(W H)` | ✅ Width & Height |
-| **Samples** | `snapshotSamplesDefault=N` | ✅ Sample count |
-| **Output Path** | `SaveImage=PATH` | ✅ Output folder |
-| **Denoiser** | `snapshotDenoiseDefault` | ✅ On/Off |
-| **Denoiser Type** | `snapshotDenoiserTypeDefault` | ✅ NVIDIA/OIDN |
-
-**How it works:**
-1. Wain reads your job settings (resolution, samples, output folder)
-2. Writes them to `%APPDATA%\Chaos\Vantage\vantage.ini`
-3. Creates a backup before any changes
-4. Launches Vantage with your scene
-5. Triggers render via UI automation
-6. Monitors progress until completion
-
-**New Module: `vantage_settings.py`**
-```python
-from wain.engines.vantage_settings import apply_render_settings
-
-# Apply settings before launching Vantage
-apply_render_settings(
-    width=3840,
-    height=2160,
-    samples=512,
-    output_path="C:/Renders/MyProject"
-)
+**Status Display:**
+```
+Vantage HQ: 3840x2160, 100 samples, NVIDIA
 ```
 
-### Previous v2.14.x Features
+**Form Pre-Population:**
+- Resolution fields auto-fill with your Vantage settings
+- Vantage samples field shows your current value
+- Denoiser dropdown pre-selects your active denoiser
 
-**v2.14.4 - Maximum Speed**
-- 90% faster action response
-- Window polling: 0.1s (was 0.2s)
-- Ctrl+R: 0.08s total
-- Smart retry in background
+This is a **READ-ONLY** operation — completely safe, no files are modified.
 
-**v2.14.3 - Fixed Delete on Paused Jobs**
+### Previous: v2.15.15 - Per-Job Custom Settings
 
-**v2.14.2 - Resume Support**
-- Detects existing progress window
-- Clicks Resume for paused renders
+**Toggle Custom Settings:**
+- New "Use Custom Settings" checkbox in Add Job dialog
+- When OFF: Uses your existing Vantage HQ settings (default)
+- When ON: Override resolution, samples, and denoiser per job
 
-**v2.14.1 - Native Pause/Abort**
-- Pause clicks Vantage's native Pause button
-- Delete = Abort + Close Vantage
+**Safety Features:**
+- Automatic backup of `vantage.ini` before ANY modification
+- Validation of all values (resolution 64-16384, samples 1-65536)
+- Preserves exact Qt serialization format (`@Size(w h)`)
+- Backup files timestamped: `vantage_backup_YYYYMMDD_HHMMSS.ini`
 
 ---
 
@@ -116,11 +98,6 @@ Wain.bat --install          # Force reinstall dependencies
   - Download: https://www.python.org/downloads/
   - ⚠️ Check **"Add Python to PATH"** during installation
 - **Windows 10/11**
-
-### Additional for Vantage UI Automation
-```bash
-pip install pywinauto
-```
 
 ---
 
@@ -155,9 +132,9 @@ pip install pywinauto
 ### Chaos Vantage
 
 - Vantage 2.x and 3.x
-- **Full HQ settings control (v2.15.0!)**
-- INI-based configuration
-- UI automation + progress tracking
+- UI automation (CLI-free)
+- HQ sequence rendering
+- Real-time progress tracking
 - V-Ray scene support (.vrscene)
 
 </td>
@@ -166,96 +143,21 @@ pip install pywinauto
 
 ---
 
-## 🏗️ Architecture (v2.15.0)
+## ⚠️ Vantage Settings Note
 
-### Vantage Settings Flow
+**Current Status (v2.15.13):**
+INI modification is **DISABLED** for safety. Wain uses whatever settings are configured in Vantage's HQ Render panel.
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Wain Job      │────▶│  vantage.ini     │────▶│  Vantage App    │
-│  (resolution,   │     │  (INI update)    │     │  (reads INI on  │
-│   samples,      │     │                  │     │   startup)      │
-│   output path)  │     │                  │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-```
+**When INI Writing is Re-enabled (future version):**
+- Wain will be able to automatically configure Vantage HQ settings
+- Resolution, samples, frame range, and output path will be set before launch
+- Backups will be created before any modification
 
-### Key INI Settings (vantage.ini)
-
-Located at: `%APPDATA%\Chaos\Vantage\vantage.ini`
-
-```ini
-[Preferences]
-snapshotResDefault=@Size(3840 2160)
-snapshotSamplesDefault=512
-snapshotDenoiseDefault=true
-snapshotDenoiserTypeDefault=0
-snapshotMoblurDefault=true
-snapshotLightCacheDefault=true
-
-[DialogLocations]
-SaveImage=C:/Renders/Output
-```
-
-### VantageINIManager Class
-
-```python
-from wain.engines.vantage_settings import VantageINIManager
-
-ini = VantageINIManager()
-
-# Read current settings
-settings = ini.read_hq_settings()
-print(f"Current: {settings.width}x{settings.height}, {settings.samples} samples")
-
-# Apply new settings (creates backup automatically)
-ini.apply_job_settings(
-    width=1920,
-    height=1080,
-    samples=256,
-    output_path="D:/Renders"
-)
-```
-
----
-
-## 📁 Project Structure
-
-```
-wain/
-├── Wain.bat                    # Windows launcher
-├── wain_launcher.pyw           # Splash screen
-├── readme.md
-├── assets/                     # Logos and icons
-└── wain/                       # Main package
-    ├── __main__.py             # Entry point
-    ├── app.py                  # Queue management
-    ├── config.py               # Theme & constants
-    ├── models.py               # Data models
-    ├── engines/                # Render engines
-    │   ├── base.py             # Abstract base class
-    │   ├── interface.py        # Communication interface
-    │   ├── blender.py
-    │   ├── marmoset.py
-    │   ├── vantage.py          # ★ v2.15.0 INI integration
-    │   ├── vantage_settings.py # ★ NEW: INI read/write
-    │   └── registry.py
-    ├── ui/                     # Interface
-    │   ├── main.py
-    │   ├── components.py
-    │   └── dialogs.py
-    └── utils/                  # Helpers
-        ├── bootstrap.py
-        └── file_dialogs.py
-```
-
----
-
-## 🔧 Configuration
-
-Settings persist to `wain_config.json` in the working directory, including:
-- Render queue and job states
-- Pause/resume progress
-- Engine-specific settings
+For now, configure your HQ render settings manually in Vantage:
+1. Open Vantage with your scene
+2. Press `Ctrl+R` to open HQ Render panel
+3. Set resolution, samples, output path
+4. Settings are remembered for future renders
 
 ---
 
@@ -271,12 +173,12 @@ Settings persist to `wain_config.json` in the working directory, including:
 </details>
 
 <details>
-<summary><strong>Vantage settings not applying</strong></summary>
+<summary><strong>Vantage not responding to automation</strong></summary>
 
-1. Check that `%APPDATA%\Chaos\Vantage\vantage.ini` exists
-2. Close Vantage completely before running Wain
-3. Run `Wain.bat --debug` to see if INI write succeeds
-4. Check for backup files: `vantage.ini.wain_backup_*`
+1. Ensure Vantage is installed in default location
+2. Try running Wain as Administrator
+3. Check if Vantage window title matches expected pattern
+4. Install pywinauto: `pip install pywinauto`
 
 </details>
 
@@ -292,71 +194,15 @@ Wain.bat --debug
 
 ---
 
-## 🧩 Adding New Engines
-
-Each engine requires:
-
-1. **Engine class** in `wain/engines/` implementing `RenderEngine`
-2. **Communicator class** implementing `EngineInterface` (optional but recommended)
-3. **Settings schema** defining configurable options
-4. **Accent color** in `config.py` → `ENGINE_COLORS`
-5. **Logo** in `assets/` (optional, with icon fallback)
-
-Example:
-```python
-# config.py
-ENGINE_COLORS = {
-    "blender": "#ea7600",    # Orange
-    "marmoset": "#ef0343",   # Red
-    "vantage": "#77b22a",    # Green
-    "newengine": "#0066cc",  # Blue
-}
-```
-
----
-
 ## 📜 Version History
 
 | Version | Highlights |
 |---------|------------|
-| **2.15.0** | **Full HQ settings control via vantage.ini!** |
-| **2.14.4** | Maximum speed startup, smart retry |
-| **2.14.3** | Fixed delete on paused jobs |
-| **2.14.2** | Resume support for paused renders |
-| **2.14.1** | Native pause/abort control |
-
-<details>
-<summary>Full changelog</summary>
-
-### v2.15.0 - Full HQ Settings Control
-- NEW: `VantageINIManager` class for reading/writing vantage.ini
-- NEW: `VantageHQSettings` dataclass for settings structure
-- Wain now applies resolution, samples, output path before launch
-- Automatic backup creation before INI modifications
-- Discovery: HQ settings stored in `[Preferences]` section
-- Discovery: Output path in `[DialogLocations].SaveImage`
-
-### v2.14.4 - Maximum Speed
-- 90% faster action response
-- Window polling: 0.1s intervals
-- Ctrl+R: 0.08s total
-- Smart retry in background
-
-### v2.14.3
-- Fixed delete on paused Vantage jobs
-- Properly calls Abort and closes Vantage
-
-### v2.14.2
-- Resume support for paused renders
-- Detects existing progress window
-- Clicks Resume button automatically
-
-### v2.14.1
-- Native pause/abort control
-- Pause keeps render window open
-- Delete = Abort + Close
-
-</details>
+| **2.15.13** | DRY RUN mode, enhanced safety logging |
+| **2.15.12** | Emergency INI write disable after corruption |
+| **2.15.11** | Add Job button fix |
+| **2.15.9** | Frame range read/write support |
+| **2.15.0** | Full HQ settings control for Vantage |
 
 ---
 
@@ -373,5 +219,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.15.0 — Multi-engine render queue manager with full Vantage settings control</em>
+  <em>Wain v2.15.13 — Multi-engine render queue manager</em>
 </p>

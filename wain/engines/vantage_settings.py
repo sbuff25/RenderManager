@@ -1,20 +1,26 @@
 """
-Wain Vantage Settings Manager v2
-================================
+Wain Vantage Settings Manager v2.15.15
+======================================
 
-SAFE read and write of Vantage 3.x HQ render settings from vantage.ini.
+SAFE settings management for Chaos Vantage HQ Render.
 
-v2.15.1 - Fixed INI corruption bugs:
-- Preserves original line endings (CRLF for Windows)
-- Atomic writes (temp file -> verify -> rename)
-- Only modifies existing keys (never adds new ones)
-- Validates file can be re-read after write
-- Dry-run mode for testing
+This module handles reading/writing Vantage's vantage.ini file with
+extreme caution to prevent crashes and corruption.
 
-Discovery (2024-12-19):
-- HQ settings stored in %APPDATA%\Chaos\Vantage\vantage.ini
-- Settings in [Preferences] section with "snapshot*Default" keys
-- Output path in [DialogLocations] section as "SaveImage"
+Safety Features:
+- Automatic backup before ANY write
+- Validation of all values before writing
+- Preserves exact INI format (Qt serialization)
+- DRY_RUN mode for testing
+- Restore capability
+
+INI Location: %APPDATA%/Chaos Group/Vantage/vantage.ini
+
+Key Settings (in [Preferences] section):
+- snapshotResDefault=@Size(width height)  # Qt QSize format!
+- snapshotSamplesDefault=100               # Integer
+- snapshotDenoiseDefault=true              # Boolean
+- snapshotDenoiserTypeDefault=0            # 0=NVIDIA OptiX, 1=Intel OIDN, 2=Off
 
 https://github.com/Spencer-Sliffe/Wain
 """
@@ -22,490 +28,362 @@ https://github.com/Spencer-Sliffe/Wain
 import os
 import re
 import shutil
-import tempfile
-from typing import Dict, Any, Optional, Tuple
-from dataclasses import dataclass
 from datetime import datetime
+from dataclasses import dataclass
+from typing import Optional, Dict, Any, Tuple
 
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Set to True to test without actually writing files
+DRY_RUN = False
+
+# Validation limits (hardware safety)
+MIN_RESOLUTION = 64
+MAX_RESOLUTION = 16384  # 16K is reasonable max
+MIN_SAMPLES = 1
+MAX_SAMPLES = 65536
+
+# Denoiser type mapping
+DENOISER_TYPES = {
+    "nvidia": 0,      # NVIDIA OptiX AI
+    "oidn": 1,        # Intel Open Image Denoise  
+    "off": 2,         # No denoising
+}
+
+DENOISER_NAMES = {v: k for k, v in DENOISER_TYPES.items()}
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
 
 @dataclass
 class VantageHQSettings:
-    """Vantage HQ render settings structure."""
-    # Resolution
+    """HQ Render settings that can be configured."""
     width: int = 1920
     height: int = 1080
-    
-    # Quality
-    samples: int = 256
-    quality_preset: int = 3  # 0=Draft, 1=Low, 2=Medium, 3=High, 4=Ultra
-    
-    # Denoising
+    samples: int = 100
     denoise_enabled: bool = True
-    denoiser_type: int = 0  # 0=NVIDIA AI, 1=Intel OIDN
-    denoise_intermediate: bool = True
+    denoiser_type: int = 0  # 0=NVIDIA, 1=OIDN, 2=Off
     
-    # Effects
-    motion_blur: bool = True
-    light_cache: bool = True
-    temporal: bool = True
-    auto_exposure: bool = False
+    def validate(self) -> Tuple[bool, str]:
+        """Validate settings are within safe ranges."""
+        if not (MIN_RESOLUTION <= self.width <= MAX_RESOLUTION):
+            return False, f"Width {self.width} outside safe range ({MIN_RESOLUTION}-{MAX_RESOLUTION})"
+        if not (MIN_RESOLUTION <= self.height <= MAX_RESOLUTION):
+            return False, f"Height {self.height} outside safe range ({MIN_RESOLUTION}-{MAX_RESOLUTION})"
+        if not (MIN_SAMPLES <= self.samples <= MAX_SAMPLES):
+            return False, f"Samples {self.samples} outside safe range ({MIN_SAMPLES}-{MAX_SAMPLES})"
+        if self.denoiser_type not in [0, 1, 2]:
+            return False, f"Invalid denoiser type {self.denoiser_type} (must be 0, 1, or 2)"
+        return True, "OK"
     
-    # Output
-    output_path: str = ""
-    png_alpha: bool = False
-    
-    # Sequence/Animation
-    sequence_output_type: int = 1
+    def __str__(self):
+        denoiser_name = DENOISER_NAMES.get(self.denoiser_type, "unknown")
+        return f"Resolution: {self.width}x{self.height}, Samples: {self.samples}, Denoiser: {denoiser_name}"
 
+
+# =============================================================================
+# INI MANAGER
+# =============================================================================
 
 class VantageINIManager:
     """
-    SAFE manager for reading and writing Vantage HQ render settings.
+    Safe manager for Vantage's vantage.ini file.
     
-    Safety features:
-    - Preserves exact file format (line endings, encoding)
-    - Atomic writes (write to temp, verify, then rename)
-    - Only modifies keys that already exist
-    - Creates backup before any modification
-    - Validates file after write
+    IMPORTANT: This class preserves the exact INI format including Qt serialization.
+    Vantage uses Qt's QSettings which has special formats like @Size(w h).
     """
     
-    DEFAULT_INI_PATH = os.path.join(
-        os.environ.get('APPDATA', ''),
-        'Chaos', 'Vantage', 'vantage.ini'
-    )
+    def __init__(self, log_func=None):
+        self.log = log_func or print
+        self.ini_path = self._find_ini_path()
+        self.backup_path = None
     
-    QUALITY_PRESETS = {0: 'Draft', 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Ultra'}
-    DENOISER_TYPES = {0: 'NVIDIA AI', 1: 'Intel OIDN'}
-    
-    def __init__(self, ini_path: Optional[str] = None, read_only: bool = False):
-        """
-        Initialize the INI manager.
+    def _find_ini_path(self) -> Optional[str]:
+        """Find the vantage.ini file."""
+        appdata = os.environ.get('APPDATA', '')
+        if not appdata:
+            return None
         
-        Args:
-            ini_path: Path to vantage.ini (uses default if not specified)
-            read_only: If True, will never write to the file (for testing)
-        """
-        self.ini_path = ini_path or self.DEFAULT_INI_PATH
-        self.read_only = read_only
-        self._line_ending = '\r\n'  # Windows default, will be detected
-        self._encoding = 'utf-8'
+        # Standard location
+        ini_path = os.path.join(appdata, 'Chaos Group', 'Vantage', 'vantage.ini')
+        if os.path.exists(ini_path):
+            return ini_path
+        
+        # Alternative location
+        alt_path = os.path.join(appdata, 'Chaos', 'Vantage', 'vantage.ini')
+        if os.path.exists(alt_path):
+            return alt_path
+        
+        return None
     
     def exists(self) -> bool:
         """Check if INI file exists."""
-        return os.path.isfile(self.ini_path)
+        return self.ini_path is not None and os.path.exists(self.ini_path)
     
-    def _detect_line_ending(self, content: bytes) -> str:
-        """Detect line ending used in file."""
-        if b'\r\n' in content:
-            return '\r\n'
-        elif b'\n' in content:
-            return '\n'
-        elif b'\r' in content:
-            return '\r'
-        return '\r\n'  # Default to Windows
-    
-    def _read_raw(self) -> Tuple[str, str, str]:
-        """
-        Read file preserving exact format.
-        
-        Returns:
-            Tuple of (content, line_ending, encoding)
-        """
+    def create_backup(self) -> Optional[str]:
+        """Create a timestamped backup of the INI file."""
         if not self.exists():
-            return '', '\r\n', 'utf-8'
-        
-        # Read as binary first to detect line endings
-        with open(self.ini_path, 'rb') as f:
-            raw = f.read()
-        
-        line_ending = self._detect_line_ending(raw)
-        
-        # Try different encodings
-        for encoding in ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']:
-            try:
-                content = raw.decode(encoding)
-                return content, line_ending, encoding
-            except UnicodeDecodeError:
-                continue
-        
-        # Fallback
-        content = raw.decode('utf-8', errors='replace')
-        return content, line_ending, 'utf-8'
-    
-    def backup(self) -> Optional[str]:
-        """Create timestamped backup of INI file."""
-        if not self.exists():
+            self.log("Cannot backup: INI file not found")
             return None
         
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_path = f"{self.ini_path}.wain_backup_{timestamp}"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = os.path.dirname(self.ini_path)
+        backup_name = f"vantage_backup_{timestamp}.ini"
+        backup_path = os.path.join(backup_dir, backup_name)
         
         try:
             shutil.copy2(self.ini_path, backup_path)
+            self.backup_path = backup_path
+            self.log(f"Backup created: {backup_name}")
             return backup_path
         except Exception as e:
-            print(f"[Vantage] Backup failed: {e}")
+            self.log(f"Backup failed: {e}")
             return None
     
-    def read_ini(self) -> Dict[str, Dict[str, str]]:
-        """
-        Read INI file into nested dict structure.
-        
-        Returns:
-            Dict of {section: {key: value}}
-        """
-        content, self._line_ending, self._encoding = self._read_raw()
-        
-        sections = {}
-        current_section = 'General'
-        sections[current_section] = {}
-        
-        for line in content.split('\n'):
-            line = line.rstrip('\r')  # Handle both line endings
-            stripped = line.strip()
-            
-            if not stripped or stripped.startswith(';') or stripped.startswith('#'):
-                continue
-            
-            if stripped.startswith('[') and stripped.endswith(']'):
-                current_section = stripped[1:-1]
-                if current_section not in sections:
-                    sections[current_section] = {}
-                continue
-            
-            if '=' in stripped:
-                key, value = stripped.split('=', 1)
-                sections[current_section][key.strip()] = value.strip()
-        
-        return sections
-    
-    def _write_safe(self, updates: Dict[str, Dict[str, str]]) -> bool:
-        """
-        Safely write updates to INI file.
-        
-        Only modifies keys that already exist in the file.
-        Uses atomic write pattern for safety.
-        
-        Args:
-            updates: Dict of {section: {key: new_value}}
-            
-        Returns:
-            True if write succeeded and was verified
-        """
-        if self.read_only:
-            print("[Vantage] Read-only mode - skipping write")
+    def restore_backup(self, backup_path: str = None) -> bool:
+        """Restore from a backup file."""
+        path = backup_path or self.backup_path
+        if not path or not os.path.exists(path):
+            self.log("No backup to restore")
             return False
-        
-        if not self.exists():
-            print("[Vantage] INI file does not exist")
-            return False
-        
-        # Read original file preserving format
-        content, line_ending, encoding = self._read_raw()
-        lines = content.split('\n')
-        
-        # Process lines and apply updates
-        current_section = 'General'
-        new_lines = []
-        modified_keys = []
-        
-        for line in lines:
-            # Remove only trailing \r, keep other whitespace
-            clean_line = line.rstrip('\r')
-            stripped = clean_line.strip()
-            
-            # Section header
-            if stripped.startswith('[') and stripped.endswith(']'):
-                current_section = stripped[1:-1]
-                new_lines.append(clean_line)
-                continue
-            
-            # Key=Value line
-            if '=' in stripped and not stripped.startswith(';') and not stripped.startswith('#'):
-                key = stripped.split('=', 1)[0].strip()
-                
-                # Check if we have an update for this key in this section
-                if current_section in updates and key in updates[current_section]:
-                    new_value = updates[current_section][key]
-                    
-                    # Preserve leading whitespace (indentation)
-                    leading = len(clean_line) - len(clean_line.lstrip())
-                    new_line = ' ' * leading + f"{key}={new_value}"
-                    new_lines.append(new_line)
-                    modified_keys.append(f"[{current_section}]{key}")
-                else:
-                    new_lines.append(clean_line)
-            else:
-                new_lines.append(clean_line)
-        
-        # Reconstruct content with original line endings
-        new_content = line_ending.join(new_lines)
-        
-        # Ensure file ends properly
-        if content.endswith('\n') or content.endswith('\r\n'):
-            if not new_content.endswith(line_ending):
-                new_content += line_ending
-        
-        # ATOMIC WRITE: Write to temp file first
-        temp_path = self.ini_path + '.wain_temp'
         
         try:
-            # Write to temp file
-            with open(temp_path, 'w', encoding=encoding, newline='') as f:
-                f.write(new_content)
-            
-            # Verify temp file can be read back
-            test_sections = {}
-            with open(temp_path, 'r', encoding=encoding) as f:
-                test_content = f.read()
-            
-            # Basic validation - check we can parse it
-            for test_line in test_content.split('\n'):
-                test_line = test_line.rstrip('\r').strip()
-                if test_line.startswith('[') and test_line.endswith(']'):
-                    continue
-                if '=' in test_line and not test_line.startswith(';'):
-                    # Parseable
-                    pass
-            
-            # Verify our updates are present
-            for section, keys in updates.items():
-                for key, expected_value in keys.items():
-                    search_pattern = f"{key}={expected_value}"
-                    if search_pattern not in test_content:
-                        print(f"[Vantage] Verification failed: {key} not found with expected value")
-                        os.unlink(temp_path)
-                        return False
-            
-            # All good - replace original with temp
-            # On Windows, need to remove original first
-            backup_during_write = self.ini_path + '.wain_atomic_backup'
-            
-            try:
-                # Move original to backup
-                if os.path.exists(self.ini_path):
-                    shutil.move(self.ini_path, backup_during_write)
-                
-                # Move temp to original
-                shutil.move(temp_path, self.ini_path)
-                
-                # Remove atomic backup (the write succeeded)
-                if os.path.exists(backup_during_write):
-                    os.unlink(backup_during_write)
-                
-                print(f"[Vantage] Successfully updated: {', '.join(modified_keys)}")
-                return True
-                
-            except Exception as e:
-                # Restore from backup if anything went wrong
-                print(f"[Vantage] Error during atomic swap: {e}")
-                if os.path.exists(backup_during_write):
-                    shutil.move(backup_during_write, self.ini_path)
-                return False
-            
-        except Exception as e:
-            print(f"[Vantage] Error writing temp file: {e}")
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            return False
-    
-    # =========================================================================
-    # Qt Format Helpers
-    # =========================================================================
-    
-    def parse_size(self, value: str) -> Tuple[int, int]:
-        """Parse Qt @Size(W H) format."""
-        match = re.match(r'@Size\((\d+)\s+(\d+)\)', value)
-        if match:
-            return int(match.group(1)), int(match.group(2))
-        return 0, 0
-    
-    def format_size(self, width: int, height: int) -> str:
-        """Format dimensions as Qt @Size(W H)."""
-        return f"@Size({width} {height})"
-    
-    # =========================================================================
-    # High-Level Read/Write Methods
-    # =========================================================================
-    
-    def read_hq_settings(self) -> VantageHQSettings:
-        """Read current HQ render settings from vantage.ini."""
-        settings = VantageHQSettings()
-        sections = self.read_ini()
-        
-        prefs = sections.get('Preferences', {})
-        dialogs = sections.get('DialogLocations', {})
-        
-        # Resolution
-        if 'snapshotResDefault' in prefs:
-            w, h = self.parse_size(prefs['snapshotResDefault'])
-            if w > 0 and h > 0:
-                settings.width = w
-                settings.height = h
-        
-        # Samples
-        if 'snapshotSamplesDefault' in prefs:
-            try:
-                settings.samples = int(prefs['snapshotSamplesDefault'])
-            except ValueError:
-                pass
-        
-        # Quality preset
-        if 'qualityPresetRenderDialogDefault' in prefs:
-            try:
-                settings.quality_preset = int(prefs['qualityPresetRenderDialogDefault'])
-            except ValueError:
-                pass
-        
-        # Denoising
-        if 'snapshotDenoiseDefault' in prefs:
-            settings.denoise_enabled = prefs['snapshotDenoiseDefault'].lower() == 'true'
-        
-        if 'snapshotDenoiserTypeDefault' in prefs:
-            try:
-                settings.denoiser_type = int(prefs['snapshotDenoiserTypeDefault'])
-            except ValueError:
-                pass
-        
-        # Effects
-        if 'snapshotMoblurDefault' in prefs:
-            settings.motion_blur = prefs['snapshotMoblurDefault'].lower() == 'true'
-        
-        if 'snapshotLightCacheDefault' in prefs:
-            settings.light_cache = prefs['snapshotLightCacheDefault'].lower() == 'true'
-        
-        if 'snapshotTemporalDefault' in prefs:
-            settings.temporal = prefs['snapshotTemporalDefault'].lower() == 'true'
-        
-        # Output
-        if 'SaveImage' in dialogs:
-            settings.output_path = dialogs['SaveImage']
-        
-        return settings
-    
-    def apply_job_settings(self, 
-                           width: int = None,
-                           height: int = None, 
-                           samples: int = None,
-                           output_path: str = None,
-                           backup: bool = True) -> bool:
-        """
-        Apply ONLY the specified job settings to vantage.ini.
-        
-        This is the SAFE method - only updates what you specify,
-        and only if those keys already exist in the file.
-        
-        Args:
-            width: Resolution width (optional)
-            height: Resolution height (optional)
-            samples: Sample count (optional)
-            output_path: Output folder path (optional)
-            backup: Create backup before writing
-            
-        Returns:
-            True if write succeeded
-        """
-        if self.read_only:
-            print("[Vantage] Read-only mode - settings not applied")
-            return False
-        
-        # Build updates dict with ONLY specified values
-        updates = {'Preferences': {}, 'DialogLocations': {}}
-        
-        # Resolution - must have both width AND height
-        if width is not None and height is not None:
-            updates['Preferences']['snapshotResDefault'] = self.format_size(width, height)
-        
-        # Samples
-        if samples is not None:
-            updates['Preferences']['snapshotSamplesDefault'] = str(samples)
-        
-        # Output path
-        if output_path is not None:
-            # Convert to forward slashes (Qt style)
-            output_path = output_path.replace('\\', '/')
-            updates['DialogLocations']['SaveImage'] = output_path
-        
-        # Remove empty sections
-        updates = {k: v for k, v in updates.items() if v}
-        
-        if not updates:
-            print("[Vantage] No settings to apply")
+            shutil.copy2(path, self.ini_path)
+            self.log(f"Restored from backup")
             return True
-        
-        # Create backup
-        if backup:
-            backup_path = self.backup()
-            if backup_path:
-                print(f"[Vantage] Backup created: {backup_path}")
-        
-        # Apply updates
-        return self._write_safe(updates)
+        except Exception as e:
+            self.log(f"Restore failed: {e}")
+            return False
     
-    def validate_ini(self) -> Tuple[bool, str]:
-        """
-        Validate that the INI file is readable and has expected structure.
-        
-        Returns:
-            Tuple of (is_valid, message)
-        """
+    def read_settings(self) -> Optional[VantageHQSettings]:
+        """Read current HQ settings from INI file."""
         if not self.exists():
-            return False, f"File not found: {self.ini_path}"
+            self.log("INI file not found")
+            return None
         
         try:
-            sections = self.read_ini()
+            with open(self.ini_path, 'r', encoding='utf-8') as f:
+                content = f.read()
             
-            if 'Preferences' not in sections:
-                return False, "Missing [Preferences] section"
+            settings = VantageHQSettings()
             
-            prefs = sections['Preferences']
+            # Parse resolution: @Size(width height)
+            res_match = re.search(r'snapshotResDefault=@Size\((\d+)\s+(\d+)\)', content)
+            if res_match:
+                settings.width = int(res_match.group(1))
+                settings.height = int(res_match.group(2))
             
-            # Check for critical keys
-            if 'snapshotResDefault' in prefs:
-                w, h = self.parse_size(prefs['snapshotResDefault'])
-                if w <= 0 or h <= 0:
-                    return False, f"Invalid resolution format: {prefs['snapshotResDefault']}"
+            # Parse samples
+            samples_match = re.search(r'snapshotSamplesDefault=(\d+)', content)
+            if samples_match:
+                settings.samples = int(samples_match.group(1))
             
-            return True, "INI file is valid"
+            # Parse denoise enabled
+            denoise_match = re.search(r'snapshotDenoiseDefault=(true|false)', content)
+            if denoise_match:
+                settings.denoise_enabled = denoise_match.group(1) == 'true'
+            
+            # Parse denoiser type
+            denoiser_match = re.search(r'snapshotDenoiserTypeDefault=(\d+)', content)
+            if denoiser_match:
+                settings.denoiser_type = int(denoiser_match.group(1))
+            
+            return settings
             
         except Exception as e:
-            return False, f"Error reading INI: {e}"
-
-
-# =============================================================================
-# Module-level convenience functions
-# =============================================================================
-
-def get_ini_manager(read_only: bool = False) -> VantageINIManager:
-    """Get a VantageINIManager instance."""
-    return VantageINIManager(read_only=read_only)
-
-
-def read_vantage_settings() -> VantageHQSettings:
-    """Read current Vantage HQ settings."""
-    return VantageINIManager().read_hq_settings()
-
-
-def apply_render_settings(width: int = None, 
-                          height: int = None, 
-                          samples: int = None,
-                          output_path: str = None) -> bool:
-    """
-    Apply render settings to Vantage INI.
+            self.log(f"Error reading INI: {e}")
+            return None
     
-    Only updates the settings you specify.
-    Creates automatic backup before modification.
+    def write_settings(self, settings: VantageHQSettings) -> bool:
+        """
+        Write HQ settings to INI file.
+        
+        SAFETY: Creates backup first, validates all values, preserves format.
+        """
+        # Validate settings
+        valid, msg = settings.validate()
+        if not valid:
+            self.log(f"REJECTED: {msg}")
+            return False
+        
+        if not self.exists():
+            self.log("INI file not found")
+            return False
+        
+        # Create backup BEFORE any modification
+        if not DRY_RUN:
+            backup = self.create_backup()
+            if not backup:
+                self.log("ABORTED: Could not create backup")
+                return False
+        
+        try:
+            # Read current content
+            with open(self.ini_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            original_content = content  # Keep copy for comparison
+            
+            # Update resolution (preserve @Size format exactly)
+            content = re.sub(
+                r'(snapshotResDefault=)@Size\(\d+\s+\d+\)',
+                f'\\1@Size({settings.width} {settings.height})',
+                content
+            )
+            
+            # Update samples
+            content = re.sub(
+                r'(snapshotSamplesDefault=)\d+',
+                f'\\1{settings.samples}',
+                content
+            )
+            
+            # Update denoise enabled
+            denoise_str = 'true' if settings.denoise_enabled else 'false'
+            content = re.sub(
+                r'(snapshotDenoiseDefault=)(true|false)',
+                f'\\1{denoise_str}',
+                content
+            )
+            
+            # Update denoiser type
+            content = re.sub(
+                r'(snapshotDenoiserTypeDefault=)\d+',
+                f'\\1{settings.denoiser_type}',
+                content
+            )
+            
+            # Log what changed
+            if DRY_RUN:
+                self.log("=== DRY RUN MODE - NO FILES MODIFIED ===")
+            
+            self.log(f"Settings to apply: {settings}")
+            
+            # Show diff
+            if original_content != content:
+                self.log("Changes detected:")
+                for old_line, new_line in zip(original_content.split('\n'), content.split('\n')):
+                    if old_line != new_line:
+                        self.log(f"  - {old_line.strip()}")
+                        self.log(f"  + {new_line.strip()}")
+            else:
+                self.log("No changes needed")
+                return True
+            
+            # Write file
+            if DRY_RUN:
+                self.log("=== DRY RUN - Would write above changes ===")
+                return True
+            
+            with open(self.ini_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            self.log("Settings written successfully")
+            return True
+            
+        except Exception as e:
+            self.log(f"Error writing INI: {e}")
+            # Try to restore backup
+            if self.backup_path and not DRY_RUN:
+                self.log("Attempting to restore backup...")
+                self.restore_backup()
+            return False
+
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def read_vantage_settings(log_func=None) -> Optional[VantageHQSettings]:
+    """Read current Vantage HQ settings."""
+    manager = VantageINIManager(log_func)
+    return manager.read_settings()
+
+
+def apply_vantage_settings(
+    width: int = None,
+    height: int = None,
+    samples: int = None,
+    denoiser: str = None,
+    log_func=None
+) -> bool:
     """
-    manager = VantageINIManager()
-    return manager.apply_job_settings(
-        width=width,
-        height=height,
-        samples=samples,
-        output_path=output_path
-    )
+    Apply HQ render settings to Vantage.
+    
+    Only modifies settings that are explicitly provided.
+    Creates backup before any modification.
+    
+    Args:
+        width: Render width (64-16384)
+        height: Render height (64-16384)
+        samples: Render samples (1-65536)
+        denoiser: "nvidia", "oidn", or "off"
+        log_func: Optional logging function
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    manager = VantageINIManager(log_func)
+    
+    # Read current settings
+    current = manager.read_settings()
+    if not current:
+        return False
+    
+    # Apply changes
+    if width is not None:
+        current.width = width
+    if height is not None:
+        current.height = height
+    if samples is not None:
+        current.samples = samples
+    if denoiser is not None:
+        denoiser_lower = denoiser.lower()
+        if denoiser_lower in DENOISER_TYPES:
+            current.denoiser_type = DENOISER_TYPES[denoiser_lower]
+            current.denoise_enabled = denoiser_lower != "off"
+        else:
+            if log_func:
+                log_func(f"Unknown denoiser: {denoiser}")
+            return False
+    
+    # Write settings
+    return manager.write_settings(current)
 
 
-def validate_vantage_ini() -> Tuple[bool, str]:
-    """Validate Vantage INI file."""
-    return VantageINIManager().validate_ini()
+# =============================================================================
+# TESTING
+# =============================================================================
+
+if __name__ == "__main__":
+    """Test the settings manager."""
+    print("=" * 60)
+    print("Vantage Settings Manager Test")
+    print("=" * 60)
+    
+    # Enable dry run for safety
+    DRY_RUN = True
+    print(f"\nDRY_RUN = {DRY_RUN}")
+    
+    manager = VantageINIManager(print)
+    
+    print(f"\nINI Path: {manager.ini_path}")
+    print(f"Exists: {manager.exists()}")
+    
+    if manager.exists():
+        print("\n--- Current Settings ---")
+        settings = manager.read_settings()
+        if settings:
+            print(f"  {settings}")
+            
+            print("\n--- Test Write (DRY RUN) ---")
+            settings.width = 3840
+            settings.height = 2160
+            settings.samples = 500
+            settings.denoiser_type = 0  # NVIDIA
+            manager.write_settings(settings)

@@ -40,6 +40,7 @@ class RenderJob:
     elapsed_time: str = ""
     accumulated_seconds: int = 0
     error_message: str = ""
+    status_message: str = ""  # Current activity message (e.g., "Launching Vantage...")
     current_sample: int = 0
     total_samples: int = 0
     current_tile: int = 0

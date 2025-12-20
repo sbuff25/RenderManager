@@ -1,22 +1,23 @@
 """
-Wain Vantage Engine v2.15.4
-===========================
+Wain Vantage Engine v2.15.15
+============================
 
-Chaos Vantage render engine integration with HQ SETTINGS CONTROL.
+Chaos Vantage render engine integration with SAFE settings control.
 
-v2.15.4 - Enabled INI writing (safe atomic implementation)
-v2.15.3 - Added "Use Scene Settings" option (default ON)
-v2.15.2 - Fixed Desktop import scope bug in _monitor_render
-v2.15.1 - Fixed INI corruption, atomic writes with backup
+Workflow:
+1. If job has custom settings → Apply to INI BEFORE launching
+2. Launch Vantage with scene
+3. Open HQ Render panel (Ctrl+R)
+4. Click Start
+5. Monitor progress until complete
 
-When "Use Scene Settings" is enabled (default):
-- Wain does NOT modify vantage.ini
-- Uses resolution, samples, output path configured in Vantage HQ panel
+Safety Features:
+- Automatic INI backup before any modification
+- Validation of all values (resolution, samples, denoiser)
+- DRY_RUN mode available for testing
+- Restore capability if anything fails
 
-When "Use Scene Settings" is disabled:
-- Wain applies job settings to vantage.ini before launching
-- Creates backup at vantage.ini.wain_backup_TIMESTAMP
-- Uses atomic writes with verification
+Settings are stored in: %APPDATA%/Chaos Group/Vantage/vantage.ini
 
 https://github.com/Spencer-Sliffe/Wain
 """
@@ -27,16 +28,20 @@ import subprocess
 import threading
 import time
 import re
-import json
 from typing import Dict, List, Optional, Any
-from urllib.request import urlopen, Request
-from urllib.error import URLError
 
 from wain.engines.base import RenderEngine
+from wain.engines.vantage_settings import (
+    VantageINIManager,
+    VantageHQSettings,
+    apply_vantage_settings,
+    read_vantage_settings,
+    DRY_RUN,
+)
 
 
 class VantageEngine(RenderEngine):
-    """Chaos Vantage render engine integration with INI settings control."""
+    """Chaos Vantage render engine - load scene and render with scene settings."""
     
     name = "Chaos Vantage"
     engine_type = "vantage"
@@ -58,45 +63,18 @@ class VantageEngine(RenderEngine):
         "TGA": "tga",
     }
     
-    # Live Link HTTP API port
-    LIVE_LINK_PORT = 20701
-    
-    # Denoiser type mapping
-    DENOISER_TYPES = {
-        'nvidia': 0,
-        'oidn': 1,
-        'off': -1,  # Will set snapshotDenoiseDefault=false
-    }
-    
-    # SAFETY FLAG: Set to True to enable INI modification
-    # Keep False until INI writing is verified to work correctly
-    ENABLE_INI_WRITE = True  # Safe atomic writes with backup
-    
     def __init__(self):
         super().__init__()
         self._on_log = None
         self._job = None
         self._vantage_window = None
         self._desktop = None
-        self._http_available = None
-        self._ini_manager = None
         self.scan_installed_versions()
     
     def _log(self, msg: str):
         """Log a message."""
         if self._on_log:
             self._on_log(f"[Vantage] {msg}")
-    
-    def _get_ini_manager(self):
-        """Get or create the INI manager."""
-        if self._ini_manager is None:
-            try:
-                from wain.engines.vantage_settings import VantageINIManager
-                self._ini_manager = VantageINIManager()
-            except ImportError:
-                self._log("Warning: vantage_settings module not found")
-                return None
-        return self._ini_manager
     
     def scan_installed_versions(self):
         """Scan for installed Vantage versions."""
@@ -123,11 +101,8 @@ class VantageEngine(RenderEngine):
         return self.OUTPUT_FORMATS
     
     def get_default_settings(self) -> Dict[str, Any]:
-        return {
-            "quality_preset": "high",
-            "samples": 256,
-            "denoiser": "nvidia",
-        }
+        """Vantage uses scene settings - no custom settings needed."""
+        return {}
     
     def get_file_dialog_filter(self) -> List[tuple]:
         return [
@@ -142,134 +117,48 @@ class VantageEngine(RenderEngine):
             subprocess.Popen([exe, file_path], creationflags=subprocess.DETACHED_PROCESS)
     
     def get_scene_info(self, file_path: str) -> Dict[str, Any]:
-        """Get scene info. Now also reads current HQ settings from INI."""
+        """
+        Read scene info including current HQ Render settings from vantage.ini.
+        
+        This is a READ-ONLY operation - completely safe.
+        Returns the resolution, samples, and denoiser currently configured in Vantage.
+        """
+        # Default values
         info = {
-            "cameras": ["Default Camera"],
-            "active_camera": "Default Camera",
+            "cameras": [],
+            "active_camera": "",
             "resolution_x": 1920,
             "resolution_y": 1080,
             "frame_start": 1,
             "frame_end": 1,
             "total_frames": 1,
             "has_animation": False,
-            "samples": 256,
+            # Vantage-specific settings (read from INI)
+            "samples": 100,
+            "denoise_enabled": True,
+            "denoiser_type": 0,  # 0=NVIDIA, 1=OIDN, 2=Off
+            "denoiser_name": "nvidia",
         }
         
-        # Try to read current settings from vantage.ini
-        ini = self._get_ini_manager()
-        if ini and ini.exists():
-            try:
-                settings = ini.read_hq_settings()
+        # Try to read actual settings from vantage.ini
+        try:
+            settings = read_vantage_settings()
+            if settings:
                 info["resolution_x"] = settings.width
                 info["resolution_y"] = settings.height
                 info["samples"] = settings.samples
-                info["denoise"] = settings.denoise_enabled
+                info["denoise_enabled"] = settings.denoise_enabled
                 info["denoiser_type"] = settings.denoiser_type
-            except Exception as e:
-                print(f"[Vantage] Could not read INI settings: {e}")
+                
+                # Map denoiser type to name
+                denoiser_names = {0: "nvidia", 1: "oidn", 2: "off"}
+                info["denoiser_name"] = denoiser_names.get(settings.denoiser_type, "nvidia")
+                
+                print(f"[Wain] Read Vantage settings: {settings.width}x{settings.height}, {settings.samples} samples, denoiser={info['denoiser_name']}")
+        except Exception as e:
+            print(f"[Wain] Could not read vantage.ini: {e}")
         
         return info
-    
-    def _apply_job_settings(self, job) -> bool:
-        """
-        Apply job settings to vantage.ini BEFORE launching Vantage.
-        
-        If use_scene_settings is True (default), skips all modification
-        and uses whatever is configured in Vantage's HQ Render panel.
-        
-        When use_scene_settings is False, applies job settings using
-        safe atomic writes with automatic backup.
-        """
-        # Check if user wants to use existing Vantage settings
-        use_scene_settings = job.get_setting("use_scene_settings", True)
-        if use_scene_settings:
-            self._log("Using scene settings (configured in Vantage HQ panel)")
-            return True  # Success - just use existing settings
-        
-        ini = self._get_ini_manager()
-        if not ini or not ini.exists():
-            self._log("Note: vantage.ini not found, using existing Vantage settings")
-            return False
-        
-        # Map job settings to INI values
-        width = job.res_width
-        height = job.res_height
-        output_path = job.output_folder
-        samples = job.get_setting("samples", 256)
-        
-        self._log(f"Job settings: {width}x{height}, {samples} samples")
-        self._log(f"Output path: {output_path}")
-        
-        # SAFETY CHECK - only write if enabled
-        if not self.ENABLE_INI_WRITE:
-            self._log("INI write DISABLED (safety mode) - using existing Vantage settings")
-            self._log("To enable INI write, set VantageEngine.ENABLE_INI_WRITE = True")
-            return False
-        
-        # Validate INI before modifying
-        is_valid, msg = ini.validate_ini()
-        if not is_valid:
-            self._log(f"INI validation failed: {msg}")
-            return False
-        
-        self._log("Applying job settings to vantage.ini...")
-        
-        try:
-            success = ini.apply_job_settings(
-                width=width,
-                height=height,
-                samples=samples,
-                output_path=output_path,
-                backup=True  # Always backup
-            )
-            
-            if success:
-                # Validate INI after write
-                is_valid, msg = ini.validate_ini()
-                if not is_valid:
-                    self._log(f"WARNING: INI validation failed AFTER write: {msg}")
-                    self._log("Vantage may not start correctly!")
-                    return False
-                
-                self._log(f"Successfully applied settings to vantage.ini")
-                return True
-            else:
-                self._log("Warning: Failed to write INI settings")
-                return False
-                
-        except Exception as e:
-            self._log(f"Error applying settings: {e}")
-            return False
-    
-    # =========================================================================
-    # HTTP API (Live Link Protocol)
-    # =========================================================================
-    
-    def _check_http_api(self) -> bool:
-        """Check if Vantage HTTP API is available."""
-        try:
-            url = f"http://localhost:{self.LIVE_LINK_PORT}/"
-            req = Request(url, method='GET')
-            with urlopen(req, timeout=2) as response:
-                return response.status < 500
-        except:
-            pass
-        return False
-    
-    def _send_http_command(self, command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Send a command via HTTP API."""
-        try:
-            url = f"http://localhost:{self.LIVE_LINK_PORT}/"
-            data = json.dumps(command).encode('utf-8')
-            req = Request(url, data=data, method='POST')
-            req.add_header('Content-Type', 'application/json')
-            
-            with urlopen(req, timeout=30) as response:
-                result = response.read().decode('utf-8')
-                return json.loads(result) if result else {}
-        except Exception as e:
-            self._log(f"HTTP API error: {e}")
-        return None
     
     # =========================================================================
     # UI AUTOMATION HELPERS
@@ -352,11 +241,7 @@ class VantageEngine(RenderEngine):
                 pass
             return None
         
-        result = search_children(window)
-        if result:
-            return result
-        
-        return None
+        return search_children(window)
     
     def _find_start_button(self, window):
         """Find the Start/Render button."""
@@ -390,20 +275,23 @@ class VantageEngine(RenderEngine):
                         best_match = elem
                 except:
                     pass
-            if best_match:
-                return best_match
+            return best_match
         except:
             pass
         
         return None
     
     def _find_progress_window(self):
-        """Find the Vantage render progress window (child of main window)."""
+        """
+        Find the Vantage render progress window.
+        In Vantage 3.x, the progress dialog is a child window inside main window.
+        """
         vantage = self._find_vantage_window()
         if not vantage:
             return None
         
         try:
+            # Look for progress dialog as child
             for child in vantage.children():
                 try:
                     name = child.element_info.name or ""
@@ -416,6 +304,7 @@ class VantageEngine(RenderEngine):
                 except:
                     pass
             
+            # Check Window-type descendants
             for child in vantage.descendants(control_type="Window"):
                 try:
                     name = child.element_info.name or ""
@@ -433,7 +322,10 @@ class VantageEngine(RenderEngine):
         return None
     
     def _read_progress(self, window) -> Optional[Dict[str, Any]]:
-        """Read progress from the Vantage 3.x progress dialog."""
+        """
+        Read progress from Vantage 3.x progress dialog.
+        Parses 'HQ sequence frame X of Y' for frame count.
+        """
         result = {
             'total': 0,
             'frame': 0,
@@ -490,11 +382,11 @@ class VantageEngine(RenderEngine):
             
             return result if result['total'] > 0 or result['frame_pct'] > 0 else None
             
-        except Exception as e:
+        except Exception:
             return None
     
     def _send_ctrl_r(self, window):
-        """Send Ctrl+R to open HQ render panel."""
+        """Send Ctrl+R using multiple methods for reliability."""
         from pywinauto import keyboard
         import ctypes
         
@@ -504,7 +396,7 @@ class VantageEngine(RenderEngine):
         except:
             pass
         
-        # Method 1: pywinauto
+        # Method 1: pywinauto keyboard
         try:
             keyboard.send_keys("^r", pause=0.01)
             time.sleep(0.05)
@@ -551,10 +443,14 @@ class VantageEngine(RenderEngine):
     
     def start_render(self, job, start_frame: int, on_progress, on_complete, on_error, on_log=None):
         """
-        Start rendering a Vantage job with FULL SETTINGS CONTROL.
+        Start rendering a Vantage job.
         
-        NEW: Applies job settings (resolution, samples, output) to vantage.ini
-        before launching Vantage. No more manual configuration needed!
+        Flow:
+        1. If job has custom settings → Apply to INI file
+        2. Launch Vantage with the scene
+        3. Open HQ Render panel (Ctrl+R)
+        4. Click Start
+        5. Monitor progress until complete
         """
         if not os.path.exists(job.file_path):
             on_error(f"Scene file not found: {job.file_path}")
@@ -565,12 +461,40 @@ class VantageEngine(RenderEngine):
         self._job = job
         
         self._log("=" * 50)
-        self._log("Wain Vantage Engine v2.15.0 - Full Settings Control")
+        self._log("Wain Vantage Engine v2.15.15")
         self._log(f"Scene: {job.file_path}")
-        self._log("=" * 50)
         
-        # Ensure output directory exists
-        os.makedirs(job.output_folder, exist_ok=True)
+        # ============================================================
+        # STEP 0: Apply custom settings if configured
+        # ============================================================
+        use_custom_settings = job.engine_settings.get('use_custom_settings', False)
+        
+        if use_custom_settings:
+            self._log("Applying custom HQ settings...")
+            
+            width = job.engine_settings.get('width', job.res_width)
+            height = job.engine_settings.get('height', job.res_height)
+            samples = job.engine_settings.get('samples')
+            denoiser = job.engine_settings.get('denoiser')
+            
+            # Apply settings to INI (creates backup automatically)
+            success = apply_vantage_settings(
+                width=width,
+                height=height,
+                samples=samples,
+                denoiser=denoiser,
+                log_func=self._log
+            )
+            
+            if not success:
+                on_error("Failed to apply custom settings - check logs")
+                return
+            
+            self._log(f"Settings applied: {width}x{height}, {samples} samples, denoiser={denoiser}")
+        else:
+            self._log("Using existing Vantage HQ settings")
+        
+        self._log("=" * 50)
         
         def render_thread():
             try:
@@ -583,19 +507,10 @@ class VantageEngine(RenderEngine):
                 self._desktop = Desktop(backend="uia")
                 
                 # ============================================================
-                # STEP 0: Apply job settings to vantage.ini (NEW!)
-                # ============================================================
-                self._log("Step 0: Applying job settings to vantage.ini...")
-                settings_applied = self._apply_job_settings(job)
-                if settings_applied:
-                    self._log("Settings applied successfully!")
-                else:
-                    self._log("Using existing Vantage settings (INI update skipped)")
-                
-                # ============================================================
                 # STEP 1: Find or launch Vantage
                 # ============================================================
                 self._log("Step 1: Finding/launching Vantage...")
+                on_progress(0, "Launching Vantage...")
                 
                 vantage = self._find_vantage_window()
                 was_running = vantage is not None
@@ -623,6 +538,7 @@ class VantageEngine(RenderEngine):
                         vantage = self._find_vantage_window()
                         if vantage:
                             self._log(f"Vantage window found! ({time.time() - wait_start:.1f}s)")
+                            on_progress(0, "Vantage opened, preparing render...")
                             break
                         time.sleep(0.1)
                     
@@ -631,6 +547,7 @@ class VantageEngine(RenderEngine):
                         return
                 else:
                     self._log("Vantage already running - connecting...")
+                    on_progress(0, "Connecting to Vantage...")
                 
                 self._vantage_window = vantage
                 
@@ -650,7 +567,7 @@ class VantageEngine(RenderEngine):
                         try:
                             resume_btn.click_input()
                             self._log("Clicked Resume button!")
-                        except Exception as e:
+                        except:
                             try:
                                 resume_btn.invoke()
                             except:
@@ -663,7 +580,8 @@ class VantageEngine(RenderEngine):
                 # ============================================================
                 # STEP 2: Open HQ panel and find Start button
                 # ============================================================
-                self._log("Step 2: Opening HQ panel and finding Start button...")
+                self._log("Step 2: Opening HQ panel (Ctrl+R)...")
+                on_progress(0, "Opening HQ Render panel...")
                 
                 start_btn = None
                 if was_running:
@@ -715,6 +633,7 @@ class VantageEngine(RenderEngine):
                 # STEP 3: Click Start
                 # ============================================================
                 self._log("Step 3: Clicking Start...")
+                on_progress(0, "Starting render...")
                 
                 try:
                     start_btn.click_input()
@@ -742,7 +661,7 @@ class VantageEngine(RenderEngine):
     
     def _monitor_render(self, job, on_progress, on_complete, on_error):
         """Monitor render progress until completion."""
-        from pywinauto import Desktop  # Import here for method scope
+        from pywinauto import Desktop
         
         self._log("Step 4: Monitoring render progress...")
         
@@ -799,14 +718,14 @@ class VantageEngine(RenderEngine):
                             job.current_sample = frame_pct
                             job.total_samples = 100
                         
-                        if current_frame > 0 and total_frames > 1:
-                            status = f"Frame {current_frame}/{total_frames} ({total_pct}%)"
-                        else:
-                            status = f"Rendering... {total_pct}%"
-                        
+                        status = "Rendering"
                         on_progress(total_pct, status)
                         
-                        log_msg = status
+                        # Log gets full details
+                        if current_frame > 0 and total_frames > 1:
+                            log_msg = f"Frame {current_frame}/{total_frames} ({total_pct}%)"
+                        else:
+                            log_msg = f"Rendering... {total_pct}%"
                         if elapsed_str:
                             log_msg += f" - Elapsed: {elapsed_str}"
                         if remaining_str:
@@ -857,7 +776,7 @@ class VantageEngine(RenderEngine):
                     on_error("Render did not start - no progress window after 30s")
                     return
             
-            # Timeout
+            # Timeout after 2 hours
             if elapsed > 7200:
                 on_error("Render timed out after 2 hours")
                 return
@@ -883,7 +802,7 @@ class VantageEngine(RenderEngine):
                         pause_btn.click_input()
                         self._log("Clicked Pause button")
                         return True
-                    except Exception as e:
+                    except:
                         try:
                             pause_btn.invoke()
                             self._log("Pause invoked")
@@ -901,6 +820,7 @@ class VantageEngine(RenderEngine):
     
     def cancel_render(self, close_vantage: bool = True):
         """Cancel/abort the current render."""
+        self._log("Cancelling render...")
         self.is_cancelling = True
         
         try:
@@ -909,33 +829,38 @@ class VantageEngine(RenderEngine):
             
             progress_win = self._find_progress_window()
             if progress_win:
+                # Click Abort button
                 abort_btn = self._find_button_multilevel(progress_win, "abort")
                 if abort_btn:
                     try:
                         abort_btn.click_input()
+                        self._log("Clicked Abort button")
                     except:
                         try:
                             abort_btn.invoke()
                         except:
                             pass
                 else:
+                    # Fallback to Cancel/Stop
                     for btn_name in ["cancel", "stop", "close"]:
                         btn = self._find_button_multilevel(progress_win, btn_name)
                         if btn:
                             try:
                                 btn.click_input()
+                                self._log(f"Clicked {btn_name} button")
                                 break
                             except:
                                 pass
             
+            # Close Vantage if requested
             if close_vantage:
-                import time
                 time.sleep(0.05)
                 self._close_vantage()
                 
         except Exception as e:
-            pass
+            self._log(f"Error cancelling: {e}")
         
+        # Cleanup
         self._vantage_window = None
         self._desktop = None
         self._on_log = None
@@ -944,22 +869,24 @@ class VantageEngine(RenderEngine):
     def _close_vantage(self):
         """Close the Vantage application."""
         try:
-            from pywinauto import Desktop, keyboard
-            import time
+            from pywinauto import keyboard, Desktop
             
-            self._desktop = Desktop(backend="uia")
-            
+            self._desktop = Desktop(backend="uia") if not self._desktop else self._desktop
             vantage = self._find_vantage_window()
+            
             if vantage:
+                self._log("Closing Vantage...")
+                
                 try:
                     vantage.set_focus()
                     time.sleep(0.02)
                     keyboard.send_keys("%{F4}")
-                    
-                    time.sleep(0.1)
+                    self._log("Sent Alt+F4")
                     
                     # Handle save dialog
+                    time.sleep(0.1)
                     self._desktop = Desktop(backend="uia")
+                    
                     for win in self._desktop.windows():
                         try:
                             title = win.window_text().lower()
@@ -968,25 +895,12 @@ class VantageEngine(RenderEngine):
                                     btn = self._find_button_multilevel(win, btn_name)
                                     if btn:
                                         btn.click_input()
+                                        self._log(f"Clicked '{btn_name}' on save dialog")
                                         return
                         except:
                             pass
-                    
-                    return
-                except:
-                    pass
-                
-                try:
-                    close_btn = vantage.child_window(title="Close", control_type="Button")
-                    close_btn.click_input()
-                    return
-                except:
-                    pass
-                
-                try:
-                    vantage.close()
-                except:
-                    pass
+                except Exception as e:
+                    self._log(f"Alt+F4 failed: {e}")
                     
         except Exception as e:
             self._log(f"Error closing Vantage: {e}")

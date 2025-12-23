@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.15.16-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.15.20-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -25,8 +25,8 @@
 
 - **Multi-Engine Support** — Blender, Marmoset Toolbag, and Chaos Vantage in one unified queue
 - **Per-Job Settings** — Configure resolution, samples, and denoiser for each Vantage job
+- **Full Scene Probing** — Reads cameras, frame count, and settings from `.vantage` files
 - **Pause & Resume** — Stop and continue renders at any frame
-- **Scene Probing** — Auto-detects resolution, cameras, frame range, and render settings
 - **Selective Multi-Pass** — Render only the passes you need (Marmoset)
 - **Resolution Scaling** — Quick presets for 25%, 50%, 100%, 150%, 200%
 - **Native Desktop App** — Custom title bar with smooth Windows animations
@@ -34,42 +34,71 @@
 
 ---
 
-## 🆕 What's New in v2.15.16
+## 🆕 What's New in v2.15.23
 
-### Vantage Scene Probing
+### Enforced Timeouts - No More 4-Minute Hangs
 
-**v2.15.16** now reads your actual Vantage HQ settings when loading a scene file:
+**The Problem:**
+- pywinauto's `child_window()` and `descendants()` calls block indefinitely
+- They **ignore** timeout parameters completely
+- A single button search was taking 200+ seconds, causing the 30s timeout to never trigger
 
-**Auto-Detection:**
-When you load a `.vantage` file, Wain reads `vantage.ini` and shows:
-- Resolution (e.g., 3840×2160)
-- Samples (e.g., 100)
-- Denoiser (NVIDIA/OIDN/Off)
+**The Solution: ThreadPoolExecutor**
+```python
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
-**Status Display:**
+def _find_button_with_timeout(self, window, auto_id, timeout=1.5):
+    def search():
+        btn = window.child_window(auto_id=auto_id, control_type="Button")
+        return btn
+    
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(search)
+        return future.result(timeout=timeout)  # ACTUALLY enforced!
 ```
-Vantage HQ: 3840x2160, 100 samples, NVIDIA
+
+**What Changed:**
+- Button searches now have **real 1.5-second timeouts**
+- If the panel isn't open yet, the search times out quickly
+- Ctrl+R is resent every 3 seconds until the button appears
+- Total max wait: 30 seconds (actually works now!)
+
+**Expected Log Output:**
+```
+Step 3: Opening HQ panel (Ctrl+R)...
+Polling for Start button...
+  Button search timed out (1.5s)
+  Button search timed out (1.5s)
+Resending Ctrl+R (attempt 2)...
+  Found Start button by ID (0.12s)
+Start button found! (4.2s)
 ```
 
-**Form Pre-Population:**
-- Resolution fields auto-fill with your Vantage settings
-- Vantage samples field shows your current value
-- Denoiser dropdown pre-selects your active denoiser
+### Previous v2.15.22 - Fast Button Search (not released)
 
-This is a **READ-ONLY** operation — completely safe, no files are modified.
+### Previous: v2.15.17 - Scene File Parsing
 
-### Previous: v2.15.15 - Per-Job Custom Settings
+**Camera Detection:**
+- Reads all cameras from `.vantage` file
+- Populates camera dropdown in Add Job dialog
 
-**Toggle Custom Settings:**
-- New "Use Custom Settings" checkbox in Add Job dialog
-- When OFF: Uses your existing Vantage HQ settings (default)
-- When ON: Override resolution, samples, and denoiser per job
+**Animation/Frame Range:**
+- Calculates total frames from animation tracks
+- Auto-detects FPS (e.g., 30fps)
 
-**Safety Features:**
-- Automatic backup of `vantage.ini` before ANY modification
-- Validation of all values (resolution 64-16384, samples 1-65536)
-- Preserves exact Qt serialization format (`@Size(w h)`)
-- Backup files timestamped: `vantage_backup_YYYYMMDD_HHMMSS.ini`
+**Data Sources:**
+| Data | Source |
+|------|--------|
+| Resolution, Samples, Denoiser | `vantage.ini` |
+| Cameras, Frame Count, FPS | `.vantage` file |
+| First/Last Frame | Manual (Vantage HQ panel) |
+
+### Previous: v2.15.15-16 - Per-Job Custom Settings
+
+**Per-Job Settings Toggle:**
+- "Use Custom Settings" checkbox in Add Job dialog
+- Override resolution, samples, denoiser per job
+- Automatic INI backup before any modification
 
 ---
 

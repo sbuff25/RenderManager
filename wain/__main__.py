@@ -7,7 +7,7 @@ Entry point for running as a package: python -m wain
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.14.4 - Maximum speed UI automation with accurate progress tracking
+v2.15.28 - Disable GPU acceleration to prevent conflicts with render engines
 
 https://github.com/Spencer-Sliffe/Wain
 """
@@ -25,6 +25,15 @@ import os
 import sys
 import threading
 
+# ============================================================================
+# CRITICAL: Disable GPU acceleration in QtWebEngine
+# This prevents Wain from competing with Vantage/Blender for GPU memory
+# Without this, launching Vantage can crash due to GPU memory exhaustion
+# ============================================================================
+os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing --disable-software-rasterizer'
+os.environ['QT_QUICK_BACKEND'] = 'software'
+os.environ['QTWEBENGINE_DISABLE_SANDBOX'] = '1'
+
 # Check if native mode is available
 HAS_NATIVE_MODE = False
 try:
@@ -37,7 +46,7 @@ try:
     import webview
     
     HAS_NATIVE_MODE = True
-    print("Native mode: PyQt6 + WebEngine + qtpy available")
+    print("Native mode: PyQt6 + WebEngine + qtpy available (GPU disabled for render engine compatibility)")
 except ImportError as e:
     print(f"Native mode unavailable ({e}) - will use browser mode")
 

@@ -1,0 +1,21 @@
+[17:45:08] Wain v2.15.29 started
+[17:45:08] Found: Blender 4.5.0
+[17:45:08] Found: Marmoset Toolbag 5.0
+[17:45:08] Found: Chaos Vantage Unknown
+[17:45:08] Loaded 0 jobs
+[17:45:53] Added: after
+[17:45:53] Starting: after
+[17:45:53] [Vantage] ==================================================
+[17:45:53] [Vantage] Wain Vantage Engine v2.15.29 - Custom Settings
+[17:45:53] [Vantage] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
+[17:45:53] [Vantage] Applying custom HQ settings...
+[17:45:53] [Vantage] REJECTED: Width 45 outside safe range (64-16384)
+[17:45:53] Failed: after - Failed to apply custom settings - check logs
+[17:46:24] Updated: after
+[17:46:24] Starting: after
+[17:46:24] [Vantage] ==================================================
+[17:46:24] [Vantage] Wain Vantage Engine v2.15.29 - Custom Settings
+[17:46:24] [Vantage] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
+[17:46:24] [Vantage] Applying custom HQ settings...
+[17:46:24] [Vantage] REJECTED: Width 45 outside safe range (64-16384)
+[17:46:24] Failed: after - Failed to apply custom settings - check logs

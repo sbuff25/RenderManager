@@ -148,7 +148,7 @@ async def show_add_job_dialog():
                         loop = asyncio.get_event_loop()
                         info = await loop.run_in_executor(None, lambda: detected.get_scene_info(file_path))
                         
-                        # Update resolution (ALL engines including Vantage now)
+                        # Update resolution (ALL engines including Vantage)
                         if info.get('resolution_x') and res_w_input:
                             res_w_input.value = info['resolution_x']
                             form['res_width'] = info['resolution_x']
@@ -160,9 +160,9 @@ async def show_add_job_dialog():
                         if res_scale_container:
                             res_scale_container.refresh()
                         
-                        # Update cameras (not for Vantage - no camera list in INI)
-                        if detected.engine_type != 'vantage' and camera_select is not None:
-                            cameras = info.get('cameras', ['Scene Default'])
+                        # Update cameras (NOW INCLUDING VANTAGE - parsed from .vantage file)
+                        if camera_select is not None:
+                            cameras = info.get('cameras', [])
                             if cameras:
                                 camera_select.options = cameras
                                 active_cam = info.get('active_camera', cameras[0])
@@ -170,20 +170,24 @@ async def show_add_job_dialog():
                                     camera_select.value = active_cam
                                     form['camera'] = active_cam
                                 camera_select.update()
+                            elif detected.engine_type != 'vantage':
+                                # Non-Vantage: default to Scene Default
+                                camera_select.options = ['Scene Default']
+                                camera_select.value = 'Scene Default'
+                                camera_select.update()
                         
-                        # Update frame range (not for Vantage - frames not in INI)
-                        if detected.engine_type != 'vantage':
-                            if info.get('frame_start') and frame_start_input:
-                                frame_start_input.value = info['frame_start']
-                                form['frame_start'] = info['frame_start']
-                            if info.get('frame_end') and frame_end_input:
-                                frame_end_input.value = info['frame_end']
-                                form['frame_end'] = info['frame_end']
-                            
-                            has_anim = info.get('has_animation', False) or info.get('frame_end', 1) > info.get('frame_start', 1)
-                            if has_anim and anim_checkbox:
-                                anim_checkbox.value = True
-                                form['is_animation'] = True
+                        # Update frame range (NOW INCLUDING VANTAGE - parsed from .vantage file)
+                        if info.get('frame_start') and frame_start_input:
+                            frame_start_input.value = info['frame_start']
+                            form['frame_start'] = info['frame_start']
+                        if info.get('frame_end') and info['frame_end'] > 1 and frame_end_input:
+                            frame_end_input.value = info['frame_end']
+                            form['frame_end'] = info['frame_end']
+                        
+                        has_anim = info.get('has_animation', False) or info.get('frame_end', 1) > info.get('frame_start', 1)
+                        if has_anim and anim_checkbox:
+                            anim_checkbox.value = True
+                            form['is_animation'] = True
                         
                         # Samples for Marmoset/Blender
                         if info.get('samples') and detected.engine_type in ['marmoset', 'blender']:
@@ -195,6 +199,9 @@ async def show_add_job_dialog():
                                 form['vantage_samples'] = info['samples']
                             if info.get('denoiser_name'):
                                 form['vantage_denoiser'] = info['denoiser_name']
+                            # Store animation FPS for reference
+                            if info.get('animation_fps'):
+                                form['vantage_fps'] = info['animation_fps']
                         
                         # Update engine settings section
                         if 'engine_settings' in accent_elements:
@@ -204,8 +211,12 @@ async def show_add_job_dialog():
                         if detected.engine_type == 'vantage':
                             res_str = f"{info.get('resolution_x', '?')}x{info.get('resolution_y', '?')}"
                             samples = info.get('samples', '?')
-                            denoiser = info.get('denoiser_name', 'nvidia').upper()
-                            status_label.set_text(f'Vantage HQ: {res_str}, {samples} samples, {denoiser}')
+                            frames = info.get('frame_end', 1)
+                            fps = info.get('animation_fps', 30)
+                            if frames > 1:
+                                status_label.set_text(f'Vantage: {res_str}, {samples} smp, {frames} frames @ {fps}fps')
+                            else:
+                                status_label.set_text(f'Vantage: {res_str}, {samples} samples')
                         else:
                             status_label.set_text(f'Scene loaded: {info.get("resolution_x", "?")}x{info.get("resolution_y", "?")}')
                         status_label.classes(replace='text-xs text-green-500')

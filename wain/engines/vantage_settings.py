@@ -230,16 +230,17 @@ class VantageINIManager:
             original_content = content  # Keep copy for comparison
             
             # Update resolution (preserve @Size format exactly)
+            # Use \g<1> instead of \1 to avoid ambiguity with following digits
             content = re.sub(
                 r'(snapshotResDefault=)@Size\(\d+\s+\d+\)',
-                f'\\1@Size({settings.width} {settings.height})',
+                f'\\g<1>@Size({settings.width} {settings.height})',
                 content
             )
             
             # Update samples
             content = re.sub(
                 r'(snapshotSamplesDefault=)\d+',
-                f'\\1{settings.samples}',
+                f'\\g<1>{settings.samples}',
                 content
             )
             
@@ -247,14 +248,14 @@ class VantageINIManager:
             denoise_str = 'true' if settings.denoise_enabled else 'false'
             content = re.sub(
                 r'(snapshotDenoiseDefault=)(true|false)',
-                f'\\1{denoise_str}',
+                f'\\g<1>{denoise_str}',
                 content
             )
             
             # Update denoiser type
             content = re.sub(
                 r'(snapshotDenoiserTypeDefault=)\d+',
-                f'\\1{settings.denoiser_type}',
+                f'\\g<1>{settings.denoiser_type}',
                 content
             )
             

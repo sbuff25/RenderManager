@@ -1,21 +1,97 @@
-[17:45:08] Wain v2.15.29 started
-[17:45:08] Found: Blender 4.5.0
-[17:45:08] Found: Marmoset Toolbag 5.0
-[17:45:08] Found: Chaos Vantage Unknown
-[17:45:08] Loaded 0 jobs
-[17:45:53] Added: after
-[17:45:53] Starting: after
-[17:45:53] [Vantage] ==================================================
-[17:45:53] [Vantage] Wain Vantage Engine v2.15.29 - Custom Settings
-[17:45:53] [Vantage] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
-[17:45:53] [Vantage] Applying custom HQ settings...
-[17:45:53] [Vantage] REJECTED: Width 45 outside safe range (64-16384)
-[17:45:53] Failed: after - Failed to apply custom settings - check logs
-[17:46:24] Updated: after
-[17:46:24] Starting: after
-[17:46:24] [Vantage] ==================================================
-[17:46:24] [Vantage] Wain Vantage Engine v2.15.29 - Custom Settings
-[17:46:24] [Vantage] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
-[17:46:24] [Vantage] Applying custom HQ settings...
-[17:46:24] [Vantage] REJECTED: Width 45 outside safe range (64-16384)
-[17:46:24] Failed: after - Failed to apply custom settings - check logs
+[17:39:15] Wain v2.15.45 started
+[17:39:15] Found: Blender 4.5.0
+[17:39:15] Found: Marmoset Toolbag 5.0
+[17:39:15] Found: Chaos Vantage Unknown
+[17:39:15] Loaded 0 jobs
+[17:40:02] Added: after
+[17:40:02] Starting: after
+[17:40:02] [Vantage] ==================================================
+[17:40:02] [Vantage] Wain Vantage Engine v2.15.33 - Debug Logging
+[17:40:02] [Vantage] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
+[17:40:02] [Vantage] Applying custom HQ settings...
+[17:40:02] [Vantage] Backup created: vantage_backup_20251223_174002.ini
+[17:40:02] [Vantage] Updated SaveImage to: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/NEWRender
+[17:40:02] [Vantage] Settings to apply: Resolution: 1215x682, Samples: 256, Denoiser: nvidia, Output: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/NEWRender
+[17:40:02] [Vantage] Changes detected:
+[17:40:02] [Vantage]   - snapshotResDefault=@Size(810 455)
+[17:40:02] [Vantage]   + snapshotResDefault=@Size(1215 682)
+[17:40:02] [Vantage]   - snapshotSamplesDefault=556
+[17:40:02] [Vantage]   + snapshotSamplesDefault=256
+[17:40:02] [Vantage] Settings written successfully
+[17:40:02] [Vantage] INI settings applied: 1215x682, 256 samples, denoiser=nvidia
+[17:40:02] [Vantage] ==================================================
+[17:40:02] [Vantage] State: Initializing
+[17:40:04] [Vantage] State: Initializing ? Launching Vantage
+[17:40:04] [Vantage] Launching: C:\Program Files\Chaos\Vantage\vantage.exe
+[17:40:04] [Vantage] Waiting for Vantage window...
+[17:40:18] [Vantage] Window found! (14.4s)
+[17:40:18] [Vantage] State: Launching Vantage ? Loading Scene
+[17:40:18] [Vantage] Waiting for Vantage to load: after.vantage
+[17:40:18] [Vantage] Checking for Live Link server (port 20701)...
+[17:40:21] [Vantage] Vantage window appeared (0.0s)
+[17:40:28] [Vantage] ========================================
+[17:40:28] [Vantage] === LIVE LINK ESTABLISHED (port 20701) ===
+[17:40:28] [Vantage] ========================================
+[17:40:28] [Vantage] Vantage ready (2.6s)
+[17:40:38] [Vantage]   Found by manual search: name='Start' id='primaryButton' (6.67s)
+[17:40:38] [Vantage] HQ panel opened! (2.6s total)
+[17:40:39] [Vantage] State: Loading Scene ? Opening HQ Panel
+[17:40:39] [Vantage] Applying custom settings via UI...
+[17:40:41] [Vantage] Setting output path: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/RenderRender
+[17:40:41] [Vantage] Setting output path: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/RenderRender.png
+[17:40:46] [Vantage] Found output path field with value: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFo...
+[17:40:48] [Vantage] Output path set to: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/RenderRender.png
+[17:40:48] [Vantage] Setting frame range: 250 - 300
+[17:40:57] [Vantage] Found 'First frame' label at top=819
+[17:40:57] [Vantage] Found 'Last frame' label at top=819
+[17:41:03] [Vantage] Found 9 spinners
+[17:41:03] [Vantage] Matched First frame spinner
+[17:41:03] [Vantage] Matched Last frame spinner
+[17:41:04] [Vantage] Set First Frame: 250
+[17:41:05] [Vantage] Set Last Frame: 300
+[17:41:13] [Vantage]   Found by manual search: name='Start' id='primaryButton' (6.88s)
+[17:41:13] [Vantage] State: Opening HQ Panel ? Starting Render
+[17:41:13] [Vantage] Clicked Start button
+[17:41:13] [Vantage] State: Starting Render ? Rendering
+[17:41:13] [Vantage] Step 5: Monitoring render progress...
+[17:41:19] [Vantage] Frame 1/51 (1%) - Elapsed: 00:00:05 - Remaining: 00:05:23
+[17:41:24] [Vantage] Frame 2/51 (3%) - Elapsed: 00:00:10 - Remaining: 00:05:13
+[17:41:29] [Vantage] Frame 3/51 (5%) - Elapsed: 00:00:15 - Remaining: 00:05:11
+[17:41:31] Pause: after
+[17:41:31] [Vantage] Pausing render...
+[17:41:35] [Vantage] Found progress window, looking for Pause button...
+[17:41:35] [Vantage] Frame 4/51 (7%) - Elapsed: 00:00:22 - Remaining: 00:05:07
+[17:41:35] [Vantage] Render cancelled by user
+[17:41:36] [Vantage] Available buttons: ['Close[]', 'Pause[secondaryButton]', 'Abort[primaryRedButton]']
+[17:41:37] [Vantage] Found pause button by automation ID: secondarybutton
+[17:41:37] [Vantage] Clicking Pause button: 'Pause'
+[17:41:37] [Vantage] Clicked Pause button successfully
+[17:41:37] Wain v2.15.45 started
+[17:41:37] Found: Blender 4.5.0
+[17:41:37] Found: Marmoset Toolbag 5.0
+[17:41:37] Found: Chaos Vantage Unknown
+[17:41:37] Loaded 1 jobs
+[17:41:41] Start: after
+[17:41:41] Starting: after
+[17:41:41] [Vantage] ==================================================
+[17:41:41] [Vantage] Wain Vantage Engine v2.15.33 - Debug Logging
+[17:41:41] [Vantage] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
+[17:41:41] [Vantage] Applying custom HQ settings...
+[17:41:41] [Vantage] Backup created: vantage_backup_20251223_174141.ini
+[17:41:41] [Vantage] Updated SaveImage to: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/NEWRender
+[17:41:41] [Vantage] Settings to apply: Resolution: 1215x682, Samples: 256, Denoiser: nvidia, Output: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/NEWRender
+[17:41:41] [Vantage] No changes needed
+[17:41:41] [Vantage] INI settings applied: 1215x682, 256 samples, denoiser=nvidia
+[17:41:41] [Vantage] ==================================================
+[17:41:41] [Vantage] State: Rendering ? Initializing
+[17:41:41] [Vantage] Found vantage.exe process running
+[17:41:42] [Vantage] Vantage is already running - checking for Resume button...
+[17:41:43] [Vantage] Found progress window - looking for Resume button...
+[17:41:43] [Vantage] Progress window buttons: ['Close[]', 'Resume[secondaryButton]', 'Abort[primaryRedButton]']
+[17:41:43] [Vantage] Found Resume button: 'Resume' [secondarybutton]
+[17:41:43] [Vantage] Clicking Resume to continue paused render...
+[17:41:43] [Vantage] Clicked Resume button!
+[17:41:43] [Vantage] Error: 'VantageEngine' object has no attribute 'STATE_MONITORING'
+[17:41:43] [Vantage] Traceback (most recent call last):?  File "H:\Work\UtilityDevelopment\RenderManager\wain\engines\vantage.py", line 1449, in render_thread?    self._set_state(self.STATE_MONITORING, on_progress, "Resuming render...")?                    ^^^^^^^^^^^^^^^^^^^^^?AttributeError: 'VantageEngine' object has no attribute 'STATE_MONITORING'. Did you mean: 'STATE_RENDERING'??
+[17:41:43] Failed: after - 'VantageEngine' object has no attribute 'STATE_MONITORING'
+[17:42:08] Log saved: H:\Work\UtilityDevelopment\RenderManager\wain_render_log.txt

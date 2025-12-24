@@ -1,5 +1,5 @@
 """
-Wain Vantage Settings Manager v2.15.15
+Wain Vantage Settings Manager v2.15.38
 ======================================
 
 SAFE settings management for Chaos Vantage HQ Render.
@@ -21,6 +21,9 @@ Key Settings (in [Preferences] section):
 - snapshotSamplesDefault=100               # Integer
 - snapshotDenoiseDefault=true              # Boolean
 - snapshotDenoiserTypeDefault=0            # 0=NVIDIA OptiX, 1=Intel OIDN, 2=Off
+
+Output Path (in [DialogLocations] section):
+- SaveImage=H:/path/to/output/prefix       # Full path including filename prefix
 
 https://github.com/Spencer-Sliffe/Wain
 """
@@ -68,6 +71,7 @@ class VantageHQSettings:
     samples: int = 100
     denoise_enabled: bool = True
     denoiser_type: int = 0  # 0=NVIDIA, 1=OIDN, 2=Off
+    output_path: str = ""  # Full output path including folder and prefix
     
     def validate(self) -> Tuple[bool, str]:
         """Validate settings are within safe ranges."""
@@ -83,7 +87,8 @@ class VantageHQSettings:
     
     def __str__(self):
         denoiser_name = DENOISER_NAMES.get(self.denoiser_type, "unknown")
-        return f"Resolution: {self.width}x{self.height}, Samples: {self.samples}, Denoiser: {denoiser_name}"
+        output_str = f", Output: {self.output_path}" if self.output_path else ""
+        return f"Resolution: {self.width}x{self.height}, Samples: {self.samples}, Denoiser: {denoiser_name}{output_str}"
 
 
 # =============================================================================
@@ -193,6 +198,12 @@ class VantageINIManager:
             if denoiser_match:
                 settings.denoiser_type = int(denoiser_match.group(1))
             
+            # Parse output path from [DialogLocations] section
+            # SaveImage=H:/path/to/output/prefix
+            output_match = re.search(r'^SaveImage=(.+)$', content, re.MULTILINE)
+            if output_match:
+                settings.output_path = output_match.group(1).strip()
+            
             return settings
             
         except Exception as e:
@@ -259,6 +270,35 @@ class VantageINIManager:
                 content
             )
             
+            # Update output path in [DialogLocations] section if provided
+            if settings.output_path:
+                # Normalize path separators to forward slashes (Vantage uses forward slashes)
+                output_path = settings.output_path.replace('\\', '/')
+                
+                # Simple line-based replacement for SaveImage
+                if re.search(r'^SaveImage=', content, re.MULTILINE):
+                    # Replace existing SaveImage line
+                    content = re.sub(
+                        r'^SaveImage=.*$',
+                        f'SaveImage={output_path}',
+                        content,
+                        flags=re.MULTILINE
+                    )
+                    self.log(f"Updated SaveImage to: {output_path}")
+                else:
+                    # Add SaveImage to [DialogLocations] section if it doesn't exist
+                    if '[DialogLocations]' in content:
+                        content = re.sub(
+                            r'(\[DialogLocations\]\r?\n)',
+                            f'\\g<1>SaveImage={output_path}\n',
+                            content
+                        )
+                        self.log(f"Added SaveImage: {output_path}")
+                    else:
+                        # Create [DialogLocations] section if it doesn't exist
+                        content += f'\n[DialogLocations]\nSaveImage={output_path}\n'
+                        self.log(f"Created [DialogLocations] with SaveImage: {output_path}")
+            
             # Log what changed
             if DRY_RUN:
                 self.log("=== DRY RUN MODE - NO FILES MODIFIED ===")
@@ -311,6 +351,7 @@ def apply_vantage_settings(
     height: int = None,
     samples: int = None,
     denoiser: str = None,
+    output_path: str = None,
     log_func=None
 ) -> bool:
     """
@@ -324,6 +365,7 @@ def apply_vantage_settings(
         height: Render height (64-16384)
         samples: Render samples (1-65536)
         denoiser: "nvidia", "oidn", or "off"
+        output_path: Output FOLDER path (not filename prefix - that's set in Vantage UI)
         log_func: Optional logging function
     
     Returns:
@@ -352,6 +394,8 @@ def apply_vantage_settings(
             if log_func:
                 log_func(f"Unknown denoiser: {denoiser}")
             return False
+    if output_path is not None:
+        current.output_path = output_path
     
     # Write settings
     return manager.write_settings(current)

@@ -66,6 +66,8 @@ class RenderApp:
         if self.job_count_container: self.job_count_container.refresh()
     
     def handle_action(self, action: str, job):
+        import threading
+        
         self.log(f"{action.capitalize()}: {job.name}")
         
         if action == "start":
@@ -76,6 +78,7 @@ class RenderApp:
                     job.accumulated_seconds += int((datetime.now() - self.render_start_time).total_seconds())
                 engine = self.engine_registry.get(job.engine_type)
                 if engine:
+                    # Run in background - pause_render is now non-blocking
                     if hasattr(engine, 'pause_render'):
                         engine.pause_render()
                     else:
@@ -100,13 +103,16 @@ class RenderApp:
             else:
                 job.progress = 0
         elif action == "delete":
+            # Handle engine cleanup
+            engine = self.engine_registry.get(job.engine_type)
             if self.current_job and self.current_job.id == job.id:
-                engine = self.engine_registry.get(job.engine_type)
-                if engine: engine.cancel_render()
+                if engine:
+                    engine.cancel_render()  # Non-blocking, closes Vantage
                 self.current_job = None
             elif job.status == "paused" and job.engine_type == "vantage":
-                engine = self.engine_registry.get(job.engine_type)
-                if engine: engine.cancel_render()
+                # For paused Vantage jobs, close Vantage
+                if engine:
+                    engine.cancel_render()  # Non-blocking, closes Vantage
             self.jobs = [j for j in self.jobs if j.id != job.id]
         
         self.save_config()
@@ -214,21 +220,38 @@ class RenderApp:
                 job.current_sample = int(sample_match.group(1))
                 job.total_samples = int(sample_match.group(2))
             
+            # For Vantage: engine sets job properties directly, skip recalculation
+            # Just queue the UI update with current values
+            if job.engine_type == "vantage":
+                self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display, job.status_message))
+                return
+            
+            # For other engines (Blender, Marmoset): calculate progress from frame
             if job.is_animation:
-                if frame > 0:
+                # CRITICAL: Only update rendering_frame if it's INCREASING
+                # Never go backwards - this prevents progress resets
+                if frame > 0 and frame > job.rendering_frame:
                     job.rendering_frame = frame
                 if frame == -1 and job.rendering_frame > 0:
                     job.current_frame = job.rendering_frame
                     job.current_sample = 0
-                    job.progress = min(int((job.current_frame / job.frame_end) * 100), 99)
-                else:
-                    completed_frames = job.rendering_frame - 1 if job.rendering_frame > 0 else 0
-                    job.progress = min(int((completed_frames / job.frame_end) * 100), 99)
+                    new_progress = min(int((job.current_frame / job.frame_end) * 100), 99)
+                    # Only update if progress increases
+                    if new_progress > job.progress:
+                        job.progress = new_progress
+                elif job.rendering_frame > 0:
+                    completed_frames = job.rendering_frame - 1
+                    new_progress = min(int((completed_frames / job.frame_end) * 100), 99)
+                    # Only update if progress increases
+                    if new_progress > job.progress:
+                        job.progress = new_progress
             else:
                 if frame == -1:
                     job.progress = 99
                 elif sample_match:
-                    job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
+                    new_progress = min(int((job.current_sample / job.total_samples) * 100), 99)
+                    if new_progress > job.progress:
+                        job.progress = new_progress
             
             self._progress_updates.append((job.id, job.progress, job.elapsed_time, job.current_frame, job.frames_display, job.samples_display, job.pass_display, job.status_message))
         

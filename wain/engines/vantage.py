@@ -1,19 +1,24 @@
 """
-Wain Vantage Engine v2.15.46
+Wain Vantage Engine v2.15.48
 ============================
 
 Chaos Vantage render engine integration with STATE MACHINE control.
 
-v2.15.46 - Resume State Fix:
-----------------------------
-- Fixed STATE_MONITORING -> STATE_RENDERING (correct state constant)
+v2.15.48 - Large Job Progress Tracking Fix:
+-------------------------------------------
+- REMOVED 2-hour timeout - renders can now take unlimited time (days if needed)
+- Progress tracking now only goes FORWARD - never backwards
+- Tracks highest_frame_seen and highest_progress_seen
+- Frame count won't reset to 1 after logging completion of higher frames
+- Preserves progress when resuming paused jobs (doesn't reset to 0)
+- Vantage handles its own completion/error states
 
-v2.15.45 - Resume Fix:
-----------------------
-- Fixed resume not working after pause
-- Initialize Desktop before checking for progress window
-- Better Resume button detection (try Resume, Play, Continue, secondary toggle)
-- Log all available buttons in progress window for debugging
+v2.15.47 - Responsive Actions & Auto-Close:
+-------------------------------------------
+- All actions (pause/resume/delete) run in background threads - no UI blocking
+- No more "lost connection" messages when pausing/resuming/deleting
+- Vantage closes automatically on render completion
+- Vantage closes when deleting a job (active or paused)
 
 https://github.com/Spencer-Sliffe/Wain
 """
@@ -1869,8 +1874,9 @@ class VantageEngine(RenderEngine):
         
         self._log("Step 5: Monitoring render progress...")
         
-        job.progress = 0
-        on_progress(0, "Render starting...")
+        # Don't reset progress if resuming - keep existing progress
+        if job.progress == 0:
+            on_progress(0, "Render starting...")
         
         render_start = time.time()
         last_progress = -1
@@ -1879,6 +1885,10 @@ class VantageEngine(RenderEngine):
         last_log_time = time.time()
         click_retry_count = 0
         last_click_retry = time.time()
+        
+        # Track highest values seen - never go backwards
+        highest_frame_seen = job.current_frame if job.current_frame > 0 else 0
+        highest_progress_seen = job.progress if job.progress > 0 else 0
         
         while not self.is_cancelling:
             elapsed = time.time() - render_start
@@ -1903,17 +1913,29 @@ class VantageEngine(RenderEngine):
                     if total_pct == 0 and current_frame > 0 and total_frames > 0:
                         total_pct = int((current_frame / total_frames) * 100)
                     
-                    progress_changed = (total_pct != last_progress or current_frame != job.current_frame)
+                    # CRITICAL: Only update if we're making FORWARD progress
+                    # Never let frame count or progress go backwards
+                    if current_frame > highest_frame_seen:
+                        highest_frame_seen = current_frame
+                        job.current_frame = current_frame
+                        job.rendering_frame = current_frame
+                    
+                    if total_pct > highest_progress_seen:
+                        highest_progress_seen = total_pct
+                    
+                    # Always use highest values for display
+                    display_frame = highest_frame_seen
+                    display_pct = min(highest_progress_seen, 99)
+                    
+                    progress_changed = (display_pct != last_progress or display_frame != job.current_frame)
                     time_to_log = (time.time() - last_log_time) > 10
                     
                     if progress_changed or time_to_log:
-                        last_progress = total_pct
+                        last_progress = display_pct
                         last_log_time = time.time()
-                        job.progress = min(total_pct, 99)
-                        
-                        if current_frame > 0:
-                            job.current_frame = current_frame
-                            job.rendering_frame = current_frame
+                        job.progress = display_pct
+                        job.current_frame = display_frame
+                        job.rendering_frame = display_frame
                         
                         if total_frames > 1:
                             job.frame_end = total_frames
@@ -1923,21 +1945,23 @@ class VantageEngine(RenderEngine):
                             job.total_samples = 100
                         
                         status = "Rendering"
-                        on_progress(total_pct, status)
+                        # CRITICAL: Pass frame number, not percentage!
+                        # app.py on_progress expects (frame, msg) not (pct, msg)
+                        on_progress(display_frame, status)
                         
                         # Log gets full details
-                        if current_frame > 0 and total_frames > 1:
-                            log_msg = f"Frame {current_frame}/{total_frames} ({total_pct}%)"
+                        if display_frame > 0 and total_frames > 1:
+                            log_msg = f"Frame {display_frame}/{total_frames} ({display_pct}%)"
                         else:
-                            log_msg = f"Rendering... {total_pct}%"
+                            log_msg = f"Rendering... {display_pct}%"
                         if elapsed_str:
                             log_msg += f" - Elapsed: {elapsed_str}"
                         if remaining_str:
                             log_msg += f" - Remaining: {remaining_str}"
                         self._log(log_msg)
                     
-                    # Check completion
-                    if current_frame >= total_frames and total_frames > 1:
+                    # Check completion - use highest frame seen
+                    if highest_frame_seen >= total_frames and total_frames > 1:
                         self._log("All frames complete!")
                         self._debug_log(">>> RENDER COMPLETE: All frames finished")
                         self._end_debug_session()
@@ -1946,7 +1970,7 @@ class VantageEngine(RenderEngine):
                         on_complete()
                         return
                     
-                    if total_pct >= 100:
+                    if highest_progress_seen >= 100:
                         self._log("Render complete!")
                         self._debug_log(">>> RENDER COMPLETE: 100% reached")
                         self._end_debug_session()
@@ -1989,141 +2013,123 @@ class VantageEngine(RenderEngine):
                     on_error("Render did not start - no progress window after 30s")
                     return
             
-            # Timeout after 2 hours
-            if elapsed > 7200:
-                on_error("Render timed out after 2 hours")
-                return
+            # NO TIMEOUT - renders can take days for large jobs
+            # Vantage handles its own completion/error states
             
             time.sleep(0.3)
         
         self._log("Render cancelled by user")
     
     def pause_render(self):
-        """Pause the current render by clicking Pause in Vantage."""
-        self._log("Pausing render...")
-        self.is_cancelling = True
+        """Pause the current render by clicking Pause in Vantage. Fast and non-blocking."""
+        import threading
         
-        try:
-            from pywinauto import Desktop
-            self._desktop = Desktop(backend="uia")
+        def do_pause():
+            self._log("Pausing render...")
+            self.is_cancelling = True
             
-            progress_win = self._find_progress_window()
-            if progress_win:
-                self._log("Found progress window, looking for Pause button...")
+            try:
+                from pywinauto import Desktop
+                self._desktop = Desktop(backend="uia")
                 
-                # List all buttons for debugging
-                all_buttons = []
-                for btn in progress_win.descendants(control_type="Button"):
-                    try:
-                        name = btn.element_info.name or ""
-                        auto_id = btn.element_info.automation_id or ""
-                        if name or auto_id:
-                            all_buttons.append(f"{name}[{auto_id}]")
-                    except:
-                        pass
-                self._log(f"Available buttons: {all_buttons[:10]}")
-                
-                # Try multiple button names
-                pause_btn = None
-                for btn_name in ["pause", "Pause", "PAUSE"]:
-                    pause_btn = self._find_button_multilevel(progress_win, btn_name)
-                    if pause_btn:
-                        break
-                
-                # Also try by automation ID
-                if not pause_btn:
+                progress_win = self._find_progress_window()
+                if progress_win:
+                    # Quick search for Pause button by automation ID (fastest)
+                    pause_btn = None
                     for btn in progress_win.descendants(control_type="Button"):
                         try:
                             auto_id = (btn.element_info.automation_id or "").lower()
-                            if "pause" in auto_id or "secondary" in auto_id:
+                            name = (btn.element_info.name or "").lower()
+                            if "pause" in name or "secondary" in auto_id:
                                 pause_btn = btn
-                                self._log(f"Found pause button by automation ID: {auto_id}")
                                 break
                         except:
                             pass
-                
-                if pause_btn:
-                    try:
-                        btn_name = pause_btn.element_info.name or "unknown"
-                        self._log(f"Clicking Pause button: '{btn_name}'")
-                        pause_btn.click_input()
-                        self._log("Clicked Pause button successfully")
-                        return True
-                    except Exception as e:
-                        self._log(f"click_input failed: {e}, trying invoke()")
+                    
+                    if pause_btn:
                         try:
-                            pause_btn.invoke()
-                            self._log("Pause invoked successfully")
-                            return True
-                        except Exception as e2:
-                            self._log(f"invoke also failed: {e2}")
-                else:
-                    self._log("Pause button not found in progress window")
-            else:
-                self._log("Progress window not found - cannot pause")
-        except Exception as e:
-            self._log(f"Error pausing: {e}")
-        
-        return False
-    
-    def cancel_render(self, close_vantage: bool = True):
-        """Cancel/abort the current render."""
-        self._log("Cancelling render...")
-        self._debug_log(">>> CANCEL_RENDER called")
-        self.is_cancelling = True
-        
-        try:
-            from pywinauto import Desktop
-            self._desktop = Desktop(backend="uia")
-            
-            progress_win = self._find_progress_window()
-            if progress_win:
-                # Click Abort button
-                abort_btn = self._find_button_multilevel(progress_win, "abort")
-                if abort_btn:
-                    try:
-                        abort_btn.click_input()
-                        self._log("Clicked Abort button")
-                    except:
-                        try:
-                            abort_btn.invoke()
+                            pause_btn.click_input()
+                            self._log("Paused!")
                         except:
-                            pass
-                else:
-                    # Fallback to Cancel/Stop
-                    for btn_name in ["cancel", "stop", "close"]:
-                        btn = self._find_button_multilevel(progress_win, btn_name)
-                        if btn:
                             try:
-                                btn.click_input()
-                                self._log(f"Clicked {btn_name} button")
-                                break
+                                pause_btn.invoke()
                             except:
                                 pass
+                    else:
+                        self._log("Pause button not found")
+                else:
+                    self._log("Progress window not found")
+            except Exception as e:
+                self._log(f"Pause error: {e}")
+        
+        # Run in background thread to not block UI
+        threading.Thread(target=do_pause, daemon=True).start()
+        return True
+    
+    def cancel_render(self, close_vantage: bool = True):
+        """Cancel/abort the current render. Fast and non-blocking."""
+        import threading
+        
+        def do_cancel():
+            self._log("Cancelling render...")
+            self._debug_log(">>> CANCEL_RENDER called")
             
-            # Close Vantage if requested
-            if close_vantage:
-                time.sleep(0.05)
-                self._close_vantage()
+            try:
+                from pywinauto import Desktop
+                self._desktop = Desktop(backend="uia")
                 
-        except Exception as e:
-            self._log(f"Error cancelling: {e}")
+                progress_win = self._find_progress_window()
+                if progress_win:
+                    # Quick search for Abort button
+                    abort_btn = None
+                    for btn in progress_win.descendants(control_type="Button"):
+                        try:
+                            auto_id = (btn.element_info.automation_id or "").lower()
+                            name = (btn.element_info.name or "").lower()
+                            if "abort" in name or "primaryred" in auto_id:
+                                abort_btn = btn
+                                break
+                        except:
+                            pass
+                    
+                    if abort_btn:
+                        try:
+                            abort_btn.click_input()
+                            self._log("Aborted!")
+                        except:
+                            try:
+                                abort_btn.invoke()
+                            except:
+                                pass
+                
+                # Close Vantage if requested
+                if close_vantage:
+                    self._close_vantage()
+                    
+            except Exception as e:
+                self._log(f"Cancel error: {e}")
+            
+            # End debug session
+            self._end_debug_session()
+            
+            # Cleanup
+            self._vantage_window = None
+            self._desktop = None
         
-        # End debug session
-        self._end_debug_session()
+        # Set flag immediately
+        self.is_cancelling = True
         
-        # Cleanup
-        self._vantage_window = None
-        self._desktop = None
-        self._on_log = None
-        self._job = None
+        # Run in background thread to not block UI
+        threading.Thread(target=do_cancel, daemon=True).start()
     
     def _close_vantage(self):
-        """Close the Vantage application."""
+        """Close the Vantage application. Fast with minimal delays."""
         try:
             from pywinauto import keyboard, Desktop
             
-            self._desktop = Desktop(backend="uia") if not self._desktop else self._desktop
+            if not self._desktop:
+                self._desktop = Desktop(backend="uia")
+            
             vantage = self._find_vantage_window()
             
             if vantage:
@@ -2131,28 +2137,31 @@ class VantageEngine(RenderEngine):
                 
                 try:
                     vantage.set_focus()
-                    time.sleep(0.02)
                     keyboard.send_keys("%{F4}")
-                    self._log("Sent Alt+F4")
                     
-                    # Handle save dialog
-                    time.sleep(0.1)
+                    # Quick check for save dialog (minimal delay)
+                    time.sleep(0.05)
                     self._desktop = Desktop(backend="uia")
                     
                     for win in self._desktop.windows():
                         try:
                             title = win.window_text().lower()
-                            if "save" in title or "vantage" in title:
-                                for btn_name in ["don't save", "dont save", "no", "discard"]:
-                                    btn = self._find_button_multilevel(win, btn_name)
-                                    if btn:
-                                        btn.click_input()
-                                        self._log(f"Clicked '{btn_name}' on save dialog")
-                                        return
+                            if "save" in title:
+                                for btn in win.descendants(control_type="Button"):
+                                    try:
+                                        name = (btn.element_info.name or "").lower()
+                                        if "don" in name or "no" == name or "discard" in name:
+                                            btn.click_input()
+                                            self._log("Dismissed save dialog")
+                                            return
+                                    except:
+                                        pass
                         except:
                             pass
+                    
+                    self._log("Vantage closed")
                 except Exception as e:
-                    self._log(f"Alt+F4 failed: {e}")
+                    self._log(f"Close error: {e}")
                     
         except Exception as e:
             self._log(f"Error closing Vantage: {e}")

@@ -1,24 +1,22 @@
 """
-Wain Vantage Engine v2.15.48
+Wain Vantage Engine v2.15.54
 ============================
 
 Chaos Vantage render engine integration with STATE MACHINE control.
 
-v2.15.48 - Large Job Progress Tracking Fix:
--------------------------------------------
-- REMOVED 2-hour timeout - renders can now take unlimited time (days if needed)
-- Progress tracking now only goes FORWARD - never backwards
-- Tracks highest_frame_seen and highest_progress_seen
-- Frame count won't reset to 1 after logging completion of higher frames
-- Preserves progress when resuming paused jobs (doesn't reset to 0)
-- Vantage handles its own completion/error states
+v2.15.54 - Early Viewport Pause (Stable):
+-----------------------------------------
+- Wait for Vantage window to appear (up to 2 min)
+- Wait for basic UI to load (10+ buttons visible)
+- Pause viewport render early (Backspace) - skips viewport wait
+- Then open HQ panel (Ctrl+R) and proceed normally
+- Balanced approach: stable loading + no viewport wait
 
-v2.15.47 - Responsive Actions & Auto-Close:
--------------------------------------------
-- All actions (pause/resume/delete) run in background threads - no UI blocking
-- No more "lost connection" messages when pausing/resuming/deleting
-- Vantage closes automatically on render completion
-- Vantage closes when deleting a job (active or paused)
+v2.15.52 - UI Automation for Output Path & Frame Range:
+-------------------------------------------------------
+- Output path setting via UI automation (paste into Edit field)
+- Frame range setting via UI automation (click spinners + type)
+- Resolution/samples/denoiser still via INI modification
 
 https://github.com/Spencer-Sliffe/Wain
 """
@@ -33,13 +31,7 @@ import json
 from typing import Dict, List, Optional, Any
 
 from wain.engines.base import RenderEngine
-from wain.engines.vantage_settings import (
-    VantageINIManager,
-    VantageHQSettings,
-    apply_vantage_settings,
-    read_vantage_settings,
-    DRY_RUN,
-)
+from wain.engines.vantage_settings import apply_vantage_settings
 
 
 class VantageEngine(RenderEngine):
@@ -442,28 +434,12 @@ class VantageEngine(RenderEngine):
             "camera_resolutions": {},
         }
         
-        # =====================================================================
-        # PART 1: Read HQ settings from vantage.ini
-        # =====================================================================
-        try:
-            settings = read_vantage_settings()
-            if settings:
-                info["resolution_x"] = settings.width
-                info["resolution_y"] = settings.height
-                info["samples"] = settings.samples
-                info["denoise_enabled"] = settings.denoise_enabled
-                info["denoiser_type"] = settings.denoiser_type
-                
-                # Map denoiser type to name
-                denoiser_names = {0: "nvidia", 1: "oidn", 2: "off"}
-                info["denoiser_name"] = denoiser_names.get(settings.denoiser_type, "nvidia")
-                
-                print(f"[Wain] INI settings: {settings.width}x{settings.height}, {settings.samples} samples, denoiser={info['denoiser_name']}")
-        except Exception as e:
-            print(f"[Wain] Could not read vantage.ini: {e}")
+        # Note: HQ render settings (resolution, samples, denoiser) are configured
+        # directly in Vantage's HQ Render panel. Wain uses default values here
+        # for the Add Job dialog; actual render uses whatever Vantage has set.
         
         # =====================================================================
-        # PART 2: Read cameras and animation from .vantage scene file
+        # Read cameras and animation from .vantage scene file
         # =====================================================================
         if file_path and file_path.lower().endswith('.vantage') and os.path.exists(file_path):
             try:
@@ -1272,38 +1248,33 @@ class VantageEngine(RenderEngine):
         self._start_debug_session(job.name)
         
         self._log("=" * 50)
-        self._log("Wain Vantage Engine v2.15.33 - Debug Logging")
+        self._log("Wain Vantage Engine v2.15.51 - Custom Settings + UI Readiness")
         self._log(f"Scene: {job.file_path}")
         if self._debug_mode:
             self._log(f"DEBUG MODE: Detailed log → {self._debug_log_file}")
         
         # ============================================================
-        # STEP 0: Apply custom settings if configured
+        # STEP 0: Apply custom settings to INI if configured
         # ============================================================
         use_custom_settings = job.engine_settings.get('use_custom_settings', False)
         
         if use_custom_settings:
-            self._log("Applying custom HQ settings...")
+            self._log("Applying custom HQ settings to INI...")
             
             width = job.engine_settings.get('width', job.res_width)
             height = job.engine_settings.get('height', job.res_height)
             samples = job.engine_settings.get('samples')
             denoiser = job.engine_settings.get('denoiser')
             
-            # Build output path from job settings
-            # Note: Output path with filename prefix must be set via UI automation
-            # (INI SaveImage only stores folder, not filename prefix)
-            output_folder = job.output_folder
-            output_name = job.output_name
-            
-            # Apply settings to INI (resolution, samples, denoiser only - NOT output path)
+            # Apply settings to INI (resolution, samples, denoiser)
+            # Note: Output path is set via UI automation, not INI
             try:
                 success = apply_vantage_settings(
                     width=width,
                     height=height,
                     samples=samples,
                     denoiser=denoiser,
-                    output_path=None,  # Don't set via INI - use UI automation instead
+                    output_path=None,  # Don't set via INI - use UI automation
                     log_func=self._log
                 )
                 
@@ -1533,285 +1504,228 @@ class VantageEngine(RenderEngine):
                 self._set_state(self.STATE_SCENE_LOADING, on_progress, "Loading scene...")
                 
                 # Large scenes can take several minutes to load
-                # We need to detect when Vantage is truly ready, not just when UI appears
+                # We need to detect when Vantage is truly ready by checking UI elements
                 SCENE_LOAD_TIMEOUT = 300  # 5 minutes max for scene loading
+                UI_STABLE_TIME = 3.0  # UI must be stable for this long
+                UI_READY_PANELS = ["Lights", "Scene", "Camera", "Environment"]  # Panels that indicate ready
                 
                 scene_name = os.path.basename(job.file_path)
                 self._log(f"Waiting for Vantage to load: {scene_name}")
-                self._log(f"Checking for Live Link server (port 20701)...")
+                self._log("Detecting UI readiness (watching for Lights panel)...")
                 
                 load_start = time.time()
-                phase = "waiting_for_window"  # waiting_for_window -> waiting_for_live_link -> ready
                 last_log_time = 0
-                last_debug_dump = 0
                 scene_ready = False
                 
-                self._debug_log(">>> Entering scene loading state machine (v2.15.36 - Live Link first)")
+                self._debug_log(">>> v2.15.54 - Early viewport pause, stable UI wait")
                 
-                while time.time() - load_start < SCENE_LOAD_TIMEOUT:
+                # ============================================================
+                # PHASE 1: Wait for Vantage window to appear
+                # ============================================================
+                self._log("Waiting for Vantage window...")
+                
+                while time.time() - load_start < 120:  # 2 min max for window
                     if self.is_cancelling:
-                        self._debug_log(">>> Cancelled during scene loading")
                         return
                     
                     elapsed = time.time() - load_start
                     
-                    # Refresh window reference
                     self._desktop = Desktop(backend="uia")
                     vantage = self._find_vantage_window()
                     
-                    # Debug: periodic window state dump (every 5 seconds)
-                    if self._debug_mode and elapsed - last_debug_dump >= 5:
-                        last_debug_dump = elapsed
-                        self._dump_window_state(vantage, f"Phase: {phase} @ {elapsed:.1f}s")
-                    
-                    # PHASE 1: Wait for Vantage window to exist
-                    if phase == "waiting_for_window":
-                        self._debug_log(f"Phase 1: Looking for window... ({elapsed:.2f}s)")
-                        
-                        if not vantage:
-                            if elapsed - last_log_time >= 10:
-                                last_log_time = elapsed
-                                self._log(f"Waiting for Vantage window... ({elapsed:.0f}s)")
-                            time.sleep(0.5)
-                            continue
-                        
+                    if vantage:
                         self._vantage_window = vantage
                         self._log(f"Vantage window appeared ({elapsed:.1f}s)")
-                        self._debug_log(f">>> PHASE 1 → PHASE 2: Window found at {elapsed:.2f}s")
-                        self._dump_window_state(vantage, "Window just appeared")
-                        
-                        # Skip button counting - go straight to Live Link check!
-                        phase = "waiting_for_live_link"
-                        self._phase2_start = time.time()
-                        continue
+                        break
                     
-                    if not vantage:
-                        # Window disappeared - wait for it again
-                        self._debug_log(f">>> Window lost! Reverting to Phase 1")
-                        phase = "waiting_for_window"
-                        time.sleep(0.5)
-                        continue
-                    
-                    self._vantage_window = vantage
-                    
-                    # PHASE 2: Wait for Live Link server IMMEDIATELY (skip button counting!)
-                    # Live Link TCP port 20701 opens ~8-10 seconds after Vantage launches
-                    # The UI "Waiting for live link" message is about VIEWPORT render, not the server!
-                    # We just need the TCP port to be open - viewport render state is irrelevant
-                    if phase == "waiting_for_live_link":
-                        # Track time within Phase 2
-                        phase2_elapsed = time.time() - self._phase2_start
-                        
-                        # Check TCP port 20701 - this is the ONLY signal we need
-                        # When this port opens, Vantage's Live Link server is running
-                        tcp_port_open = self._check_live_link()
-                        
-                        self._debug_log(f"Phase 2: phase2_elapsed={phase2_elapsed:.2f}s TCP={tcp_port_open}")
-                        
-                        if tcp_port_open:
-                            # Clean up tracking attributes
-                            if hasattr(self, '_phase2_start'):
-                                delattr(self, '_phase2_start')
-                            
-                            # THIS IS THE DEFINITIVE SIGNAL - Live Link server is running!
-                            self._log("========================================")
-                            self._log("=== LIVE LINK ESTABLISHED (port 20701) ===")
-                            self._log("========================================")
-                            self._log(f"Vantage ready ({elapsed:.1f}s)")
-                            self._debug_log(f">>> LIVE LINK READY at {elapsed:.2f}s - TCP port open!")
-                            
-                            # Vantage is now DEFINITELY ready - send Ctrl+R immediately
-                            # Viewport render state doesn't matter - HQ panel can open anytime
-                            self._debug_log(">>> Sending Ctrl+R now that Live Link is ready...")
-                            self._send_ctrl_r(vantage)
-                            time.sleep(0.5)  # Brief wait for panel to open
-                            
-                            # Check if Start button appeared
-                            self._desktop = Desktop(backend="uia")
-                            vantage = self._find_vantage_window()
-                            if vantage:
-                                self._dump_window_state(vantage, "After Ctrl+R (Live Link ready)")
-                                start_btn = self._find_start_button(vantage)
-                                if start_btn:
-                                    self._log(f"HQ panel opened! ({elapsed:.1f}s total)")
-                                    self._debug_log(f">>> PHASE 2 COMPLETE: Panel opened at {elapsed:.2f}s")
-                                    state['scene_ready'] = True
-                                    state['panel_open'] = True
-                                    state['ctrl_r_sent'] = True
-                                    scene_ready = True
-                                    break
-                                else:
-                                    # Panel didn't open - try again
-                                    self._debug_log(">>> Start button not found, retrying Ctrl+R...")
-                                    self._send_ctrl_r(vantage)
-                                    time.sleep(0.5)
-                                    
-                                    self._desktop = Desktop(backend="uia")
-                                    vantage = self._find_vantage_window()
-                                    if vantage:
-                                        start_btn = self._find_start_button(vantage)
-                                        if start_btn:
-                                            self._log(f"HQ panel opened on retry! ({elapsed:.1f}s)")
-                                            state['scene_ready'] = True
-                                            state['panel_open'] = True
-                                            state['ctrl_r_sent'] = True
-                                            scene_ready = True
-                                            break
-                            
-                            # Even if panel didn't open, Live Link ready means scene is loaded
-                            # Continue to panel opening step
-                            state['scene_ready'] = True
-                            scene_ready = True
-                            break
-                        
-                        # Log progress every 5 seconds
-                        if int(phase2_elapsed) % 5 == 0 and phase2_elapsed >= 5:
-                            self._log(f"Waiting for Live Link... ({elapsed:.0f}s)")
-                        
-                        time.sleep(0.2)  # Fast polling for Live Link
-                        continue
+                    if elapsed - last_log_time >= 10:
+                        last_log_time = elapsed
+                        self._log(f"Waiting for Vantage window... ({elapsed:.0f}s)")
                     
                     time.sleep(0.3)
                 
-                if not scene_ready and not state.get('scene_ready'):
-                    elapsed = time.time() - load_start
-                    self._log(f"Scene did not load within {SCENE_LOAD_TIMEOUT}s ({elapsed:.0f}s elapsed)")
-                    self._debug_log(f">>> TIMEOUT: Scene loading failed after {elapsed:.1f}s")
-                    buttons = self._list_all_buttons(vantage) if vantage else []
-                    self._log(f"Final button state: {buttons[:15]}")
-                    self._dump_window_state(vantage, "TIMEOUT - Final state")
-                    self._end_debug_session()
-                    if hasattr(self, '_phase2_start'):
-                        delattr(self, '_phase2_start')
-                    on_error(f"Scene did not fully load within {SCENE_LOAD_TIMEOUT//60} minutes. Check if Vantage is responding.")
+                if not vantage:
+                    on_error("Vantage window did not appear within 2 minutes")
                     return
                 
-                # Clean up phase tracking
-                if hasattr(self, '_phase2_start'):
-                    delattr(self, '_phase2_start')
+                # ============================================================
+                # PHASE 2: Wait for basic UI to load (some buttons visible)
+                # This ensures Vantage is responsive before we send commands
+                # ============================================================
+                self._log("Waiting for Vantage UI to initialize...")
+                
+                ui_wait_start = time.time()
+                UI_WAIT_TIMEOUT = 60  # 60 seconds for basic UI
+                buttons_seen = False
+                
+                while time.time() - ui_wait_start < UI_WAIT_TIMEOUT:
+                    if self.is_cancelling:
+                        return
+                    
+                    elapsed = time.time() - ui_wait_start
+                    
+                    self._desktop = Desktop(backend="uia")
+                    vantage = self._find_vantage_window()
+                    
+                    if vantage:
+                        self._vantage_window = vantage
+                        
+                        try:
+                            buttons = list(vantage.descendants(control_type="Button"))
+                            button_count = len(buttons)
+                            
+                            # Basic UI is ready when we have at least 10 buttons
+                            # This happens early in load, before viewport finishes
+                            if button_count >= 10:
+                                self._log(f"UI initialized ({button_count} buttons, {elapsed:.1f}s)")
+                                buttons_seen = True
+                                break
+                        except:
+                            pass
+                    
+                    if elapsed - last_log_time >= 10:
+                        last_log_time = elapsed
+                        self._log(f"Waiting for UI... ({elapsed:.0f}s)")
+                    
+                    time.sleep(0.3)
+                
+                if not buttons_seen:
+                    self._log("WARNING: Could not confirm UI loaded, proceeding anyway...")
+                
+                # ============================================================
+                # PHASE 3: PAUSE VIEWPORT RENDER (key step!)
+                # Do this IMMEDIATELY after basic UI is ready
+                # This prevents waiting for viewport to finish
+                # ============================================================
+                self._log("Pausing viewport render (Backspace)...")
+                
+                try:
+                    vantage.set_focus()
+                    time.sleep(0.2)
+                    keyboard.send_keys("{BACKSPACE}")
+                    time.sleep(0.3)
+                    self._log("Viewport paused")
+                except Exception as e:
+                    self._log(f"Could not pause viewport: {e}")
+                
+                # Small settle time after pause
+                time.sleep(0.5)
+                
+                # ============================================================
+                # PHASE 4: Open HQ panel (Ctrl+R)
+                # ============================================================
+                self._log("Opening HQ render panel (Ctrl+R)...")
+                
+                self._desktop = Desktop(backend="uia")
+                vantage = self._find_vantage_window()
+                
+                if not vantage:
+                    on_error("Lost Vantage window")
+                    return
+                
+                vantage.set_focus()
+                time.sleep(0.2)
+                self._send_ctrl_r(vantage)
+                self._log("Sent Ctrl+R")
+                
+                # ============================================================
+                # PHASE 5: Wait for Start button (panel is open)
+                # ============================================================
+                self._log("Waiting for HQ panel to open...")
+                
+                poll_start = time.time()
+                MAX_PANEL_WAIT = 30.0
+                last_ctrl_r = time.time()
+                CTRL_R_INTERVAL = 5.0  # Retry every 5 seconds
+                
+                while time.time() - poll_start < MAX_PANEL_WAIT:
+                    if self.is_cancelling:
+                        return
+                    
+                    elapsed = time.time() - poll_start
+                    
+                    self._desktop = Desktop(backend="uia")
+                    vantage = self._find_vantage_window()
+                    
+                    if vantage:
+                        self._vantage_window = vantage
+                        start_btn = self._find_start_button(vantage)
+                        
+                        if start_btn:
+                            total_elapsed = time.time() - load_start
+                            self._log(f"HQ panel open! ({total_elapsed:.1f}s total)")
+                            state['scene_ready'] = True
+                            state['panel_open'] = True
+                            state['ctrl_r_sent'] = True
+                            scene_ready = True
+                            break
+                    
+                    # Retry Ctrl+R periodically
+                    if time.time() - last_ctrl_r > CTRL_R_INTERVAL:
+                        last_ctrl_r = time.time()
+                        self._log(f"Retrying Ctrl+R ({elapsed:.0f}s)...")
+                        if vantage:
+                            vantage.set_focus()
+                            time.sleep(0.1)
+                            self._send_ctrl_r(vantage)
+                    
+                    time.sleep(0.3)
+                
+                if not scene_ready:
+                    buttons = self._list_all_buttons(vantage) if vantage else []
+                    self._log(f"Available buttons: {buttons[:20]}")
+                    on_error("Could not open HQ panel - Start button not found after 30s")
+                    return
                 
                 state['scene_ready'] = True
-                
-                # Scene is now ready - small settle time for UI stability
-                time.sleep(0.5)
                 
                 if self.is_cancelling:
                     return
                 
-                # Skip to start if panel already open
-                if state['panel_open']:
-                    self._set_state(self.STATE_OPENING_PANEL, on_progress, "Panel already open...")
-                    # Jump ahead - panel is already open
-                else:
-                    # ============================================================
-                    # STATE: OPENING_PANEL - Send Ctrl+R, wait for Start button
-                    # ============================================================
-                    self._set_state(self.STATE_OPENING_PANEL, on_progress, "Opening HQ panel...")
-                    
-                    # Send Ctrl+R (first attempt)
-                    self._send_ctrl_r(vantage)
-                    state['ctrl_r_sent'] = True
-                    self._log("Sent Ctrl+R")
-                    
-                    # Wait a moment for panel to appear, then dump all buttons for diagnostics
-                    time.sleep(2.0)
-                    self._desktop = Desktop(backend="uia")
-                    vantage = self._find_vantage_window()
-                    if vantage:
-                        buttons = self._list_all_buttons(vantage)
-                        self._log(f"Buttons visible after Ctrl+R: {buttons[:20]}")
-                    
-                    # Wait for Start button to appear
-                    self._log("Searching for Start button...")
-                    
-                    poll_start = time.time()
-                    first_attempt_time = 15  # Wait 15 seconds before retry
-                    max_wait = 30  # Total maximum wait
-                    retry_done = False
-                    last_button_dump = 0
-                    
-                    while time.time() - poll_start < max_wait:
-                        if self.is_cancelling:
-                            return
-                        
-                        # Refresh and search
-                        self._desktop = Desktop(backend="uia")
-                        vantage = self._find_vantage_window()
-                        if vantage:
-                            self._vantage_window = vantage
-                            start_btn = self._find_start_button(vantage)
-                            
-                            if start_btn:
-                                elapsed = time.time() - poll_start
-                                self._log(f"Start button found! ({elapsed:.1f}s)")
-                                state['panel_open'] = True
-                                break
-                        
-                        elapsed = time.time() - poll_start
-                        
-                        # Dump buttons every 5 seconds for diagnostics
-                        if int(elapsed) >= last_button_dump + 5:
-                            last_button_dump = int(elapsed)
-                            if vantage:
-                                buttons = self._list_all_buttons(vantage)
-                                self._log(f"Buttons at {elapsed:.0f}s: {buttons[:15]}")
-                        
-                        # ONE retry allowed at 15 seconds if panel didn't open
-                        if elapsed >= first_attempt_time and not retry_done:
-                            retry_done = True
-                            self._log("Panel not visible - sending Ctrl+R again (one retry)")
-                            if vantage:
-                                self._send_ctrl_r(vantage)
-                                time.sleep(1.0)
-                                buttons = self._list_all_buttons(vantage)
-                                self._log(f"Buttons after retry Ctrl+R: {buttons[:15]}")
-                        
-                        time.sleep(0.5)
-                    
-                    if not state['panel_open']:
-                        # Debug info
-                        buttons = self._list_all_buttons(vantage) if vantage else []
-                        self._log(f"FAILED - Final button list: {buttons}")
-                        on_error("Start button not found. Check log for available buttons.")
-                        return
+                # Panel is already open from the new streamlined flow above
+                self._set_state(self.STATE_OPENING_PANEL, on_progress, "HQ panel ready...")
                 
                 # ============================================================
-                # Apply custom frame range and output path (if configured)
-                # INI settings (resolution, samples, denoiser) were already applied before launch
-                # Frame range and output path require UI automation
+                # STEP 4: Apply UI settings (output path, frame range)
+                # Resolution and samples are set via INI in STEP 0
+                # Output path and frame range must be set via UI automation
+                # Viewport is already paused from Phase 1
                 # ============================================================
                 use_custom_settings = job.engine_settings.get('use_custom_settings', False)
                 
                 if use_custom_settings:
-                    self._log("Applying custom settings via UI...")
+                    self._log("Step 4: Applying UI settings...")
                     
-                    # Refresh window reference
-                    self._desktop = Desktop(backend="uia")
-                    vantage = self._find_vantage_window()
+                    # Set output path via UI
+                    if job.output_folder and job.output_name:
+                        try:
+                            output_format = job.output_format or "PNG"
+                            success = self._set_output_path(vantage, job.output_folder, job.output_name, output_format)
+                            if success:
+                                self._log(f"Output path set: {job.output_folder}/{job.output_name}.{output_format.lower()}")
+                            else:
+                                self._log("WARNING: Could not set output path - using Vantage default")
+                        except Exception as e:
+                            self._log(f"WARNING: Output path error: {e}")
                     
-                    if vantage:
-                        # Set output path (folder + filename prefix)
-                        if job.output_folder:
-                            self._log(f"Setting output path: {job.output_folder}/{job.output_name}")
-                            path_success = self._set_output_path(vantage, job.output_folder, job.output_name, job.output_format)
-                            if not path_success:
-                                self._log("Warning: Could not set output path via UI - check manually")
-                        
-                        # Set frame range if animation or custom range specified
-                        if job.is_animation or job.frame_end > job.frame_start:
-                            self._log(f"Setting frame range: {job.frame_start} - {job.frame_end}")
-                            frame_success = self._set_frame_range(vantage, job.frame_start, job.frame_end)
-                            if not frame_success:
-                                self._log("Warning: Could not set frame range via UI")
-                        
-                        # Small delay to let UI settle after changes
-                        time.sleep(0.3)
-                    else:
-                        self._log("Warning: Lost Vantage window while applying settings")
-                else:
-                    # Log frame range info when using existing settings
+                    # Set frame range via UI
                     if job.is_animation or job.frame_end > job.frame_start:
-                        self._log(f"Frame range: {job.frame_start} - {job.frame_end} (using Vantage panel settings)")
+                        try:
+                            success = self._set_frame_range(vantage, job.frame_start, job.frame_end)
+                            if success:
+                                self._log(f"Frame range set: {job.frame_start} - {job.frame_end}")
+                            else:
+                                self._log("WARNING: Could not set frame range - using Vantage default")
+                        except Exception as e:
+                            self._log(f"WARNING: Frame range error: {e}")
+                else:
+                    self._log("Using existing Vantage HQ panel settings")
+                    if job.is_animation or job.frame_end > job.frame_start:
+                        self._log(f"Note: Frame range {job.frame_start}-{job.frame_end} configured in Wain (ensure Vantage matches)")
+                
+                # Refresh window reference after UI interactions
+                self._desktop = Desktop(backend="uia")
+                vantage = self._find_vantage_window()
                 
                 # Find Start button for clicking
                 start_btn = self._find_start_button(vantage)

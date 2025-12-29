@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.15.20-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.15.50-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,71 +34,54 @@
 
 ---
 
-## 🆕 What's New in v2.15.23
+## 🆕 What's New in v2.15.50
 
-### Enforced Timeouts - No More 4-Minute Hangs
+### UI Readiness Detection - Reliable Scene Loading
 
 **The Problem:**
-- pywinauto's `child_window()` and `descendants()` calls block indefinitely
-- They **ignore** timeout parameters completely
-- A single button search was taking 200+ seconds, causing the 30s timeout to never trigger
+- On large scenes, Live Link TCP port (20701) connects before UI is fully responsive
+- Wain was sending Ctrl+R commands that weren't being executed
+- Caused unpredictable startup behavior
 
-**The Solution: ThreadPoolExecutor**
-```python
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+**The Solution: UI Readiness Detection**
 
-def _find_button_with_timeout(self, window, auto_id, timeout=1.5):
-    def search():
-        btn = window.child_window(auto_id=auto_id, control_type="Button")
-        return btn
-    
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(search)
-        return future.result(timeout=timeout)  # ACTUALLY enforced!
-```
+Instead of checking TCP port, Wain now watches for actual UI elements:
+
+1. **Panel Detection** - Watches for "Lights", "Scene", "Camera", "Environment" text labels
+2. **Button Stability** - Tracks button count and waits for 3 seconds of stability
+3. **Command Verification** - Confirms Start button appeared after Ctrl+R
 
 **What Changed:**
-- Button searches now have **real 1.5-second timeouts**
-- If the panel isn't open yet, the search times out quickly
-- Ctrl+R is resent every 3 seconds until the button appears
-- Total max wait: 30 seconds (actually works now!)
+- NO LONGER modifies `vantage.ini` - completely safe for your config
+- Waits for Vantage UI to fully initialize before sending commands
+- Verifies commands actually executed by checking for expected UI changes
+- More reliable on large, complex scenes
 
 **Expected Log Output:**
 ```
-Step 3: Opening HQ panel (Ctrl+R)...
-Polling for Start button...
-  Button search timed out (1.5s)
-  Button search timed out (1.5s)
-Resending Ctrl+R (attempt 2)...
-  Found Start button by ID (0.12s)
-Start button found! (4.2s)
+Waiting for Vantage to load: MyScene.vantage
+Detecting UI readiness (watching for Lights panel)...
+Vantage window appeared (2.1s)
+========================================
+=== UI READY (panels detected) ===
+Panels found: {'Lights', 'Scene'}
+Buttons stable: 47 for 3.2s
+========================================
+Vantage ready (8.3s)
+HQ panel opened! (9.5s total)
 ```
 
-### Previous v2.15.22 - Fast Button Search (not released)
+### Previous v2.15.48 - Large Job Progress Tracking
 
-### Previous: v2.15.17 - Scene File Parsing
+- **No Timeout** - Renders can now take unlimited time (days if needed)
+- **Progress Only Forward** - Frame count and percentage never regress
+- **Resume Support** - Preserves progress when resuming paused jobs
 
-**Camera Detection:**
-- Reads all cameras from `.vantage` file
-- Populates camera dropdown in Add Job dialog
+### Previous v2.15.47 - Responsive Actions
 
-**Animation/Frame Range:**
-- Calculates total frames from animation tracks
-- Auto-detects FPS (e.g., 30fps)
-
-**Data Sources:**
-| Data | Source |
-|------|--------|
-| Resolution, Samples, Denoiser | `vantage.ini` |
-| Cameras, Frame Count, FPS | `.vantage` file |
-| First/Last Frame | Manual (Vantage HQ panel) |
-
-### Previous: v2.15.15-16 - Per-Job Custom Settings
-
-**Per-Job Settings Toggle:**
-- "Use Custom Settings" checkbox in Add Job dialog
-- Override resolution, samples, denoiser per job
-- Automatic INI backup before any modification
+- All pause/resume/delete actions run in background threads
+- Vantage closes automatically on render completion
+- No more "lost connection" messages
 
 ---
 
@@ -174,19 +157,17 @@ Wain.bat --install          # Force reinstall dependencies
 
 ## ⚠️ Vantage Settings Note
 
-**Current Status (v2.15.13):**
-INI modification is **DISABLED** for safety. Wain uses whatever settings are configured in Vantage's HQ Render panel.
+**Current Status (v2.15.50):**
+Wain does **NOT** modify `vantage.ini`. Your Vantage configuration is completely safe.
 
-**When INI Writing is Re-enabled (future version):**
-- Wain will be able to automatically configure Vantage HQ settings
-- Resolution, samples, frame range, and output path will be set before launch
-- Backups will be created before any modification
+Wain uses whatever settings are already configured in Vantage's HQ Render panel.
 
-For now, configure your HQ render settings manually in Vantage:
+**To configure your render settings:**
 1. Open Vantage with your scene
 2. Press `Ctrl+R` to open HQ Render panel
-3. Set resolution, samples, output path
+3. Set resolution, samples, output path, frame range
 4. Settings are remembered for future renders
+5. Click Start in Wain - it will use your configured settings
 
 ---
 
@@ -227,11 +208,11 @@ Wain.bat --debug
 
 | Version | Highlights |
 |---------|------------|
-| **2.15.13** | DRY RUN mode, enhanced safety logging |
-| **2.15.12** | Emergency INI write disable after corruption |
-| **2.15.11** | Add Job button fix |
-| **2.15.9** | Frame range read/write support |
-| **2.15.0** | Full HQ settings control for Vantage |
+| **2.15.50** | UI readiness detection, no INI modification |
+| **2.15.48** | Large job progress tracking fix |
+| **2.15.47** | Responsive actions, auto-close |
+| **2.15.37** | State machine architecture, zombie detection |
+| **2.15.15** | Per-job custom settings |
 
 ---
 
@@ -248,5 +229,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.15.13 — Multi-engine render queue manager</em>
+  <em>Wain v2.15.50 — Multi-engine render queue manager</em>
 </p>

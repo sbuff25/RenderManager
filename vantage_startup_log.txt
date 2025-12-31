@@ -1,0 +1,56 @@
+[08:09:05.520] [   0.00s] [INFO ] ======================================================================
+[08:09:05.520] [   0.00s] [INFO ] VANTAGE STARTUP DEBUG MONITOR
+[08:09:05.520] [   0.00s] [INFO ] ======================================================================
+[08:09:05.521] [   0.00s] [INFO ] Log file: H:\Work\UtilityDevelopment\RenderManager\vantage_startup_log.txt
+[08:09:05.521] [   0.00s] [INFO ] Duration: 300s, Interval: 1.0s
+[08:09:05.521] [   0.00s] [INFO ] Scene file: H:\Work\UtilityDevelopment\Vantage\after.vantage
+[08:09:05.521] [   0.00s] [INFO ] 
+[08:09:06.231] [   0.71s] [INFO ] psutil available - will monitor CPU/memory
+[08:09:06.232] [   0.71s] [INFO ] 
+[08:09:06.232] [   0.71s] [INFO ] Found Vantage: C:\Program Files\Chaos\Vantage\vantage.exe
+[08:09:06.232] [   0.71s] [INFO ] 
+[08:09:06.232] [   0.71s] [INFO ] ======================================================================
+[08:09:06.232] [   0.71s] [INFO ] STARTING MONITOR
+[08:09:06.232] [   0.71s] [INFO ] ======================================================================
+[08:09:06.232] [   0.71s] [INFO ] 
+[08:09:06.232] [   0.71s] [INFO ] Launching Vantage with scene: after.vantage
+[08:09:06.298] [   0.78s] [INFO ] Launch command sent
+[08:09:07.378] [   1.86s] [MILE ] *** MILESTONE: Window found (0.8s) ***
+[08:09:07.379] [   1.86s] [INFO ] TITLE: 'Vantage and 1 more tab - File Explorer'
+[08:09:09.877] [   4.36s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.18s)
+[08:09:10.334] [   4.81s] [MILE ] *** MILESTONE: Control appeared: menu_bar ***
+[08:09:10.334] [   4.81s] [INFO ] CONTROLS: menu_bar
+[08:09:10.334] [   4.81s] [MILE ] *** MILESTONE: Scene appears LOADED (0.8s) ***
+[08:09:10.335] [   4.81s] [INFO ] 
+[08:09:23.256] [  17.74s] [INFO ] PROCESS: CPU=93.3%, Memory=5772MB
+[08:09:23.398] [  17.88s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.13s)
+[08:09:23.829] [  18.31s] [INFO ] CONTROLS: menu_bar
+[08:09:23.829] [  18.31s] [INFO ] 
+[08:09:26.942] [  21.42s] [INFO ] TITLE: 'Chaos Vantage (Trial - Not for commercial use) - after.vantage'
+[08:09:26.942] [  21.42s] [INFO ]   Scene: Chaos Vantage (Trial - Not for commercial use) - after.vantage
+[08:09:47.279] [  41.76s] [INFO ] RESPONSIVE: NO | children=3 (0.74s) | buttons=1 (17.39s)
+[08:10:11.930] [  66.41s] [INFO ] 
+[08:10:18.716] [  73.20s] [INFO ] RESPONSIVE: YES | children=2 (0.38s) | buttons=10 (1.33s)
+[08:10:21.719] [  76.20s] [MILE ] *** MILESTONE: Control appeared: pause_rendering ***
+[08:10:21.719] [  76.20s] [MILE ] *** MILESTONE: Control appeared: lights_panel ***
+[08:10:21.719] [  76.20s] [MILE ] *** MILESTONE: Control appeared: camera_panel ***
+[08:10:21.719] [  76.20s] [MILE ] *** MILESTONE: Control appeared: environment_panel ***
+[08:10:21.719] [  76.20s] [MILE ] *** MILESTONE: Control appeared: menu_bar ***
+[08:10:21.719] [  76.20s] [INFO ] CONTROLS: pause_rendering, lights_panel, camera_panel, environment_panel, menu_bar
+[08:10:21.719] [  76.20s] [INFO ] 
+[08:10:25.857] [  80.34s] [INFO ] TITLE: 'Vantage and 1 more tab - File Explorer'
+[08:10:27.953] [  82.43s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.14s)
+[08:10:28.375] [  82.85s] [INFO ] CONTROLS: menu_bar
+[08:10:28.375] [  82.85s] [INFO ] 
+[08:10:32.711] [  87.19s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.18s)
+[08:10:33.380] [  87.86s] [INFO ] CONTROLS: menu_bar
+[08:10:33.380] [  87.86s] [INFO ] 
+[08:10:38.492] [  92.97s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.19s)
+[08:10:39.059] [  93.54s] [INFO ] CONTROLS: menu_bar
+[08:10:39.059] [  93.54s] [INFO ] 
+[08:10:43.363] [  97.84s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.16s)
+[08:10:43.984] [  98.46s] [INFO ] CONTROLS: menu_bar
+[08:10:43.984] [  98.46s] [INFO ] 
+[08:10:48.164] [ 102.64s] [INFO ] RESPONSIVE: YES | children=5 (0.01s) | buttons=10 (0.15s)
+[08:10:48.760] [ 103.24s] [INFO ] CONTROLS: menu_bar
+[08:10:48.760] [ 103.24s] [INFO ] 

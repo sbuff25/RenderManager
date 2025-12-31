@@ -1,16 +1,32 @@
 """
-Wain Vantage Engine v2.15.54
+Wain Vantage Engine v2.15.58
 ============================
 
 Chaos Vantage render engine integration with STATE MACHINE control.
 
-v2.15.54 - Early Viewport Pause (Stable):
------------------------------------------
-- Wait for Vantage window to appear (up to 2 min)
-- Wait for basic UI to load (10+ buttons visible)
-- Pause viewport render early (Backspace) - skips viewport wait
-- Then open HQ panel (Ctrl+R) and proceed normally
-- Balanced approach: stable loading + no viewport wait
+v2.15.58 - Streamlined Flow + Faster Button Detection:
+-------------------------------------------------------
+- Fixed: Commands sent BEFORE searching for Start button (not after)
+- Fixed: Removed redundant Ctrl+R send after Start button found
+- Fixed: Removed duplicate Phase 5 wait loop
+- Faster: _find_start_button uses 0.3s timeouts and 2s search limit
+- Faster: _pause_viewport_rendering uses child_window() first
+- Cleaner: Single linear flow without duplicate steps
+
+v2.15.57 - Direct Pause Button Click:
+-------------------------------------
+- Now clicks 'Pause Rendering' toggle button directly instead of keyboard shortcut
+- The button is a CheckBox in the toolbar (identified by diagnostic tool)
+- More reliable than Backspace key which was being ignored during scene load
+- Falls back to keyboard if button not found
+
+v2.15.56 - Large Scene Support with Load Detection:
+----------------------------------------------------
+- Properly detects when scene is still loading (title contains "Loading", etc.)
+- Waits for scene to fully load before sending commands (up to 10 min)
+- Checks window responsiveness to detect when loading completes
+- Only sends Backspace (pause viewport) + Ctrl+R after scene is loaded
+- Much more reliable for large scenes that take minutes to load
 
 v2.15.52 - UI Automation for Output Path & Frame Range:
 -------------------------------------------------------
@@ -568,58 +584,38 @@ class VantageEngine(RenderEngine):
     def _find_start_button(self, window):
         """
         Find the Start button with multiple strategies.
-        
-        Tries:
-        1. auto_id="primaryButton"
-        2. title="Start"
-        3. title contains "Start"
-        4. Any button with "start" in name (case-insensitive)
+        Uses short timeouts to fail fast when button doesn't exist.
         """
         if not window:
             return None
         
         t0 = time.time()
         
-        # Method 1: Direct ID lookup (common pattern)
-        btn = self._find_button_with_timeout(window, auto_id="primaryButton", timeout=0.5)
+        # Method 1: Direct ID lookup (fastest - common pattern)
+        btn = self._find_button_with_timeout(window, auto_id="primaryButton", timeout=0.3)
         if btn:
             self._log(f"  Found by ID 'primaryButton' ({time.time()-t0:.2f}s)")
             return btn
         
         # Method 2: By exact title "Start"
-        btn = self._find_button_with_timeout(window, title="Start", timeout=0.5)
+        btn = self._find_button_with_timeout(window, title="Start", timeout=0.3)
         if btn:
             self._log(f"  Found by title 'Start' ({time.time()-t0:.2f}s)")
             return btn
         
-        # Method 3: Manual search through all buttons for any with "start" in name
+        # Method 3: Quick manual search - limit iterations
         try:
+            search_start = time.time()
             for b in window.descendants(control_type="Button"):
+                # Timeout after 2 seconds of searching
+                if time.time() - search_start > 2.0:
+                    break
                 try:
                     name = (b.element_info.name or "").lower()
                     auto_id = (b.element_info.automation_id or "").lower()
                     
                     if "start" in name or "start" in auto_id:
                         self._log(f"  Found by manual search: name='{b.element_info.name}' id='{b.element_info.automation_id}' ({time.time()-t0:.2f}s)")
-                        return b
-                except:
-                    pass
-        except:
-            pass
-        
-        # Method 4: Look for common render/begin button patterns
-        try:
-            for b in window.descendants(control_type="Button"):
-                try:
-                    name = (b.element_info.name or "").lower()
-                    auto_id = (b.element_info.automation_id or "").lower()
-                    
-                    # Look for render-related buttons
-                    if any(kw in name for kw in ["render", "begin", "go"]):
-                        self._log(f"  Found render button: name='{b.element_info.name}' id='{b.element_info.automation_id}' ({time.time()-t0:.2f}s)")
-                        return b
-                    if any(kw in auto_id for kw in ["render", "begin", "primary"]):
-                        self._log(f"  Found by ID pattern: name='{b.element_info.name}' id='{b.element_info.automation_id}' ({time.time()-t0:.2f}s)")
                         return b
                 except:
                     pass
@@ -641,6 +637,92 @@ class VantageEngine(RenderEngine):
         # Try as-is
         btn = self._find_button_with_timeout(window, title=name, timeout=timeout/2)
         return btn
+    
+    def _pause_viewport_rendering(self, window) -> bool:
+        """
+        Pause viewport rendering by clicking the 'Pause Rendering' toggle button.
+        
+        This is a CheckBox toggle in the toolbar:
+        - Name: 'Pause Rendering' (tooltip shows this on hover)
+        - Position: approximately (1462, 98) in toolbar
+        
+        NOTE: We don't check get_toggle_state() because it's unreliable.
+        We just click the button and trust it worked.
+        
+        Returns True if button was clicked.
+        """
+        if not window:
+            return False
+        
+        try:
+            # First try: Find by exact title (fastest)
+            try:
+                pause_btn = window.child_window(title="Pause Rendering", control_type="CheckBox")
+                # Verify it exists by accessing a property
+                _ = pause_btn.element_info.name
+                
+                self._log("Found 'Pause Rendering' button - clicking...")
+                pause_btn.click_input()
+                time.sleep(0.3)
+                self._log("Viewport paused")
+                return True
+            except Exception:
+                pass
+            
+            # Second try: Search children only (not all descendants - much faster)
+            try:
+                for child in window.children():
+                    try:
+                        # Check if it's the toolbar pane
+                        for ctrl in child.children():
+                            try:
+                                name = ctrl.element_info.name or ""
+                                ctrl_type = ctrl.element_info.control_type
+                                if ctrl_type == "CheckBox" and "pause rendering" in name.lower():
+                                    self._log("Found 'Pause Rendering' in toolbar - clicking...")
+                                    ctrl.click_input()
+                                    time.sleep(0.3)
+                                    self._log("Viewport paused")
+                                    return True
+                            except:
+                                continue
+                    except:
+                        continue
+            except:
+                pass
+            
+            # Third try: Full descendants search (slower but thorough)
+            self._log("Searching all controls for Pause Rendering button...")
+            for cb in window.descendants(control_type="CheckBox"):
+                try:
+                    name = cb.element_info.name or ""
+                    if "pause rendering" in name.lower():
+                        self._log("Found 'Pause Rendering' button - clicking...")
+                        cb.click_input()
+                        time.sleep(0.3)
+                        self._log("Viewport paused")
+                        return True
+                except:
+                    continue
+            
+            self._log("'Pause Rendering' button not found - trying keyboard fallback")
+            # Fallback to keyboard shortcut
+            try:
+                from pywinauto import keyboard
+                window.set_focus()
+                time.sleep(0.1)
+                keyboard.send_keys("{BACKSPACE}")
+                time.sleep(0.3)
+                self._log("Sent Backspace key (fallback)")
+                return True
+            except:
+                pass
+            
+            return False
+            
+        except Exception as e:
+            self._log(f"Error pausing viewport: {e}")
+            return False
     
     def _find_progress_window(self):
         """
@@ -1248,7 +1330,7 @@ class VantageEngine(RenderEngine):
         self._start_debug_session(job.name)
         
         self._log("=" * 50)
-        self._log("Wain Vantage Engine v2.15.51 - Custom Settings + UI Readiness")
+        self._log("Wain Vantage Engine v2.15.58 - Streamlined Flow")
         self._log(f"Scene: {job.file_path}")
         if self._debug_mode:
             self._log(f"DEBUG MODE: Detailed log → {self._debug_log_file}")
@@ -1517,14 +1599,16 @@ class VantageEngine(RenderEngine):
                 last_log_time = 0
                 scene_ready = False
                 
-                self._debug_log(">>> v2.15.54 - Early viewport pause, stable UI wait")
+                self._log("=" * 50)
+                self._log("v2.15.58 - Streamlined Flow + Fast Button Detection")
+                self._log("=" * 50)
                 
                 # ============================================================
                 # PHASE 1: Wait for Vantage window to appear
                 # ============================================================
-                self._log("Waiting for Vantage window...")
+                self._log("Phase 1: Waiting for Vantage window...")
                 
-                while time.time() - load_start < 120:  # 2 min max for window
+                while time.time() - load_start < 180:  # 3 min max for window
                     if self.is_cancelling:
                         return
                     
@@ -1535,149 +1619,221 @@ class VantageEngine(RenderEngine):
                     
                     if vantage:
                         self._vantage_window = vantage
-                        self._log(f"Vantage window appeared ({elapsed:.1f}s)")
+                        try:
+                            title = vantage.window_text()
+                            self._log(f"Vantage window found ({elapsed:.1f}s)")
+                            self._log(f"Window title: '{title}'")
+                        except:
+                            self._log(f"Vantage window found ({elapsed:.1f}s)")
                         break
                     
-                    if elapsed - last_log_time >= 10:
+                    if elapsed - last_log_time >= 15:
                         last_log_time = elapsed
-                        self._log(f"Waiting for Vantage window... ({elapsed:.0f}s)")
+                        self._log(f"Waiting for window... ({elapsed:.0f}s)")
                     
-                    time.sleep(0.3)
+                    time.sleep(0.5)
                 
                 if not vantage:
-                    on_error("Vantage window did not appear within 2 minutes")
+                    on_error("Vantage window did not appear within 3 minutes")
                     return
                 
                 # ============================================================
-                # PHASE 2: Wait for basic UI to load (some buttons visible)
-                # This ensures Vantage is responsive before we send commands
+                # PHASE 2: Wait for scene loading to complete
+                # During scene loading, Vantage is unresponsive to commands
+                # We detect loading by:
+                # - Window title containing "Loading" or progress %
+                # - Window not responding to UI queries (slow/timeout)
+                # - Specific loading dialog visible
                 # ============================================================
-                self._log("Waiting for Vantage UI to initialize...")
+                self._log("Phase 2: Waiting for scene to finish loading...")
                 
-                ui_wait_start = time.time()
-                UI_WAIT_TIMEOUT = 60  # 60 seconds for basic UI
-                buttons_seen = False
+                SCENE_LOAD_TIMEOUT = 600  # 10 minutes max for scene loading
+                scene_load_start = time.time()
+                last_title = ""
+                loading_detected = False
+                responsive_count = 0
+                RESPONSIVE_THRESHOLD = 3  # Need 3 consecutive responsive checks
                 
-                while time.time() - ui_wait_start < UI_WAIT_TIMEOUT:
+                while time.time() - scene_load_start < SCENE_LOAD_TIMEOUT:
                     if self.is_cancelling:
                         return
                     
-                    elapsed = time.time() - ui_wait_start
+                    elapsed = time.time() - scene_load_start
                     
+                    # Refresh window
                     self._desktop = Desktop(backend="uia")
                     vantage = self._find_vantage_window()
                     
-                    if vantage:
-                        self._vantage_window = vantage
+                    if not vantage:
+                        self._log("Window lost during scene load, waiting...")
+                        responsive_count = 0
+                        time.sleep(1.0)
+                        continue
+                    
+                    self._vantage_window = vantage
+                    
+                    # Check window title for loading indicators
+                    try:
+                        title = vantage.window_text()
+                        title_lower = title.lower()
+                        
+                        # Detect if scene is loading
+                        is_loading = False
+                        if "loading" in title_lower:
+                            is_loading = True
+                            loading_detected = True
+                        elif "%" in title and any(c.isdigit() for c in title):
+                            # Progress percentage in title
+                            is_loading = True
+                            loading_detected = True
+                        elif "importing" in title_lower:
+                            is_loading = True
+                            loading_detected = True
+                        
+                        # Log title changes
+                        if title != last_title:
+                            self._log(f"Title: '{title}' {'(LOADING)' if is_loading else ''}")
+                            last_title = title
+                        
+                        if is_loading:
+                            responsive_count = 0
+                            if elapsed - last_log_time >= 10:
+                                last_log_time = elapsed
+                                self._log(f"Scene loading... ({elapsed:.0f}s)")
+                            time.sleep(1.0)
+                            continue
+                    except Exception as e:
+                        # Can't read title - window might be busy
+                        responsive_count = 0
+                        time.sleep(1.0)
+                        continue
+                    
+                    # Try to check if window is responsive
+                    # (can we enumerate at least some elements quickly?)
+                    try:
+                        check_start = time.time()
+                        # Just try to get direct children - faster than descendants
+                        children = list(vantage.children())
+                        check_time = time.time() - check_start
+                        
+                        if check_time < 2.0 and len(children) > 0:
+                            # Window is responding quickly
+                            responsive_count += 1
+                            if responsive_count >= RESPONSIVE_THRESHOLD:
+                                total_load_time = time.time() - load_start
+                                self._log(f"Scene appears loaded ({total_load_time:.1f}s total)")
+                                break
+                        else:
+                            responsive_count = 0
+                    except:
+                        responsive_count = 0
+                    
+                    if elapsed - last_log_time >= 15:
+                        last_log_time = elapsed
+                        if loading_detected:
+                            self._log(f"Still loading scene... ({elapsed:.0f}s)")
+                        else:
+                            self._log(f"Waiting for scene... ({elapsed:.0f}s, responsive={responsive_count})")
+                    
+                    time.sleep(1.0)
+                
+                if time.time() - scene_load_start >= SCENE_LOAD_TIMEOUT:
+                    on_error("Scene loading timed out after 10 minutes")
+                    return
+                
+                # Small pause after scene load detected
+                self._log("Scene loaded, waiting 2s for UI to stabilize...")
+                time.sleep(2.0)
+                
+                # ============================================================
+                # PHASE 3: Pause viewport, open HQ panel, wait for Start button
+                # ============================================================
+                self._log("Phase 3: Pausing viewport and opening HQ panel...")
+                
+                COMMAND_TIMEOUT = 60  # 1 minute max
+                RETRY_INTERVAL = 5.0  # Retry commands every 5 seconds
+                
+                command_start = time.time()
+                last_command_time = 0  # Force immediate first attempt
+                command_attempts = 0
+                start_btn = None
+                
+                while time.time() - command_start < COMMAND_TIMEOUT:
+                    if self.is_cancelling:
+                        return
+                    
+                    elapsed = time.time() - command_start
+                    
+                    # Refresh window reference
+                    self._desktop = Desktop(backend="uia")
+                    vantage = self._find_vantage_window()
+                    
+                    if not vantage:
+                        self._log("Window lost, waiting...")
+                        time.sleep(1.0)
+                        continue
+                    
+                    self._vantage_window = vantage
+                    
+                    # FIRST: Send commands (pause viewport + Ctrl+R)
+                    # Do this BEFORE searching for Start button
+                    if time.time() - last_command_time >= RETRY_INTERVAL:
+                        last_command_time = time.time()
+                        command_attempts += 1
                         
                         try:
-                            buttons = list(vantage.descendants(control_type="Button"))
-                            button_count = len(buttons)
+                            vantage.set_focus()
+                            time.sleep(0.1)
                             
-                            # Basic UI is ready when we have at least 10 buttons
-                            # This happens early in load, before viewport finishes
-                            if button_count >= 10:
-                                self._log(f"UI initialized ({button_count} buttons, {elapsed:.1f}s)")
-                                buttons_seen = True
-                                break
-                        except:
-                            pass
+                            # Step A: Pause viewport rendering (click toggle button)
+                            self._pause_viewport_rendering(vantage)
+                            time.sleep(0.3)  # Give UI time to respond
+                            
+                            # Step B: Open HQ panel (Ctrl+R)
+                            self._send_ctrl_r(vantage)
+                            time.sleep(0.5)  # Give panel time to open
+                            
+                            self._log(f"Commands sent (attempt {command_attempts})")
+                        except Exception as e:
+                            self._log(f"Command error: {e}")
                     
-                    if elapsed - last_log_time >= 10:
-                        last_log_time = elapsed
-                        self._log(f"Waiting for UI... ({elapsed:.0f}s)")
+                    # THEN: Check for Start button (quick check with timeout)
+                    try:
+                        start_btn = self._find_start_button(vantage)
+                        if start_btn:
+                            total_time = time.time() - load_start
+                            self._log(f"HQ panel open! Start button found ({total_time:.1f}s total)")
+                            scene_ready = True
+                            state['scene_ready'] = True
+                            state['panel_open'] = True
+                            break
+                    except Exception as e:
+                        self._log(f"Button search error: {e}")
                     
                     time.sleep(0.3)
                 
-                if not buttons_seen:
-                    self._log("WARNING: Could not confirm UI loaded, proceeding anyway...")
+                if not scene_ready:
+                    total_time = time.time() - load_start
+                    self._log(f"FAILED after {total_time:.0f}s")
+                    
+                    try:
+                        buttons = self._list_all_buttons(vantage) if vantage else []
+                        self._log(f"Visible buttons: {buttons[:20]}")
+                    except:
+                        self._log("Could not enumerate buttons")
+                    
+                    on_error(f"Could not open HQ panel. Check if Ctrl+R works in Vantage.")
+                    return
                 
-                # ============================================================
-                # PHASE 3: PAUSE VIEWPORT RENDER (key step!)
-                # Do this IMMEDIATELY after basic UI is ready
-                # This prevents waiting for viewport to finish
-                # ============================================================
-                self._log("Pausing viewport render (Backspace)...")
-                
-                try:
-                    vantage.set_focus()
-                    time.sleep(0.2)
-                    keyboard.send_keys("{BACKSPACE}")
-                    time.sleep(0.3)
-                    self._log("Viewport paused")
-                except Exception as e:
-                    self._log(f"Could not pause viewport: {e}")
-                
-                # Small settle time after pause
-                time.sleep(0.5)
-                
-                # ============================================================
-                # PHASE 4: Open HQ panel (Ctrl+R)
-                # ============================================================
-                self._log("Opening HQ render panel (Ctrl+R)...")
-                
-                self._desktop = Desktop(backend="uia")
-                vantage = self._find_vantage_window()
+                state['scene_ready'] = True
                 
                 if not vantage:
                     on_error("Lost Vantage window")
                     return
                 
-                vantage.set_focus()
-                time.sleep(0.2)
-                self._send_ctrl_r(vantage)
-                self._log("Sent Ctrl+R")
-                
-                # ============================================================
-                # PHASE 5: Wait for Start button (panel is open)
-                # ============================================================
-                self._log("Waiting for HQ panel to open...")
-                
-                poll_start = time.time()
-                MAX_PANEL_WAIT = 30.0
-                last_ctrl_r = time.time()
-                CTRL_R_INTERVAL = 5.0  # Retry every 5 seconds
-                
-                while time.time() - poll_start < MAX_PANEL_WAIT:
-                    if self.is_cancelling:
-                        return
-                    
-                    elapsed = time.time() - poll_start
-                    
-                    self._desktop = Desktop(backend="uia")
-                    vantage = self._find_vantage_window()
-                    
-                    if vantage:
-                        self._vantage_window = vantage
-                        start_btn = self._find_start_button(vantage)
-                        
-                        if start_btn:
-                            total_elapsed = time.time() - load_start
-                            self._log(f"HQ panel open! ({total_elapsed:.1f}s total)")
-                            state['scene_ready'] = True
-                            state['panel_open'] = True
-                            state['ctrl_r_sent'] = True
-                            scene_ready = True
-                            break
-                    
-                    # Retry Ctrl+R periodically
-                    if time.time() - last_ctrl_r > CTRL_R_INTERVAL:
-                        last_ctrl_r = time.time()
-                        self._log(f"Retrying Ctrl+R ({elapsed:.0f}s)...")
-                        if vantage:
-                            vantage.set_focus()
-                            time.sleep(0.1)
-                            self._send_ctrl_r(vantage)
-                    
-                    time.sleep(0.3)
-                
-                if not scene_ready:
-                    buttons = self._list_all_buttons(vantage) if vantage else []
-                    self._log(f"Available buttons: {buttons[:20]}")
-                    on_error("Could not open HQ panel - Start button not found after 30s")
-                    return
-                
-                state['scene_ready'] = True
+                # Panel is already open from Phase 3 - proceed directly to settings
+                state['panel_open'] = True
+                state['ctrl_r_sent'] = True
                 
                 if self.is_cancelling:
                     return

@@ -1,0 +1,82 @@
+[10:49:52.318] [   +0.000s] ======================================================================
+[10:49:52.320] [   +0.002s] WAIN VANTAGE DEBUG LOG
+[10:49:52.323] [   +0.006s] Job: after
+[10:49:52.327] [   +0.010s] Time: 2026-01-03 10:49:52
+[10:49:52.331] [   +0.013s] Debug mode: ENABLED
+[10:49:52.335] [   +0.017s] ======================================================================
+[10:49:52.339] [   +0.021s] ==================================================
+[10:49:52.342] [   +0.025s] Wain Vantage Engine v2.15.64 - Keyboard Shortcuts
+[10:49:52.346] [   +0.029s] Scene: H:/Work/UtilityDevelopment/Vantage/after.vantage
+[10:49:52.350] [   +0.033s] DEBUG MODE: Detailed log → vantage_debug_20260103_104952.log
+[10:49:52.354] [   +0.037s] Applying custom HQ settings to INI...
+[10:49:52.360] [   +0.042s] Backup created: vantage_backup_20260103_104952.ini
+[10:49:52.364] [   +0.046s] Updated SaveImage to: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/NEWRender
+[10:49:52.368] [   +0.050s] Settings to apply: Resolution: 2880x1620, Samples: 100, Denoiser: nvidia, Output: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V04/NEWRender
+[10:49:52.372] [   +0.054s] Changes detected:
+[10:49:52.376] [   +0.058s]   - snapshotSamplesDefault=666
+[10:49:52.380] [   +0.063s]   + snapshotSamplesDefault=100
+[10:49:52.385] [   +0.067s] Settings written successfully
+[10:49:52.389] [   +0.071s] INI settings applied: 2880x1620, 100 samples, denoiser=nvidia
+[10:49:52.393] [   +0.075s] ==================================================
+[10:49:52.397] [   +0.080s] State: Initializing
+[10:49:53.797] [   +1.480s] State: Initializing → Launching Vantage
+[10:49:53.801] [   +1.484s] Launching: C:\Program Files\Chaos\Vantage\vantage.exe
+[10:49:53.811] [   +1.493s] Waiting for Vantage window...
+[10:50:08.867] [  +16.549s] Window found! (15.1s)
+[10:50:08.870] [  +16.552s] State: Launching Vantage → Loading Scene
+[10:50:08.874] [  +16.556s] Waiting for Vantage to load: after.vantage
+[10:50:08.878] [  +16.561s] Detecting UI readiness (watching for Lights panel)...
+[10:50:08.883] [  +16.565s] ==================================================
+[10:50:08.887] [  +16.569s] v2.15.64 - Simple keyboard shortcut flow
+[10:50:08.891] [  +16.574s] ==================================================
+[10:50:08.895] [  +16.578s] Phase 1: Waiting for Vantage window...
+[10:50:13.712] [  +21.395s] Vantage window found (0.0s)
+[10:50:13.716] [  +21.399s] Window title: 'Chaos Vantage (Trial - Not for commercial use) - after.vantage'
+[10:50:13.721] [  +21.403s] Phase 2: Waiting for scene to fully load...
+[10:50:13.725] [  +21.407s] (Watching window title for scene filename)
+[10:50:15.435] [  +23.117s] Title: 'Chaos Vantage (Trial - Not for commercial use) - after.vantage'
+[10:50:15.439] [  +23.121s] Scene filename detected in title, waiting 5s for stability...
+[10:50:21.737] [  +29.420s] *** Scene loaded! (title stable for 5s) ***
+[10:50:21.741] [  +29.424s] Total load time: 12.9s
+[10:50:21.746] [  +29.429s] Scene ready, waiting 1s for stabilization...
+[10:50:23.751] [  +31.433s] 
+[10:50:23.755] [  +31.437s] ==================================================
+[10:50:23.759] [  +31.442s] VANTAGE IS LOADED COMMENCE THIS GARBAGE WORKFLOW
+[10:50:23.764] [  +31.447s] ==================================================
+[10:50:23.768] [  +31.451s] 
+[10:50:25.597] [  +33.279s] Focusing Vantage window...
+[10:50:26.233] [  +33.916s] Step 1: Pausing viewport (Ctrl+Space)...
+[10:50:26.298] [  +33.981s] Sent Ctrl+Space (native API)
+[10:50:26.801] [  +34.483s] Step 2: Opening HQ panel (Ctrl+R)...
+[10:50:26.858] [  +34.541s] Sent Ctrl+R (native API)
+[10:50:27.861] [  +35.544s] Step 3: Finding Start button...
+[10:50:28.910] [  +36.592s] Start button found by ID! (1.0s)
+[10:50:28.914] [  +36.596s] Phase 3 complete - HQ panel ready!
+[10:50:28.915] [  +36.598s] State: Loading Scene → Opening HQ Panel
+[10:50:28.917] [  +36.600s] Step 4: Applying UI settings...
+[10:50:28.919] [  +36.601s] Setting output path: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V14/RenerRender.png
+[10:50:29.189] [  +36.872s] Found output path field with value: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFo...
+[10:50:30.973] [  +38.655s] Output path set to: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V14/RenerRender.png
+[10:50:30.978] [  +38.661s] Output path set: H:/Work/UtilityDevelopment/Vantage/Output/OutPutFolder/V14/RenerRender.png
+[10:50:31.339] [  +39.021s] Found 'First frame' label at top=819
+[10:50:31.345] [  +39.027s] Found 'Last frame' label at top=819
+[10:50:31.666] [  +39.348s] Found 9 spinners
+[10:50:31.669] [  +39.352s] Matched First frame spinner
+[10:50:31.674] [  +39.357s] Matched Last frame spinner
+[10:50:32.309] [  +39.992s] Set First Frame: 20
+[10:50:33.351] [  +41.034s] Set Last Frame: 300
+[10:50:33.356] [  +41.039s] Frame range set: 20 - 300
+[10:50:34.628] [  +42.310s]   Found by ID 'primaryButton' (0.33s)
+[10:50:34.632] [  +42.315s] State: Opening HQ Panel → Starting Render
+[10:50:34.755] [  +42.438s] Clicked Start button
+[10:50:34.757] [  +42.440s] State: Starting Render → Rendering
+[10:50:34.762] [  +42.444s] Step 5: Monitoring render progress...
+[10:50:44.567] [  +52.250s] Cancelling render...
+[10:50:44.577] [  +52.259s] >>> CANCEL_RENDER called
+[10:50:49.689] [  +57.371s] Frame 2/281 (6%) - Elapsed: 00:00:14 - Remaining: 00:46:44
+[10:50:49.994] [  +57.676s] Render cancelled by user
+[10:50:54.781] [  +62.463s] Aborted!
+[10:50:56.412] [  +64.095s] Closing Vantage...
+[10:50:57.207] [  +64.890s] Vantage closed
+[10:50:57.211] [  +64.894s] Session ended. Total time: 64.9s
+[10:50:57.217] [  +64.899s] ======================================================================

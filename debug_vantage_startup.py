@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """
-Vantage Startup Debug Monitor
-==============================
+Vantage Startup Debug Monitor v3
+=================================
 
-Comprehensive logging of everything that happens during Vantage startup.
-Use this with a LARGE SCENE to understand the full loading process.
+Comprehensive logging of EVERYTHING during Vantage startup with a large scene.
+This will help identify exactly when the scene is truly loaded vs when Wain
+thinks it can send commands.
 
-What it monitors:
-- Window title changes (loading indicators, progress %)
-- Window responsiveness (can we enumerate elements?)
-- UI element counts (buttons, checkboxes, panes)
-- Specific controls (Pause Rendering, Lights panel, etc.)
-- Process CPU/memory usage
-- Time to various milestones
+v3 Fixes:
+- Fixed false window detection (was matching File Explorer windows!)
+- Now requires class "LavinaMainWindow" or title STARTING WITH "Chaos Vantage"
+- Only pause_rendering checkbox triggers "LOADED" state (menu_bar is unreliable)
+
+What it monitors (every second):
+- Window title (loading indicators, percentages, scene name)
+- Window class and state
+- Whether window is responding to UI queries
+- How long UI queries take (slowdown = still loading)
+- Specific controls: Pause button, Menu bar, Panels
+- Which buttons/controls exist
+- CPU usage (if psutil installed)
 
 Usage:
     python debug_vantage_startup.py "C:/path/to/large_scene.vantage"
-    
-Or run without arguments to just monitor an already-open Vantage.
+    python debug_vantage_startup.py  (monitor already-open Vantage)
 
 Output:
-    - Console output with timestamps
+    - Real-time console output
     - vantage_startup_log.txt with full details
 
 https://github.com/Spencer-Sliffe/Wain
@@ -33,419 +39,447 @@ import subprocess
 import argparse
 from datetime import datetime
 
-# Log file
+# Globals
+start_time = None
+log_handle = None
 LOG_FILE = "vantage_startup_log.txt"
-log_file_handle = None
 
 def log(msg, level="INFO"):
-    """Log message with timestamp to console and file."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    elapsed = time.time() - start_time if 'start_time' in globals() else 0
-    line = f"[{timestamp}] [{elapsed:7.2f}s] [{level:5}] {msg}"
+    """Log with timestamp and elapsed time."""
+    global start_time, log_handle
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    elapsed = time.time() - start_time if start_time else 0
+    line = f"[{ts}] [{elapsed:7.2f}s] [{level:5}] {msg}"
     print(line)
-    if log_file_handle:
-        log_file_handle.write(line + "\n")
-        log_file_handle.flush()
+    if log_handle:
+        log_handle.write(line + "\n")
+        log_handle.flush()
 
-def get_process_info(process_name="vantage.exe"):
-    """Get CPU and memory usage for Vantage process."""
-    try:
-        import psutil
-        for proc in psutil.process_iter(['name', 'cpu_percent', 'memory_info']):
-            if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
-                cpu = proc.cpu_percent(interval=0.1)
-                mem_mb = proc.info['memory_info'].rss / (1024 * 1024) if proc.info['memory_info'] else 0
-                return cpu, mem_mb
-    except ImportError:
-        pass
-    except Exception:
-        pass
-    return None, None
+def find_vantage_exe():
+    """Find Vantage executable."""
+    paths = [
+        r"C:\Program Files\Chaos\Vantage\vantage.exe",
+        r"C:\Program Files\Chaos Group\Vantage\vantage.exe",
+        r"C:\Program Files\Chaos\Vantage 3\vantage.exe",
+        r"C:\Program Files\Chaos\Vantage 2\vantage.exe",
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
 
 def find_vantage_window(desktop):
-    """Find Vantage main window."""
+    """
+    Find main Vantage window.
+    
+    CRITICAL: Must NOT match File Explorer windows that have "Vantage" in folder name!
+    
+    Detection priority:
+    1. Window class "LavinaMainWindow" (100% reliable for Vantage)
+    2. Title STARTS WITH "Chaos Vantage" (not just contains "vantage")
+    """
+    # Method 1: By class name (most reliable - only Vantage has this)
     for win in desktop.windows():
         try:
-            class_name = win.element_info.class_name or ""
-            if "LavinaMainWindow" in class_name:
+            cls = win.element_info.class_name or ""
+            if "LavinaMainWindow" in cls:
                 return win
         except:
             pass
     
-    # Fallback by title
+    # Method 2: Title must START WITH "Chaos Vantage"
+    # This avoids matching File Explorer windows with folders named "Vantage-ProjectName"
     for win in desktop.windows():
         try:
-            title = win.window_text().lower()
-            if "vantage" in title:
+            title = (win.window_text() or "")
+            if title.lower().startswith("chaos vantage"):
                 return win
         except:
             pass
     return None
 
-def count_elements(window, control_type, timeout=2.0):
-    """Count elements of a type with timeout."""
+def safe_get_title(window):
+    """Get window title safely with timing."""
     try:
-        start = time.time()
+        t0 = time.time()
+        title = window.window_text() or "(empty)"
+        duration = time.time() - t0
+        return title, duration
+    except Exception as e:
+        return f"(error: {e})", 0
+
+def safe_get_children_count(window):
+    """Count direct children with timing."""
+    try:
+        t0 = time.time()
+        children = list(window.children())
+        duration = time.time() - t0
+        return len(children), duration
+    except Exception as e:
+        return -1, 0
+
+def safe_count_controls(window, control_type, max_time=3.0):
+    """Count controls of a type with timeout."""
+    try:
+        t0 = time.time()
         count = 0
         for elem in window.descendants(control_type=control_type):
-            if time.time() - start > timeout:
-                return count, True  # Timed out
             count += 1
-        return count, False
+            if time.time() - t0 > max_time:
+                return count, time.time() - t0, True  # Timed out
+        return count, time.time() - t0, False
     except Exception as e:
-        return -1, False
+        return -1, 0, False
 
-def check_specific_controls(window):
-    """Check for specific controls that indicate readiness."""
+def find_specific_controls(window, max_time=5.0):
+    """
+    Search for specific controls that indicate load state.
+    Returns dict of what was found and timing info.
+    """
     results = {
-        'pause_rendering': False,
-        'lights_panel': False,
-        'scene_panel': False,
-        'camera_panel': False,
-        'environment_panel': False,
-        'start_button': False,
-        'menu_bar': False,
+        'pause_rendering_checkbox': None,
+        'menu_bar': None,
+        'start_button': None,
+        'toolbar': None,
+        'lights_panel': None,
+        'any_checkbox': None,
+        'any_edit': None,
+        'search_time': 0,
+        'timed_out': False,
+        'total_elements_checked': 0,
     }
     
     try:
-        # Quick search with timeout
-        search_start = time.time()
+        t0 = time.time()
+        checked = 0
         
         for elem in window.descendants():
-            if time.time() - search_start > 3.0:
+            checked += 1
+            if time.time() - t0 > max_time:
+                results['timed_out'] = True
                 break
             
             try:
                 name = (elem.element_info.name or "").lower()
                 ctrl_type = elem.element_info.control_type or ""
                 auto_id = (elem.element_info.automation_id or "").lower()
+                class_name = (elem.element_info.class_name or "").lower()
                 
+                # Pause Rendering checkbox (key indicator)
                 if "pause rendering" in name and ctrl_type == "CheckBox":
-                    results['pause_rendering'] = True
-                elif name == "lights" and ctrl_type in ["Pane", "TabItem", "TreeItem"]:
-                    results['lights_panel'] = True
-                elif name == "scene" and ctrl_type in ["Pane", "TabItem", "TreeItem"]:
-                    results['scene_panel'] = True
-                elif name == "camera" and ctrl_type in ["Pane", "TabItem", "TreeItem"]:
-                    results['camera_panel'] = True
-                elif name == "environment" and ctrl_type in ["Pane", "TabItem", "TreeItem"]:
-                    results['environment_panel'] = True
-                elif "start" in name and ctrl_type == "Button":
-                    results['start_button'] = True
-                elif auto_id == "primarybutton":
-                    results['start_button'] = True
-                elif ctrl_type == "MenuBar":
+                    results['pause_rendering_checkbox'] = elem.element_info.name
+                
+                # Menu bar
+                if ctrl_type == "MenuBar":
                     results['menu_bar'] = True
+                
+                # Start button (HQ panel open)
+                if ctrl_type == "Button" and ("start" in name or auto_id == "primarybutton"):
+                    results['start_button'] = elem.element_info.name or auto_id
+                
+                # Toolbar
+                if ctrl_type == "ToolBar":
+                    results['toolbar'] = True
+                
+                # Lights panel
+                if "lights" in name and ctrl_type in ["Pane", "TreeItem", "TabItem"]:
+                    results['lights_panel'] = True
+                
+                # Any checkbox (indicates UI is populated)
+                if ctrl_type == "CheckBox" and results['any_checkbox'] is None:
+                    results['any_checkbox'] = elem.element_info.name
+                
+                # Any edit field
+                if ctrl_type == "Edit" and results['any_edit'] is None:
+                    results['any_edit'] = elem.element_info.name
+                    
             except:
                 pass
+        
+        results['search_time'] = time.time() - t0
+        results['total_elements_checked'] = checked
+        
     except Exception as e:
-        log(f"Error checking controls: {e}", "WARN")
+        results['error'] = str(e)
     
     return results
 
-def test_window_responsiveness(window):
-    """Test how quickly we can interact with the window."""
-    try:
-        start = time.time()
-        # Try to get children (fast operation)
-        children = list(window.children())
-        child_time = time.time() - start
-        
-        # Try to get window title (should be instant)
-        start = time.time()
-        title = window.window_text()
-        title_time = time.time() - start
-        
-        # Try to enumerate some descendants (slower)
-        start = time.time()
-        count = 0
-        for elem in window.descendants(control_type="Button"):
-            count += 1
-            if count >= 10 or time.time() - start > 2.0:
-                break
-        button_time = time.time() - start
-        
-        return {
-            'children_count': len(children),
-            'children_time': child_time,
-            'title': title,
-            'title_time': title_time,
-            'button_count': count,
-            'button_time': button_time,
-            'responsive': child_time < 1.0 and button_time < 2.0
-        }
-    except Exception as e:
-        return {
-            'error': str(e),
-            'responsive': False
-        }
-
-def parse_title_for_loading(title):
+def parse_title(title):
     """Parse window title for loading indicators."""
+    import re
     title_lower = title.lower()
     
-    result = {
-        'is_loading': False,
-        'progress_pct': None,
-        'scene_name': None,
-        'indicators': []
+    info = {
+        'raw': title,
+        'loading_text': False,
+        'percentage': None,
+        'scene_file': None,
     }
     
-    # Check for loading indicators
-    if "loading" in title_lower:
-        result['is_loading'] = True
-        result['indicators'].append("'loading' in title")
+    # Loading indicators in title
+    loading_keywords = ['loading', 'importing', 'initializing', 'please wait', 'preparing']
+    for kw in loading_keywords:
+        if kw in title_lower:
+            info['loading_text'] = kw
+            break
     
-    if "importing" in title_lower:
-        result['is_loading'] = True
-        result['indicators'].append("'importing' in title")
-    
-    if "initializing" in title_lower:
-        result['is_loading'] = True
-        result['indicators'].append("'initializing' in title")
-    
-    if "please wait" in title_lower:
-        result['is_loading'] = True
-        result['indicators'].append("'please wait' in title")
-    
-    # Check for percentage
-    import re
+    # Percentage in title
     pct_match = re.search(r'(\d+(?:\.\d+)?)\s*%', title)
     if pct_match:
-        result['progress_pct'] = float(pct_match.group(1))
-        result['is_loading'] = True
-        result['indicators'].append(f"progress: {result['progress_pct']}%")
+        info['percentage'] = float(pct_match.group(1))
     
-    # Extract scene name
-    if ".vantage" in title_lower:
-        # Try to extract filename
-        match = re.search(r'[\\/]?([^\\/]+\.vantage)', title, re.IGNORECASE)
-        if match:
-            result['scene_name'] = match.group(1)
+    # Scene filename
+    file_match = re.search(r'([^\\/]+\.vantage)', title, re.IGNORECASE)
+    if file_match:
+        info['scene_file'] = file_match.group(1)
     
-    return result
+    return info
+
+def get_cpu_usage():
+    """Get Vantage CPU usage if psutil available."""
+    try:
+        import psutil
+        for proc in psutil.process_iter(['name', 'cpu_percent']):
+            name = proc.info.get('name', '')
+            if name and 'vantage' in name.lower():
+                return proc.cpu_percent(interval=0.1)
+    except:
+        pass
+    return None
 
 def main():
-    global start_time, log_file_handle
+    global start_time, log_handle
     
-    parser = argparse.ArgumentParser(description='Monitor Vantage startup process')
-    parser.add_argument('scene_file', nargs='?', help='Path to .vantage scene file to open')
-    parser.add_argument('--duration', type=int, default=300, help='How long to monitor (seconds, default 300)')
-    parser.add_argument('--interval', type=float, default=1.0, help='Polling interval (seconds, default 1.0)')
+    parser = argparse.ArgumentParser(description='Monitor Vantage startup')
+    parser.add_argument('scene', nargs='?', help='Scene file to open')
+    parser.add_argument('--duration', type=int, default=600, help='Monitor duration in seconds (default: 600)')
+    parser.add_argument('--interval', type=float, default=1.0, help='Poll interval in seconds (default: 1.0)')
     args = parser.parse_args()
     
-    # Open log file
-    log_file_handle = open(LOG_FILE, 'w', encoding='utf-8')
-    
     start_time = time.time()
+    log_handle = open(LOG_FILE, 'w', encoding='utf-8')
     
-    log("=" * 70)
-    log("VANTAGE STARTUP DEBUG MONITOR")
-    log("=" * 70)
+    log("=" * 80)
+    log("VANTAGE STARTUP DEBUG MONITOR v3")
+    log("=" * 80)
+    log("NOTE: Only 'pause_rendering' checkbox reliably indicates Vantage is ready")
     log(f"Log file: {os.path.abspath(LOG_FILE)}")
-    log(f"Duration: {args.duration}s, Interval: {args.interval}s")
-    
-    if args.scene_file:
-        log(f"Scene file: {args.scene_file}")
-    else:
-        log("No scene file specified - will monitor existing Vantage instance")
-    
+    log(f"Monitor duration: {args.duration}s")
+    log(f"Poll interval: {args.interval}s")
+    if args.scene:
+        log(f"Scene file: {args.scene}")
     log("")
     
-    # Check for pywinauto
+    # Check pywinauto
     try:
         from pywinauto import Desktop
+        log("pywinauto: OK")
     except ImportError:
         log("ERROR: pywinauto not installed. Run: pip install pywinauto", "ERROR")
         return
     
-    # Check for psutil (optional)
-    has_psutil = False
+    # Check psutil
     try:
         import psutil
-        has_psutil = True
-        log("psutil available - will monitor CPU/memory")
+        log("psutil: OK (will monitor CPU)")
     except ImportError:
-        log("psutil not available - skipping CPU/memory monitoring (pip install psutil)")
+        log("psutil: Not installed (CPU monitoring disabled)")
     
-    log("")
-    
-    # Find Vantage executable
-    vantage_exe = None
-    search_paths = [
-        r"C:\Program Files\Chaos\Vantage\vantage.exe",
-        r"C:\Program Files\Chaos Group\Vantage\vantage.exe",
-        r"C:\Program Files\Chaos\Vantage 3\vantage.exe",
-    ]
-    for path in search_paths:
-        if os.path.exists(path):
-            vantage_exe = path
-            break
-    
+    # Find Vantage
+    vantage_exe = find_vantage_exe()
     if vantage_exe:
-        log(f"Found Vantage: {vantage_exe}")
+        log(f"Vantage exe: {vantage_exe}")
     else:
-        log("Vantage executable not found in standard locations", "WARN")
+        log("Vantage exe: Not found in standard paths", "WARN")
     
     log("")
-    log("=" * 70)
-    log("STARTING MONITOR")
-    log("=" * 70)
-    log("")
     
-    # Launch Vantage if scene file provided
-    if args.scene_file and vantage_exe:
-        if not os.path.exists(args.scene_file):
-            log(f"Scene file not found: {args.scene_file}", "ERROR")
+    # Launch if scene provided
+    if args.scene:
+        if not os.path.exists(args.scene):
+            log(f"Scene file not found: {args.scene}", "ERROR")
             return
         
-        log(f"Launching Vantage with scene: {os.path.basename(args.scene_file)}")
-        try:
-            subprocess.Popen([vantage_exe, args.scene_file], 
-                           creationflags=subprocess.DETACHED_PROCESS)
-            log("Launch command sent")
-        except Exception as e:
-            log(f"Launch error: {e}", "ERROR")
+        if not vantage_exe:
+            log("Cannot launch - Vantage exe not found", "ERROR")
             return
+        
+        log(f"LAUNCHING: {os.path.basename(args.scene)}")
+        subprocess.Popen([vantage_exe, args.scene], creationflags=subprocess.DETACHED_PROCESS)
+        log("Launch command sent")
     
-    # Monitoring state
+    log("")
+    log("=" * 80)
+    log("MONITORING STARTED - Press Ctrl+C to stop")
+    log("=" * 80)
+    log("")
+    
+    # State tracking
     last_title = ""
-    last_controls = {}
-    window_found_time = None
-    scene_loaded_time = None
+    window_found_at = None
+    ui_responsive_at = None
+    pause_button_at = None
+    menu_bar_at = None
     milestones = []
     
-    def record_milestone(name):
+    def milestone(name):
         elapsed = time.time() - start_time
         milestones.append((elapsed, name))
-        log(f"*** MILESTONE: {name} ***", "MILE")
+        log(f">>> MILESTONE: {name}", "MILE")
     
-    # Main monitoring loop
-    poll_count = 0
-    
-    while time.time() - start_time < args.duration:
-        poll_count += 1
-        elapsed = time.time() - start_time
-        
-        try:
+    poll = 0
+    try:
+        while time.time() - start_time < args.duration:
+            poll += 1
+            
             desktop = Desktop(backend="uia")
             window = find_vantage_window(desktop)
             
             if not window:
-                if poll_count % 5 == 1:  # Log every 5 polls
+                if poll % 5 == 1:
                     log("Waiting for Vantage window...")
                 time.sleep(args.interval)
                 continue
             
-            # Window found!
-            if window_found_time is None:
-                window_found_time = elapsed
-                record_milestone(f"Window found ({elapsed:.1f}s)")
+            # Window found
+            if window_found_at is None:
+                window_found_at = time.time() - start_time
+                milestone(f"Window appeared ({window_found_at:.1f}s)")
             
-            # Get window title
-            try:
-                title = window.window_text()
-            except:
-                title = "(could not read title)"
-            
-            # Parse title for loading info
-            title_info = parse_title_for_loading(title)
+            # Get title
+            title, title_time = safe_get_title(window)
+            title_info = parse_title(title)
             
             # Log title changes
             if title != last_title:
-                log(f"TITLE: '{title}'")
-                if title_info['is_loading']:
-                    log(f"  Loading indicators: {title_info['indicators']}")
-                if title_info['scene_name']:
-                    log(f"  Scene: {title_info['scene_name']}")
+                log(f"TITLE CHANGED: '{title}'")
+                if title_info['loading_text']:
+                    log(f"  -> Loading indicator: '{title_info['loading_text']}'")
+                if title_info['percentage'] is not None:
+                    log(f"  -> Progress: {title_info['percentage']}%")
                 last_title = title
             
-            # Get process info
-            if has_psutil:
-                cpu, mem = get_process_info()
-                if cpu is not None:
-                    # Only log significant CPU activity
-                    if poll_count % 10 == 0 or cpu > 50:
-                        log(f"PROCESS: CPU={cpu:.1f}%, Memory={mem:.0f}MB")
+            # Get children count (quick responsiveness check)
+            child_count, child_time = safe_get_children_count(window)
             
-            # Test responsiveness
-            resp = test_window_responsiveness(window)
+            # Get CPU
+            cpu = get_cpu_usage()
+            cpu_str = f"{cpu:.0f}%" if cpu is not None else "N/A"
             
-            if 'error' in resp:
-                log(f"RESPONSIVENESS: Error - {resp['error']}", "WARN")
-            else:
-                responsive_str = "YES" if resp['responsive'] else "NO"
-                log(f"RESPONSIVE: {responsive_str} | children={resp['children_count']} ({resp['children_time']:.2f}s) | buttons={resp['button_count']} ({resp['button_time']:.2f}s)")
+            # Quick status line
+            responsive = child_time < 0.5
+            resp_str = "YES" if responsive else f"SLOW ({child_time:.2f}s)"
             
-            # Check specific controls
-            controls = check_specific_controls(window)
+            log(f"[Poll {poll:4d}] Title time: {title_time:.3f}s | Children: {child_count} ({child_time:.2f}s) | Responsive: {resp_str} | CPU: {cpu_str}")
             
-            # Log control changes
-            for key, value in controls.items():
-                if value and not last_controls.get(key, False):
-                    record_milestone(f"Control appeared: {key}")
+            # Track when UI becomes responsive
+            if responsive and ui_responsive_at is None and child_count > 10:
+                ui_responsive_at = time.time() - start_time
+                milestone(f"UI responsive ({ui_responsive_at:.1f}s)")
             
-            # Summary of available controls
-            available = [k for k, v in controls.items() if v]
-            if available:
-                log(f"CONTROLS: {', '.join(available)}")
+            # Detailed control search every 5 polls (or if title suggests loaded)
+            do_deep_search = (poll % 5 == 0) or (not title_info['loading_text'] and title_info['percentage'] is None)
             
-            last_controls = controls.copy()
+            if do_deep_search:
+                log("  Searching for specific controls...")
+                controls = find_specific_controls(window, max_time=5.0)
+                
+                search_info = f"  Search: {controls['total_elements_checked']} elements in {controls['search_time']:.2f}s"
+                if controls['timed_out']:
+                    search_info += " (TIMED OUT)"
+                log(search_info)
+                
+                # Report findings
+                findings = []
+                if controls['pause_rendering_checkbox']:
+                    findings.append(f"PauseBtn='{controls['pause_rendering_checkbox']}'")
+                    if pause_button_at is None:
+                        pause_button_at = time.time() - start_time
+                        milestone(f"Pause button found ({pause_button_at:.1f}s)")
+                
+                if controls['menu_bar']:
+                    findings.append("MenuBar=YES")
+                    if menu_bar_at is None:
+                        menu_bar_at = time.time() - start_time
+                        milestone(f"Menu bar found ({menu_bar_at:.1f}s)")
+                
+                if controls['start_button']:
+                    findings.append(f"StartBtn='{controls['start_button']}'")
+                
+                if controls['toolbar']:
+                    findings.append("Toolbar=YES")
+                
+                if controls['lights_panel']:
+                    findings.append("LightsPanel=YES")
+                
+                if controls['any_checkbox']:
+                    findings.append(f"Checkbox='{controls['any_checkbox'][:20]}'")
+                
+                if controls['any_edit']:
+                    findings.append(f"Edit='{controls['any_edit'][:20] if controls['any_edit'] else 'unnamed'}'")
+                
+                if findings:
+                    log(f"  Found: {' | '.join(findings)}")
+                else:
+                    log("  Found: (nothing yet)")
             
-            # Check if scene appears loaded
-            if not title_info['is_loading'] and resp.get('responsive', False):
-                if controls.get('pause_rendering') or controls.get('menu_bar'):
-                    if scene_loaded_time is None:
-                        scene_loaded_time = elapsed
-                        record_milestone(f"Scene appears LOADED ({elapsed:.1f}s)")
+            # Determine if scene appears loaded
+            # CRITICAL: Only pause_rendering_checkbox is a reliable indicator!
+            # menu_bar can exist in File Explorer, so it's NOT reliable
+            scene_loaded = (
+                not title_info['loading_text'] and
+                title_info['percentage'] is None and
+                responsive and
+                controls.get('pause_rendering_checkbox')  # ONLY this is reliable!
+            ) if do_deep_search else False
             
-            # Count elements (every 10 polls to avoid slowdown)
-            if poll_count % 10 == 0:
-                log("--- Element counts ---")
-                for ctrl_type in ["Button", "CheckBox", "Edit", "Pane"]:
-                    count, timed_out = count_elements(window, ctrl_type, timeout=1.0)
-                    timeout_str = " (timed out)" if timed_out else ""
-                    log(f"  {ctrl_type}: {count}{timeout_str}")
+            if scene_loaded:
+                log("  *** SCENE APPEARS FULLY LOADED ***", "LOAD")
             
             log("")
+            time.sleep(args.interval)
             
-        except Exception as e:
-            log(f"Error during monitoring: {e}", "ERROR")
-        
-        time.sleep(args.interval)
+    except KeyboardInterrupt:
+        log("")
+        log("Monitoring stopped by user")
     
     # Summary
     log("")
-    log("=" * 70)
-    log("MONITORING COMPLETE - SUMMARY")
-    log("=" * 70)
+    log("=" * 80)
+    log("SUMMARY")
+    log("=" * 80)
     log("")
     
-    log(f"Total monitoring time: {time.time() - start_time:.1f}s")
-    log(f"Total polls: {poll_count}")
+    total_time = time.time() - start_time
+    log(f"Total monitoring time: {total_time:.1f}s")
+    log(f"Total polls: {poll}")
     log("")
     
+    log("MILESTONES:")
     if milestones:
-        log("MILESTONES:")
         for elapsed, name in milestones:
             log(f"  [{elapsed:7.2f}s] {name}")
     else:
-        log("No milestones recorded")
+        log("  (none recorded)")
     
     log("")
-    log(f"Window found: {window_found_time:.1f}s" if window_found_time else "Window never found")
-    log(f"Scene loaded: {scene_loaded_time:.1f}s" if scene_loaded_time else "Scene never detected as loaded")
+    log("KEY TIMINGS:")
+    log(f"  Window appeared:    {window_found_at:.1f}s" if window_found_at else "  Window appeared:    (never)")
+    log(f"  UI responsive:      {ui_responsive_at:.1f}s" if ui_responsive_at else "  UI responsive:      (never)")
+    log(f"  Pause button found: {pause_button_at:.1f}s" if pause_button_at else "  Pause button found: (never)")
+    log(f"  Menu bar found:     {menu_bar_at:.1f}s" if menu_bar_at else "  Menu bar found:     (never)")
     
-    if window_found_time and scene_loaded_time:
-        load_time = scene_loaded_time - window_found_time
-        log(f"Load time (after window): {load_time:.1f}s")
+    if pause_button_at and window_found_at:
+        log("")
+        log(f"  TIME FROM WINDOW TO PAUSE BUTTON: {pause_button_at - window_found_at:.1f}s")
+        log("  (This is how long Wain should wait before sending commands)")
     
     log("")
-    log(f"Full log saved to: {os.path.abspath(LOG_FILE)}")
-    log("=" * 70)
+    log(f"Full log: {os.path.abspath(LOG_FILE)}")
+    log("=" * 80)
     
-    if log_file_handle:
-        log_file_handle.close()
+    if log_handle:
+        log_handle.close()
 
 if __name__ == "__main__":
     main()

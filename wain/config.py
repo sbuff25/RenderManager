@@ -12,7 +12,7 @@ ASSET_VERSION = "v10"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.15.58"
+APP_VERSION = "2.15.64"
 CONFIG_FILE = "wain_config.json"
 
 # Required Python version

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.15.50-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.16.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,7 +34,17 @@
 
 ---
 
-## 🆕 What's New in v2.15.50
+## 🆕 What's New in v2.16.0
+
+### Marmoset Multi-Pass Rendering & Camera Detection
+
+- **26 Render Passes** — Select individual passes (Beauty, Normals, AO, Albedo, etc.) from categorized checkboxes
+- **Scene Probing** — Automatically detects cameras, passes, and settings from `.tbscene` files
+- **Camera Selection** — Choose which camera to render from detected scene cameras
+- **Per-Pass Output** — Each pass saves as `prefix_passname.ext` (e.g., `render_normals.png`)
+- **Progress Tracking** — Shows current pass name and number during multi-pass renders
+
+### Previous v2.15.50
 
 ### UI Readiness Detection - Reliable Scene Loading
 
@@ -157,7 +167,7 @@ Wain.bat --install          # Force reinstall dependencies
 
 ## ⚠️ Vantage Settings Note
 
-**Current Status (v2.15.50):**
+**Current Status (v2.16.0):**
 Wain does **NOT** modify `vantage.ini`. Your Vantage configuration is completely safe.
 
 Wain uses whatever settings are already configured in Vantage's HQ Render panel.
@@ -208,6 +218,7 @@ Wain.bat --debug
 
 | Version | Highlights |
 |---------|------------|
+| **2.16.0** | Marmoset multi-pass rendering, camera detection |
 | **2.15.50** | UI readiness detection, no INI modification |
 | **2.15.48** | Large job progress tracking fix |
 | **2.15.47** | Responsive actions, auto-close |
@@ -224,10 +235,10 @@ MIT License — Free for personal and commercial use.
 
 ## 🔗 Links
 
-- **GitHub**: [https://github.com/Spencer-Sliffe/Wain](https://github.com/Spencer-Sliffe/Wain)
+- **GitHub**: [https://github.com/sbuff25/RenderManager](https://github.com/sbuff25/RenderManager)
 
 ---
 
 <p align="center">
-  <em>Wain v2.15.50 — Multi-engine render queue manager</em>
+  <em>Wain v2.16.0 — Multi-engine render queue manager</em>
 </p>

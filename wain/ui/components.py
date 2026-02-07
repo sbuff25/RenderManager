@@ -29,7 +29,7 @@ def open_folder(path: str):
     if not path or not os.path.exists(path):
         try:
             os.makedirs(path, exist_ok=True)
-        except:
+        except Exception:
             return
     
     try:
@@ -77,8 +77,8 @@ def create_job_card(job):
                 ui.button(icon='pause', on_click=lambda j=job: render_app.handle_action('pause', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
             elif job.status in ["queued", "paused"]:
                 ui.button(icon='play_arrow', on_click=lambda j=job: render_app.handle_action('start', j)).props('flat round dense').classes('job-action-btn text-zinc-400')
-            elif job.status == "failed":
-                ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Retry')
+            elif job.status in ["failed", "completed"]:
+                ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Resubmit')
             
             if job.status != "rendering":
                 ui.button(icon='edit', on_click=lambda j=job: show_edit_job_dialog(j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Edit')

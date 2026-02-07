@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m wain:*)",
+      "Bash(python -c:*)",
+      "WebSearch",
+      "WebFetch(domain:www.marmoset.co)",
+      "WebFetch(domain:docs.marmoset.co)",
+      "Bash(\"C:\\\\Program Files\\\\Marmoset\\\\Toolbag 5\\\\toolbag.exe\" -hide \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\debug_marmoset_api.py\")",
+      "Bash(\"C:\\\\Program Files\\\\Marmoset\\\\Toolbag 5\\\\toolbag.exe\" -hide \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\debug_viewport_passes.py\")"
+    ]
+  }
+}

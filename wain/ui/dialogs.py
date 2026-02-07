@@ -3,7 +3,7 @@ Wain UI Dialogs
 ===============
 
 Modal dialogs for adding jobs and configuring settings.
-v2.15.14 - Simplified Vantage (just load and render)
+v2.15.65 - Simplified Vantage (just load and render)
 """
 
 import os
@@ -59,8 +59,15 @@ async def show_add_job_dialog():
     status_label = None
     output_input = None
     name_input = None
+    format_select = None
     engine_buttons = {}
     accent_elements = {}
+
+    ENGINE_FORMAT_OPTIONS = {
+        'blender': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
+        'marmoset': ['PNG', 'JPEG', 'TGA', 'PSD', 'PSD (16-bit)', 'EXR (16-bit)', 'EXR (32-bit)'],
+        'vantage': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
+    }
     
     def get_current_scale():
         if form['base_res_width'] > 0 and form['base_res_height'] > 0:
@@ -81,15 +88,25 @@ async def show_add_job_dialog():
             res_scale_container.refresh()
     
     def select_engine(eng_type):
+        nonlocal format_select
         form['engine_type'] = eng_type
         accent_color = ENGINE_COLORS.get(eng_type, "#71717a")
-        
+
         for et, btn in engine_buttons.items():
             if et == eng_type:
                 btn.style(f'background-color: {ENGINE_COLORS.get(et, "#71717a")} !important; color: white !important;')
             else:
                 btn.style('background-color: transparent !important; color: #52525b !important;')
-        
+
+        # Update format dropdown for this engine
+        if format_select:
+            new_formats = ENGINE_FORMAT_OPTIONS.get(eng_type, ['PNG', 'JPEG'])
+            format_select.options = new_formats
+            if form['output_format'] not in new_formats:
+                form['output_format'] = new_formats[0]
+                format_select.value = new_formats[0]
+            format_select.update()
+
         if 'submit_btn' in accent_elements:
             accent_elements['submit_btn'].style(f'background-color: {accent_color} !important;')
         if 'engine_settings' in accent_elements:
@@ -217,6 +234,12 @@ async def show_add_job_dialog():
                                 status_label.set_text(f'Vantage: {res_str}, {samples} smp, {frames} frames @ {fps}fps')
                             else:
                                 status_label.set_text(f'Vantage: {res_str}, {samples} samples')
+                        elif detected.engine_type == 'marmoset':
+                            res_str = f"{info.get('resolution_x', '?')}x{info.get('resolution_y', '?')}"
+                            n_cameras = len(info.get('cameras', []))
+                            samples = info.get('samples', '?')
+                            cam_text = f"{n_cameras} camera{'s' if n_cameras != 1 else ''}"
+                            status_label.set_text(f'Marmoset: {res_str}, {samples} smp, {cam_text}')
                         else:
                             status_label.set_text(f'Scene loaded: {info.get("resolution_x", "?")}x{info.get("resolution_y", "?")}')
                         status_label.classes(replace='text-xs text-green-500')
@@ -256,8 +279,11 @@ async def show_add_job_dialog():
             
             with ui.row().classes('w-full gap-2'):
                 ui.input('Prefix', value='render_').bind_value(form, 'output_name').classes('flex-grow')
-                ui.select(['PNG', 'JPEG', 'OpenEXR', 'TIFF'], value='PNG', label='Format').bind_value(form, 'output_format').classes('w-28')
-            
+                format_select = ui.select(
+                    ENGINE_FORMAT_OPTIONS.get(form['engine_type'], ['PNG', 'JPEG']),
+                    value='PNG', label='Format'
+                ).bind_value(form, 'output_format').classes('w-28')
+
             # Resolution (always visible but only used by non-Vantage engines)
             ui.label('Resolution:').classes('text-sm text-gray-400')
             with ui.row().classes('w-full items-center gap-2'):
@@ -343,10 +369,44 @@ async def show_add_job_dialog():
                 
                 elif form['engine_type'] == 'marmoset':
                     ui.separator()
-                    ui.label('Marmoset Settings').classes('text-sm font-bold text-gray-400')
+                    ui.label('Marmoset Settings').classes('text-sm font-bold').style('color: #ef0343;')
                     with ui.row().classes('w-full items-center gap-2'):
                         ui.select(options=['still', 'turntable', 'animation'], value=form.get('render_type', 'still'), label='Render Type').bind_value(form, 'render_type').classes('w-32')
                         ui.number('Samples', value=form.get('samples', 256), min=1, max=4096).bind_value(form, 'samples').classes('w-24')
+
+                    # Render Passes
+                    ui.separator()
+                    ui.label('Render Passes').classes('text-sm font-bold').style('color: #ef0343;')
+                    ui.label('Select passes to render (at least one required)').classes('text-xs text-zinc-400')
+
+                    marmoset_engine = render_app.engine_registry.get('marmoset')
+                    if marmoset_engine:
+                        # Group passes by category
+                        categories = {}
+                        for p in marmoset_engine.RENDER_PASSES:
+                            cat = p['category']
+                            if cat not in categories:
+                                categories[cat] = []
+                            categories[cat].append(p)
+
+                        def _make_pass_toggle(pass_id):
+                            def toggle(e):
+                                if e.value:
+                                    if pass_id not in form['render_passes']:
+                                        form['render_passes'].append(pass_id)
+                                else:
+                                    if pass_id in form['render_passes'] and len(form['render_passes']) > 1:
+                                        form['render_passes'].remove(pass_id)
+                                    elif len(form['render_passes']) <= 1:
+                                        e.sender.value = True
+                            return toggle
+
+                        for cat_name, passes in categories.items():
+                            ui.label(cat_name).classes('text-xs text-zinc-500 font-bold mt-1')
+                            with ui.row().classes('w-full flex-wrap gap-x-3 gap-y-0'):
+                                for p in passes:
+                                    is_checked = p['id'] in form['render_passes']
+                                    ui.checkbox(p['name'], value=is_checked, on_change=_make_pass_toggle(p['id'])).props('dense').classes('text-xs')
             
             accent_elements['engine_settings'] = engine_settings_section
             engine_settings_section()
@@ -376,10 +436,20 @@ async def show_add_job_dialog():
                     else:
                         engine_settings = {'use_custom_settings': False}
                 elif form['engine_type'] == 'marmoset':
+                    # Build full pass data for the render script
+                    marmoset_eng = render_app.engine_registry.get('marmoset')
+                    render_pass_data = []
+                    if marmoset_eng:
+                        pass_lookup = {p["id"]: p for p in marmoset_eng.RENDER_PASSES}
+                        for pid in form.get('render_passes', ['beauty']):
+                            if pid in pass_lookup:
+                                p = pass_lookup[pid]
+                                render_pass_data.append({"id": p["id"], "name": p["name"], "pass": p["pass"]})
                     engine_settings = {
                         "render_type": form.get('render_type', 'still'),
                         "samples": int(form.get('samples', 256)),
-                        "render_passes": form.get('render_passes', ['beauty'])
+                        "render_passes": form.get('render_passes', ['beauty']),
+                        "render_pass_data": render_pass_data,
                     }
                 
                 job = RenderJob(
@@ -428,6 +498,13 @@ async def show_edit_job_dialog(job):
         'res_width': job.res_width,
         'res_height': job.res_height,
         'overwrite_existing': job.overwrite_existing,
+        # Engine-specific (restored from job)
+        'render_type': job.engine_settings.get('render_type', 'still'),
+        'samples': job.engine_settings.get('samples', 256),
+        'render_passes': list(job.engine_settings.get('render_passes', ['beauty'])),
+        'vantage_use_custom': job.engine_settings.get('use_custom_settings', False),
+        'vantage_samples': job.engine_settings.get('samples', 100),
+        'vantage_denoiser': job.engine_settings.get('denoiser', 'nvidia'),
     }
     
     with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
@@ -456,10 +533,18 @@ async def show_edit_job_dialog(job):
             ui.label('Output Folder:').classes('text-sm text-gray-400')
             ui.input(value=form['output_folder']).bind_value(form, 'output_folder').classes('w-full')
             
+            edit_format_options = {
+                'blender': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
+                'marmoset': ['PNG', 'JPEG', 'TGA', 'PSD', 'PSD (16-bit)', 'EXR (16-bit)', 'EXR (32-bit)'],
+                'vantage': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
+            }
             with ui.row().classes('w-full gap-2'):
                 ui.input('Prefix', value=form['output_name']).bind_value(form, 'output_name').classes('flex-grow')
-                ui.select(['PNG', 'JPEG', 'OpenEXR', 'TIFF'], value=form['output_format'], label='Format').bind_value(form, 'output_format').classes('w-28')
-            
+                ui.select(
+                    edit_format_options.get(job.engine_type, ['PNG', 'JPEG']),
+                    value=form['output_format'], label='Format'
+                ).bind_value(form, 'output_format').classes('w-28')
+
             with ui.row().classes('w-full items-center gap-2'):
                 ui.number('Width', value=form['res_width'], min=1).bind_value(form, 'res_width').classes('w-24')
                 ui.label('x').classes('text-gray-400')
@@ -473,14 +558,91 @@ async def show_edit_job_dialog(job):
             
             ui.separator()
             ui.checkbox('Overwrite Existing', value=form['overwrite_existing']).props('dense').bind_value(form, 'overwrite_existing')
-            
-            # Vantage info
-            if job.engine_type == 'vantage':
+
+            # Engine-specific settings section
+            if job.engine_type == 'marmoset':
                 ui.separator()
+                ui.label('Marmoset Settings').classes('text-sm font-bold').style('color: #ef0343;')
                 with ui.row().classes('w-full items-center gap-2'):
-                    ui.icon('info').classes('text-zinc-500')
-                    ui.label('Vantage uses HQ settings from the scene file').classes('text-xs text-zinc-400')
-            
+                    ui.select(options=['still', 'turntable', 'animation'], value=form.get('render_type', 'still'), label='Render Type').bind_value(form, 'render_type').classes('w-32')
+                    ui.number('Samples', value=form.get('samples', 256), min=1, max=4096).bind_value(form, 'samples').classes('w-24')
+
+                # Render Passes
+                ui.separator()
+                ui.label('Render Passes').classes('text-sm font-bold').style('color: #ef0343;')
+                ui.label('Select passes to render (at least one required)').classes('text-xs text-zinc-400')
+
+                marmoset_engine = render_app.engine_registry.get('marmoset')
+                if marmoset_engine:
+                    categories = {}
+                    for p in marmoset_engine.RENDER_PASSES:
+                        cat = p['category']
+                        if cat not in categories:
+                            categories[cat] = []
+                        categories[cat].append(p)
+
+                    def _make_pass_toggle(pass_id):
+                        def toggle(e):
+                            if e.value:
+                                if pass_id not in form['render_passes']:
+                                    form['render_passes'].append(pass_id)
+                            else:
+                                if pass_id in form['render_passes'] and len(form['render_passes']) > 1:
+                                    form['render_passes'].remove(pass_id)
+                                elif len(form['render_passes']) <= 1:
+                                    e.sender.value = True
+                        return toggle
+
+                    for cat_name, passes in categories.items():
+                        ui.label(cat_name).classes('text-xs text-zinc-500 font-bold mt-1')
+                        with ui.row().classes('w-full flex-wrap gap-x-3 gap-y-0'):
+                            for p in passes:
+                                is_checked = p['id'] in form['render_passes']
+                                ui.checkbox(p['name'], value=is_checked, on_change=_make_pass_toggle(p['id'])).props('dense').classes('text-xs')
+
+            elif job.engine_type == 'vantage':
+                ui.separator()
+                ui.label('Vantage HQ Settings').classes('text-sm font-bold').style('color: #77b22a;')
+
+                def toggle_custom(e):
+                    form['vantage_use_custom'] = e.value
+                    edit_engine_settings.refresh()
+
+                ui.checkbox('Use Custom Settings', value=form['vantage_use_custom'], on_change=toggle_custom).props('dense').classes('mt-1')
+
+                @ui.refreshable
+                def edit_engine_settings():
+                    if form['vantage_use_custom']:
+                        with ui.column().classes('w-full gap-2 pl-6 mt-2'):
+                            ui.label('These settings will override your Vantage defaults:').classes('text-xs text-zinc-400')
+
+                            with ui.row().classes('w-full items-center gap-2'):
+                                ui.label('Resolution:').classes('text-sm text-gray-400 w-20')
+                                ui.label(f'{form["res_width"]} × {form["res_height"]}').classes('text-sm text-white')
+                                ui.label('(from above)').classes('text-xs text-zinc-500')
+
+                            with ui.row().classes('w-full items-center gap-2'):
+                                ui.number('Samples', value=form['vantage_samples'], min=1, max=65536).bind_value(form, 'vantage_samples').classes('w-28')
+                                ui.select(
+                                    options=[
+                                        {'label': 'NVIDIA OptiX AI', 'value': 'nvidia'},
+                                        {'label': 'Intel OIDN', 'value': 'oidn'},
+                                        {'label': 'Off', 'value': 'off'},
+                                    ],
+                                    value=form['vantage_denoiser'],
+                                    label='Denoiser'
+                                ).bind_value(form, 'vantage_denoiser').classes('w-40')
+
+                            with ui.row().classes('w-full items-center gap-2 mt-1'):
+                                ui.icon('warning').classes('text-amber-500')
+                                ui.label('A backup of vantage.ini will be created before modifying.').classes('text-xs text-amber-500')
+                    else:
+                        with ui.row().classes('w-full items-center gap-2 pl-6 mt-1'):
+                            ui.icon('info').classes('text-zinc-400')
+                            ui.label('Will use the HQ settings already configured in Vantage.').classes('text-xs text-zinc-400')
+
+                edit_engine_settings()
+
             # Status info
             ui.separator()
             status_text = f"Status: {job.status.upper()}"
@@ -503,7 +665,35 @@ async def show_edit_job_dialog(job):
                 job.frame_start = int(form['frame_start'])
                 job.frame_end = int(form['frame_end'])
                 job.overwrite_existing = form['overwrite_existing']
-                
+
+                # Rebuild engine_settings from form
+                if job.engine_type == 'marmoset':
+                    marmoset_eng = render_app.engine_registry.get('marmoset')
+                    render_pass_data = []
+                    if marmoset_eng:
+                        pass_lookup = {p["id"]: p for p in marmoset_eng.RENDER_PASSES}
+                        for pid in form.get('render_passes', ['beauty']):
+                            if pid in pass_lookup:
+                                p = pass_lookup[pid]
+                                render_pass_data.append({"id": p["id"], "name": p["name"], "pass": p["pass"]})
+                    job.engine_settings = {
+                        "render_type": form.get('render_type', 'still'),
+                        "samples": int(form.get('samples', 256)),
+                        "render_passes": form.get('render_passes', ['beauty']),
+                        "render_pass_data": render_pass_data,
+                    }
+                elif job.engine_type == 'vantage':
+                    if form.get('vantage_use_custom'):
+                        job.engine_settings = {
+                            'use_custom_settings': True,
+                            'width': int(form['res_width']),
+                            'height': int(form['res_height']),
+                            'samples': int(form['vantage_samples']),
+                            'denoiser': form['vantage_denoiser'],
+                        }
+                    else:
+                        job.engine_settings = {'use_custom_settings': False}
+
                 render_app.save_config()
                 render_app.log(f"Updated: {job.name}")
                 if render_app.queue_container:
@@ -515,7 +705,18 @@ async def show_edit_job_dialog(job):
                 job.status = 'queued'
                 job.progress = 0
                 job.current_frame = 0
+                job.rendering_frame = 0
                 job.error_message = ""
+                job.accumulated_seconds = 0
+                job.elapsed_time = ""
+                job.current_sample = 0
+                job.total_samples = 0
+                job.current_pass = ""
+                job.current_pass_num = 0
+                job.pass_frame = 0
+                job.total_passes = 0
+                job.pass_total_frames = 0
+                job.status_message = ""
                 render_app.save_config()
                 if render_app.queue_container:
                     render_app.queue_container.refresh()

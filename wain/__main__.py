@@ -7,9 +7,9 @@ Entry point for running as a package: python -m wain
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.15.28 - Disable GPU acceleration to prevent conflicts with render engines
+v2.15.65 - Comprehensive audit, bug fixes, and optimizations
 
-https://github.com/Spencer-Sliffe/Wain
+https://github.com/sbuff25/RenderManager
 """
 
 # ============================================================================
@@ -135,7 +135,7 @@ def run():
                 try:
                     import ctypes
                     return ctypes.windll.user32.FindWindowW(None, 'Wain')
-                except:
+                except Exception:
                     return None
             
             def start_drag(self):
@@ -147,7 +147,7 @@ def run():
                             ctypes.windll.user32.ReleaseCapture()
                             ctypes.windll.user32.SendMessageW(hwnd, 0x00A1, 2, 0)
                             return True
-                except:
+                except Exception:
                     pass
                 return False
             
@@ -159,7 +159,7 @@ def run():
                         if hwnd:
                             ctypes.windll.user32.ShowWindow(hwnd, 6)
                             return True
-                except:
+                except Exception:
                     pass
                 return False
             
@@ -171,7 +171,7 @@ def run():
                         if hwnd:
                             ctypes.windll.user32.ShowWindow(hwnd, 3)
                             return True
-                except:
+                except Exception:
                     pass
                 return False
             
@@ -183,7 +183,7 @@ def run():
                         if hwnd:
                             ctypes.windll.user32.ShowWindow(hwnd, 9)
                             return True
-                except:
+                except Exception:
                     pass
                 return False
             
@@ -194,7 +194,7 @@ def run():
                         hwnd = self._get_hwnd()
                         if hwnd:
                             return bool(ctypes.windll.user32.IsZoomed(hwnd))
-                except:
+                except Exception:
                     pass
                 return False
             
@@ -210,7 +210,7 @@ def run():
                     if webview.windows:
                         webview.windows[0].destroy()
                         return True
-                except:
+                except Exception:
                     pass
                 return False
         

@@ -4,7 +4,7 @@ Wain Render Engines
 
 Render engine implementations and registry.
 
-v2.15.15 - Safe Vantage settings with INI backup/restore
+v2.15.65 - Safe Vantage settings with INI backup/restore
 """
 
 from wain.engines.base import RenderEngine

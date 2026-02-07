@@ -1,5 +1,5 @@
 """
-Wain Vantage Settings Manager v2.15.38
+Wain Vantage Settings Manager v2.15.65
 ======================================
 
 SAFE settings management for Chaos Vantage HQ Render.
@@ -25,7 +25,7 @@ Key Settings (in [Preferences] section):
 Output Path (in [DialogLocations] section):
 - SaveImage=H:/path/to/output/prefix       # Full path including filename prefix
 
-https://github.com/Spencer-Sliffe/Wain
+https://github.com/sbuff25/RenderManager
 """
 
 import os

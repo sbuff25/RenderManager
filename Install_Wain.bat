@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 REM ========================================
 REM  Wain - First-Time Installer
-REM  https://github.com/Spencer-Sliffe/Wain
+REM  https://github.com/sbuff25/RenderManager
 REM ========================================
 
 title Wain Installer
@@ -290,7 +290,7 @@ if %VERIFY_FAILED% EQU 0 (
     echo  ║  Please check the errors above and try again.            ║
     echo  ║                                                          ║
     echo  ║  For help, visit:                                        ║
-    echo  ║  https://github.com/Spencer-Sliffe/Wain                  ║
+    echo  ║  https://github.com/sbuff25/RenderManager                  ║
     echo  ║                                                          ║
     echo  ╚══════════════════════════════════════════════════════════╝
 )

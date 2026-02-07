@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 REM ========================================
 REM  Wain - Render Queue Manager Launcher
-REM  https://github.com/Spencer-Sliffe/Wain
+REM  https://github.com/sbuff25/RenderManager
 REM ========================================
 
 REM Check if Python is available
@@ -83,7 +83,7 @@ exit
 echo.
 echo ========================================
 echo  Wain - Render Queue Manager
-echo  https://github.com/Spencer-Sliffe/Wain
+echo  https://github.com/sbuff25/RenderManager
 echo ========================================
 echo.
 echo Usage:

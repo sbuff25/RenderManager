@@ -55,7 +55,7 @@ root.destroy()
         path = stdout.decode('utf-8').strip()
         if path and os.path.exists(path):
             return path
-    except:
+    except Exception:
         pass
     return None
 
@@ -88,7 +88,7 @@ root.destroy()
         path = stdout.decode('utf-8').strip()
         if path and os.path.isdir(path):
             return path
-    except:
+    except Exception:
         pass
     return None
 

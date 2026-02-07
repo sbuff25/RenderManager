@@ -98,6 +98,9 @@ class RenderApp:
             job.current_pass = ""
             job.current_pass_num = 0
             job.pass_frame = 0
+            job.total_passes = 0
+            job.pass_total_frames = 0
+            job.status_message = ""
             if job.is_animation and job.frame_end > 0 and job.original_start > 1:
                 job.progress = int(((job.original_start - 1) / job.frame_end) * 100)
             else:
@@ -131,10 +134,10 @@ class RenderApp:
             self.current_job.elapsed_time = elapsed
             
             job = self.current_job
-            status_msg = job.status_message.replace('"', '\\"').replace("'", "\\'") if job.status_message else ""
             try:
-                ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job.id}", {job.progress}, "{elapsed}", "{job.frames_display}", "{job.samples_display}", "{job.pass_display}", "{status_msg}");')
-            except:
+                js_args = json.dumps([job.id, job.progress, elapsed, job.frames_display, job.samples_display, job.pass_display, job.status_message or ""])
+                ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress(...{js_args});')
+            except Exception:
                 pass
         
         if self._progress_updates:
@@ -144,23 +147,23 @@ class RenderApp:
                 try:
                     job_id, progress, elapsed, frame, frames_display, samples_display, pass_display = update[:7]
                     status_msg = update[7] if len(update) > 7 else ""
-                    status_msg = status_msg.replace('"', '\\"').replace("'", "\\'") if status_msg else ""
-                    ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress("{job_id}", {progress}, "{elapsed}", "{frames_display}", "{samples_display}", "{pass_display}", "{status_msg}");')
-                except:
+                    js_args = json.dumps([job_id, progress, elapsed, frames_display, samples_display, pass_display, status_msg or ""])
+                    ui.run_javascript(f'window.updateJobProgress && window.updateJobProgress(...{js_args});')
+                except Exception:
                     pass
-        
+
         if self._ui_needs_update and self._render_finished:
             self._ui_needs_update = False
             self._render_finished = False
             if self.queue_container:
                 try: self.queue_container.refresh()
-                except: pass
+                except Exception: pass
             if self.stats_container:
                 try: self.stats_container.refresh()
-                except: pass
+                except Exception: pass
             if self.job_count_container:
                 try: self.job_count_container.refresh()
-                except: pass
+                except Exception: pass
         
         if self._log_needs_update:
             log_interval = 5.0 if self.current_job else 2.0
@@ -169,7 +172,7 @@ class RenderApp:
                 self._last_log_update = now
                 if self.log_container:
                     try: self.log_container.refresh()
-                    except: pass
+                    except Exception: pass
         
         if self.current_job is None:
             for job in self.jobs:
@@ -295,7 +298,8 @@ class RenderApp:
         try:
             with open(self.CONFIG_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
-        except: pass
+        except Exception as e:
+            print(f"[Wain] Failed to save config: {e}")
     
     def load_config(self):
         if os.path.exists(self.CONFIG_FILE):
@@ -320,7 +324,8 @@ class RenderApp:
                         elapsed_time=jd.get("elapsed_time", ""), accumulated_seconds=jd.get("accumulated_seconds", 0),
                         error_message=jd.get("error_message", ""),
                     ))
-            except: pass
+            except Exception as e:
+                print(f"[Wain] Failed to load config: {e}")
 
 
 render_app = RenderApp()

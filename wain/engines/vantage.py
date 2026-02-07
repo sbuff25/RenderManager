@@ -1,10 +1,10 @@
 """
-Wain Vantage Engine v2.15.64
+Wain Vantage Engine v2.15.65
 ============================
 
 Chaos Vantage render engine integration - SIMPLE DETERMINISTIC FLOW.
 
-v2.15.64 - Simple Keyboard Shortcut Flow:
+v2.15.65 - Simple Keyboard Shortcut Flow:
 ------------------------------------------
 NO MORE BUTTON SEARCHING FOR VIEWPORT PAUSE!
 Uses user-configured keyboard shortcuts:
@@ -13,13 +13,13 @@ Uses user-configured keyboard shortcuts:
 
 Flow:
 1. Wait for Pause Rendering checkbox (scene loaded indicator)
-2. Log "VANTAGE IS LOADED COMMENCE THIS GARBAGE WORKFLOW"
+2. Log scene loaded confirmation
 3. Send Ctrl+Space to pause viewport
 4. Send Ctrl+R to open HQ panel
 5. Wait for Start button to appear
 6. Click Start and monitor progress
 
-https://github.com/Spencer-Sliffe/Wain
+https://github.com/sbuff25/RenderManager
 """
 
 import os
@@ -106,7 +106,7 @@ class VantageEngine(RenderEngine):
             try:
                 with open(self._debug_log_file, 'a', encoding='utf-8') as f:
                     f.write(log_line + "\n")
-            except:
+            except Exception:
                 pass
         
         # Also print to console in debug mode
@@ -138,7 +138,7 @@ class VantageEngine(RenderEngine):
             try:
                 rect = window.element_info.rectangle
                 self._debug_log(f"  Size: {rect.width()}x{rect.height()} at ({rect.left},{rect.top})")
-            except:
+            except Exception:
                 pass
             
             # Count all control types
@@ -148,9 +148,9 @@ class VantageEngine(RenderEngine):
                     try:
                         ct = elem.element_info.control_type or "Unknown"
                         control_counts[ct] = control_counts.get(ct, 0) + 1
-                    except:
+                    except Exception:
                         pass
-            except:
+            except Exception:
                 pass
             
             self._debug_log(f"  Control counts: {control_counts}")
@@ -165,9 +165,9 @@ class VantageEngine(RenderEngine):
                         enabled = btn.is_enabled()
                         if name or auto_id:
                             buttons.append(f"'{name}' id={auto_id} enabled={enabled}")
-                    except:
+                    except Exception:
                         pass
-            except:
+            except Exception:
                 pass
             
             self._debug_log(f"  Buttons ({len(buttons)}):")
@@ -182,9 +182,9 @@ class VantageEngine(RenderEngine):
                         name = txt.element_info.name or ""
                         if name.strip():
                             texts.append(name.strip())
-                    except:
+                    except Exception:
                         pass
-            except:
+            except Exception:
                 pass
             
             self._debug_log(f"  Text elements ({len(texts)}):")
@@ -201,9 +201,9 @@ class VantageEngine(RenderEngine):
                             name = pb.element_info.name or ""
                             val = pb.get_value() if hasattr(pb, 'get_value') else "?"
                             self._debug_log(f"    '{name}' value={val}")
-                        except:
+                        except Exception:
                             pass
-            except:
+            except Exception:
                 pass
             
             # Menu bar
@@ -213,7 +213,7 @@ class VantageEngine(RenderEngine):
                         menus = [m.element_info.name for m in child.children() if m.element_info.name]
                         self._debug_log(f"  Menu bar: {menus}")
                         break
-            except:
+            except Exception:
                 pass
             
         except Exception as e:
@@ -277,7 +277,7 @@ class VantageEngine(RenderEngine):
             result = sock.connect_ex(('127.0.0.1', self.LIVE_LINK_PORT))
             sock.close()
             return result == 0
-        except:
+        except Exception:
             return False
     
     def _check_live_link_http(self) -> bool:
@@ -294,7 +294,7 @@ class VantageEngine(RenderEngine):
             req = Request(url, method='GET')
             with urlopen(req, timeout=1) as response:
                 return response.status < 500
-        except:
+        except Exception:
             return False
     
     def _check_live_link_status_bar(self, window) -> tuple:
@@ -326,9 +326,9 @@ class VantageEngine(RenderEngine):
                     if "live link" in text_lower and "waiting" not in text_lower:
                         # Live Link mentioned but not "waiting" - might be connected
                         return (True, text.strip())
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
         
         # If we didn't find any "waiting for live link" text, assume it's ready
@@ -525,7 +525,7 @@ class VantageEngine(RenderEngine):
                 class_name = win.element_info.class_name or ""
                 if "LavinaMainWindow" in class_name:
                     return win
-            except:
+            except Exception:
                 pass
         
         # Method 2: By title starting with "Chaos Vantage"
@@ -537,7 +537,7 @@ class VantageEngine(RenderEngine):
                 # Must start with "Chaos Vantage" (case insensitive)
                 if title.lower().startswith("chaos vantage"):
                     return win
-            except:
+            except Exception:
                 pass
         
         return None
@@ -567,7 +567,7 @@ class VantageEngine(RenderEngine):
                     cb = window.child_window(title="Pause Rendering", control_type="CheckBox")
                     _ = cb.element_info.name  # Verify it exists
                     return True
-                except:
+                except Exception:
                     pass
                 
                 # Method 2: Search descendants (slower but more thorough)
@@ -579,7 +579,7 @@ class VantageEngine(RenderEngine):
                         name = (elem.element_info.name or "").lower()
                         if "pause rendering" in name:
                             return True
-                    except:
+                    except Exception:
                         pass
                 
                 return False
@@ -656,7 +656,7 @@ class VantageEngine(RenderEngine):
                     if name == "Start":
                         self._log(f"  Found by name 'Start' ({time.time()-t0:.2f}s)")
                         return btn
-                except:
+                except Exception:
                     pass
         except Exception as e:
             self._log(f"  Button search error: {e}")
@@ -723,11 +723,11 @@ class VantageEngine(RenderEngine):
                                     time.sleep(0.3)
                                     self._log("Viewport paused")
                                     return True
-                            except:
+                            except Exception:
                                 continue
-                    except:
+                    except Exception:
                         continue
-            except:
+            except Exception:
                 pass
             
             # Third try: Full descendants search (slower but thorough)
@@ -741,7 +741,7 @@ class VantageEngine(RenderEngine):
                         time.sleep(0.3)
                         self._log("Viewport paused")
                         return True
-                except:
+                except Exception:
                     continue
             
             self._log("'Pause Rendering' button not found - trying keyboard fallback")
@@ -754,7 +754,7 @@ class VantageEngine(RenderEngine):
                 time.sleep(0.3)
                 self._log("Sent Backspace key (fallback)")
                 return True
-            except:
+            except Exception:
                 pass
             
             return False
@@ -783,7 +783,7 @@ class VantageEngine(RenderEngine):
                         return child
                     if "rendering hq" in name.lower() or "rendering" in name.lower():
                         return child
-                except:
+                except Exception:
                     pass
             
             # Check Window-type descendants
@@ -796,9 +796,9 @@ class VantageEngine(RenderEngine):
                         return child
                     if "rendering hq" in name.lower():
                         return child
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
         
         return None
@@ -824,7 +824,7 @@ class VantageEngine(RenderEngine):
                     name = child.element_info.name or ""
                     if name.strip():
                         texts.append(name.strip())
-                except:
+                except Exception:
                     pass
             
             for text in texts:
@@ -879,7 +879,7 @@ class VantageEngine(RenderEngine):
             # Method 1: pywinauto set_focus
             window.set_focus()
             time.sleep(0.05)
-        except:
+        except Exception:
             pass
         
         t1 = time.time()
@@ -892,7 +892,7 @@ class VantageEngine(RenderEngine):
             if hwnd:
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
                 time.sleep(0.05)
-        except:
+        except Exception:
             pass
         
         # Send Ctrl+R via pywinauto
@@ -900,7 +900,7 @@ class VantageEngine(RenderEngine):
             keyboard.send_keys("^r", pause=0.02)
             time.sleep(0.1)
             return True
-        except:
+        except Exception:
             pass
         
         # Fallback: Native Windows API
@@ -916,7 +916,7 @@ class VantageEngine(RenderEngine):
             ctypes.windll.user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
             time.sleep(0.1)
             return True
-        except:
+        except Exception:
             pass
         
         return False
@@ -930,9 +930,9 @@ class VantageEngine(RenderEngine):
                     name = btn.element_info.name or "(no name)"
                     auto_id = btn.element_info.automation_id or ""
                     buttons.append(f"{name} [id:{auto_id}]")
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
         return buttons[:30]
     
@@ -957,9 +957,9 @@ class VantageEngine(RenderEngine):
                     
                     if name_lower in edit_name or name_lower in auto_id:
                         return edit
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
         
         return None
@@ -969,7 +969,7 @@ class VantageEngine(RenderEngine):
         try:
             r = elem.element_info.rectangle
             return {"left": r.left, "top": r.top, "right": r.right, "bottom": r.bottom}
-        except:
+        except Exception:
             return None
     
     def _find_frame_spinners(self, window):
@@ -1000,9 +1000,9 @@ class VantageEngine(RenderEngine):
                     elif name == "last frame":
                         last_frame_rect = self._get_element_rect(text)
                         self._log(f"Found 'Last frame' label at top={last_frame_rect['top']}")
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
         
         if not first_frame_rect or not last_frame_rect:
@@ -1017,9 +1017,9 @@ class VantageEngine(RenderEngine):
                     rect = self._get_element_rect(spinner)
                     if rect:
                         spinners.append({"element": spinner, "rect": rect})
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
         
         self._log(f"Found {len(spinners)} spinners")
@@ -1156,10 +1156,10 @@ class VantageEngine(RenderEngine):
                     value = ""
                     try:
                         value = edit.get_value() or ""
-                    except:
+                    except Exception:
                         try:
                             value = edit.window_text() or ""
-                        except:
+                        except Exception:
                             pass
                     
                     # Check if this looks like a path field (contains : or /)
@@ -1167,7 +1167,7 @@ class VantageEngine(RenderEngine):
                         output_edit = edit
                         self._log(f"Found output path field with value: {value[:50]}...")
                         break
-                except:
+                except Exception:
                     pass
             
             # If not found by content, look for Edit field near "Output" label
@@ -1182,7 +1182,7 @@ class VantageEngine(RenderEngine):
                             if rect:
                                 output_label_rect = rect
                                 break
-                    except:
+                    except Exception:
                         pass
                 
                 if output_label_rect:
@@ -1197,7 +1197,7 @@ class VantageEngine(RenderEngine):
                                     output_edit = edit
                                     self._log("Found output path field by position")
                                     break
-                        except:
+                        except Exception:
                             pass
         except Exception as e:
             self._log(f"Error finding output Edit field: {e}")
@@ -1271,10 +1271,10 @@ class VantageEngine(RenderEngine):
                     value = ""
                     try:
                         value = combo.get_value() or ""
-                    except:
+                    except Exception:
                         try:
                             value = combo.window_text() or ""
-                        except:
+                        except Exception:
                             pass
                     
                     value_lower = value.lower()
@@ -1283,7 +1283,7 @@ class VantageEngine(RenderEngine):
                         format_combo = combo
                         self._log(f"Found format ComboBox with value: {value}")
                         break
-                except:
+                except Exception:
                     pass
             
             # Method 2: Find by position near "Output file type" label
@@ -1304,11 +1304,11 @@ class VantageEngine(RenderEngine):
                                                 format_combo = combo
                                                 self._log("Found format ComboBox by position")
                                                 break
-                                    except:
+                                    except Exception:
                                         pass
                             if format_combo:
                                 break
-                    except:
+                    except Exception:
                         pass
         except Exception as e:
             self._log(f"Error finding format ComboBox: {e}")
@@ -1338,7 +1338,7 @@ class VantageEngine(RenderEngine):
             # Try pressing Escape to close any open dropdown
             try:
                 keyboard.send_keys("{ESC}")
-            except:
+            except Exception:
                 pass
             return False
     
@@ -1369,7 +1369,7 @@ class VantageEngine(RenderEngine):
         self._start_debug_session(job.name)
         
         self._log("=" * 50)
-        self._log("Wain Vantage Engine v2.15.64 - Keyboard Shortcuts")
+        self._log("Wain Vantage Engine v2.15.65 - Keyboard Shortcuts")
         self._log(f"Scene: {job.file_path}")
         if self._debug_mode:
             self._log(f"DEBUG MODE: Detailed log → {self._debug_log_file}")
@@ -1485,7 +1485,7 @@ class VantageEngine(RenderEngine):
                                 auto_id = btn.element_info.automation_id or ""
                                 if name or auto_id:
                                     all_buttons.append(f"{name}[{auto_id}]")
-                            except:
+                            except Exception:
                                 pass
                         self._log(f"Progress window buttons: {all_buttons[:10]}")
                         
@@ -1506,7 +1506,7 @@ class VantageEngine(RenderEngine):
                                     resume_btn = btn
                                     self._log(f"Found Play/Continue button: '{btn.element_info.name}' [{auto_id}]")
                                     break
-                            except:
+                            except Exception:
                                 pass
                         
                         # If no explicit Resume button, check if Pause button is now a toggle
@@ -1520,7 +1520,7 @@ class VantageEngine(RenderEngine):
                                         resume_btn = btn
                                         self._log(f"Found toggle button: '{btn.element_info.name}' [{auto_id}]")
                                         break
-                                except:
+                                except Exception:
                                     pass
                         
                         if resume_btn:
@@ -1534,7 +1534,7 @@ class VantageEngine(RenderEngine):
                                 try:
                                     resume_btn.invoke()
                                     self._log("Resume invoked!")
-                                except:
+                                except Exception:
                                     pass
                             
                             # Small delay then go to monitoring
@@ -1639,7 +1639,7 @@ class VantageEngine(RenderEngine):
                 scene_ready = False
                 
                 self._log("=" * 50)
-                self._log("v2.15.64 - Simple keyboard shortcut flow")
+                self._log("v2.15.65 - Simple keyboard shortcut flow")
                 self._log("=" * 50)
                 
                 # ============================================================
@@ -1662,7 +1662,7 @@ class VantageEngine(RenderEngine):
                             title = vantage.window_text()
                             self._log(f"Vantage window found ({elapsed:.1f}s)")
                             self._log(f"Window title: '{title}'")
-                        except:
+                        except Exception:
                             self._log(f"Vantage window found ({elapsed:.1f}s)")
                         break
                     
@@ -1742,7 +1742,7 @@ class VantageEngine(RenderEngine):
                                 break
                         else:
                             title_has_filename_since = None
-                    except:
+                    except Exception:
                         pass
                     
                     # Log progress periodically
@@ -1773,7 +1773,7 @@ class VantageEngine(RenderEngine):
                 
                 self._log("")
                 self._log("=" * 50)
-                self._log("VANTAGE IS LOADED COMMENCE THIS GARBAGE WORKFLOW")
+                self._log("VANTAGE LOADED - STARTING AUTOMATION WORKFLOW")
                 self._log("=" * 50)
                 self._log("")
                 
@@ -1897,7 +1897,7 @@ class VantageEngine(RenderEngine):
                                     elapsed = time.time() - search_start
                                     self._log(f"Start button found by name! ({elapsed:.1f}s)")
                                     break
-                            except:
+                            except Exception:
                                 pass
                         
                         if start_btn:
@@ -1914,7 +1914,7 @@ class VantageEngine(RenderEngine):
                     try:
                         buttons = self._list_all_buttons(vantage) if vantage else []
                         self._log(f"Visible buttons: {buttons[:15]}")
-                    except:
+                    except Exception:
                         pass
                     
                     on_error("Could not find Start button. Is HQ panel open?")
@@ -2164,10 +2164,10 @@ class VantageEngine(RenderEngine):
                             try:
                                 start_btn.click_input()
                                 self._log("Retry click sent")
-                            except:
+                            except Exception:
                                 try:
                                     start_btn.invoke()
-                                except:
+                                except Exception:
                                     pass
                 
                 if elapsed > 30 and not progress_window_seen:
@@ -2204,17 +2204,17 @@ class VantageEngine(RenderEngine):
                             if "pause" in name or "secondary" in auto_id:
                                 pause_btn = btn
                                 break
-                        except:
+                        except Exception:
                             pass
                     
                     if pause_btn:
                         try:
                             pause_btn.click_input()
                             self._log("Paused!")
-                        except:
+                        except Exception:
                             try:
                                 pause_btn.invoke()
-                            except:
+                            except Exception:
                                 pass
                     else:
                         self._log("Pause button not found")
@@ -2250,17 +2250,17 @@ class VantageEngine(RenderEngine):
                             if "abort" in name or "primaryred" in auto_id:
                                 abort_btn = btn
                                 break
-                        except:
+                        except Exception:
                             pass
                     
                     if abort_btn:
                         try:
                             abort_btn.click_input()
                             self._log("Aborted!")
-                        except:
+                        except Exception:
                             try:
                                 abort_btn.invoke()
-                            except:
+                            except Exception:
                                 pass
                 
                 # Close Vantage if requested
@@ -2315,9 +2315,9 @@ class VantageEngine(RenderEngine):
                                             btn.click_input()
                                             self._log("Dismissed save dialog")
                                             return
-                                    except:
+                                    except Exception:
                                         pass
-                        except:
+                        except Exception:
                             pass
                     
                     self._log("Vantage closed")

@@ -46,7 +46,7 @@ def main_page():
         .job-action-btn-engine-vantage { color: #77b22a !important; }
         .job-action-btn-engine-vantage:hover { color: #ffffff !important; background-color: rgba(119, 178, 42, 0.2) !important; }
         
-        img[src*="wain_logo"], img[src*="wain_logo"] { filter: invert(1); border-radius: 8px; }
+        img[src*="wain_logo"] { filter: invert(1); border-radius: 8px; }
         
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #18181b; border-radius: 4px; }

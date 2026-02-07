@@ -12,7 +12,7 @@ ASSET_VERSION = "v11"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.16.0"
+APP_VERSION = "2.17.0"
 CONFIG_FILE = "wain_config.json"
 
 # Required Python version
@@ -106,6 +106,16 @@ def check_assets(assets_dir: str):
         print(f"  Found: wain_logo.png")
     else:
         print(f"  Missing: wain_logo.png")
+
+# ============================================================================
+# Network Rendering Configuration
+# ============================================================================
+NETWORK_DEFAULT_PORT = 8080
+WORKER_HEARTBEAT_INTERVAL = 30      # seconds between heartbeats
+WORKER_STALE_TIMEOUT = 120          # seconds before worker is considered dead
+WORKER_POLL_INTERVAL = 5            # seconds between job polling
+PROGRESS_REPORT_INTERVAL = 2        # minimum seconds between progress API calls
+DATABASE_FILE = "wain_jobs.db"
 
 # Blender denoiser options - maps display name to internal Blender value
 BLENDER_DENOISERS = {

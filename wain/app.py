@@ -31,7 +31,7 @@ def sanitize_to_ascii(message: str) -> str:
 
 class RenderApp:
     CONFIG_FILE = "wain_config.json"
-    
+
     def __init__(self):
         self.engine_registry = EngineRegistry()
         self.settings = AppSettings()
@@ -43,11 +43,24 @@ class RenderApp:
         self.log_container = None
         self.stats_container = None
         self.job_count_container = None
+        self.workers_container = None
         self._ui_needs_update = False
         self._render_finished = False
         self._log_needs_update = False
         self._progress_updates = []
+        # Network mode state
+        self.db = None
+        self.network_mode = False
         self.load_config()
+
+    def enable_network_mode(self, db):
+        """Switch to database-backed network mode."""
+        self.db = db
+        self.network_mode = True
+        # Reload jobs from database instead of JSON
+        self.jobs.clear()
+        self.jobs.extend(db.get_all_jobs())
+        self.log(f"Network mode enabled ({len(self.jobs)} jobs loaded from database)")
     
     def log(self, message: str):
         safe_message = sanitize_to_ascii(message)
@@ -58,6 +71,8 @@ class RenderApp:
         self._log_needs_update = True
     
     def add_job(self, job):
+        if self.network_mode and self.db:
+            self.db.add_job(job)
         self.jobs.insert(0, job)
         self.save_config()
         self.log(f"Added: {job.name}")
@@ -117,12 +132,91 @@ class RenderApp:
                 if engine:
                     engine.cancel_render()  # Non-blocking, closes Vantage
             self.jobs = [j for j in self.jobs if j.id != job.id]
-        
+            if self.network_mode and self.db:
+                self.db.delete_job(job.id)
+
+        # Sync action to database in network mode
+        if self.network_mode and self.db and action != "delete":
+            self.db.update_job(job.id, status=job.status, progress=job.progress,
+                               error_message=job.error_message,
+                               accumulated_seconds=job.accumulated_seconds,
+                               elapsed_time=job.elapsed_time)
+
         self.save_config()
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
         if self.job_count_container: self.job_count_container.refresh()
     
+    def sync_from_db(self):
+        """Sync job state from database (network mode only).
+
+        Picks up new jobs submitted via API and progress updates from remote workers.
+        Called periodically by a NiceGUI timer in server mode.
+        """
+        if not self.network_mode or not self.db:
+            return
+
+        db_jobs = self.db.get_all_jobs()
+        db_job_map = {j.id: j for j in db_jobs}
+        local_ids = {j.id for j in self.jobs}
+        needs_refresh = False
+
+        # Add new jobs submitted via API
+        for db_job in db_jobs:
+            if db_job.id not in local_ids:
+                self.jobs.insert(0, db_job)
+                needs_refresh = True
+
+        # Update existing jobs with remote progress
+        for local_job in self.jobs:
+            if local_job.id in db_job_map:
+                db_job = db_job_map[local_job.id]
+                # Don't overwrite local rendering state for locally-rendered jobs
+                if (self.current_job and self.current_job.id == local_job.id):
+                    continue
+                # Update from DB if the job is being rendered by a remote worker
+                if db_job.assigned_to and db_job.status in ("rendering", "claimed", "completed", "failed"):
+                    old_status = local_job.status
+                    local_job.status = db_job.status
+                    local_job.progress = db_job.progress
+                    local_job.current_frame = db_job.current_frame
+                    local_job.rendering_frame = db_job.rendering_frame
+                    local_job.elapsed_time = db_job.elapsed_time
+                    local_job.accumulated_seconds = db_job.accumulated_seconds
+                    local_job.current_sample = db_job.current_sample
+                    local_job.total_samples = db_job.total_samples
+                    local_job.error_message = db_job.error_message
+                    local_job.status_message = db_job.status_message
+                    local_job.assigned_to = db_job.assigned_to
+                    if old_status != db_job.status:
+                        needs_refresh = True
+                    # Push progress to UI for remote jobs
+                    if db_job.status == "rendering":
+                        self._progress_updates.append((
+                            local_job.id, local_job.progress, local_job.elapsed_time,
+                            local_job.current_frame, local_job.frames_display,
+                            local_job.samples_display, local_job.pass_display,
+                            local_job.status_message,
+                        ))
+
+        # Remove jobs deleted via API
+        db_ids = {j.id for j in db_jobs}
+        before = len(self.jobs)
+        self.jobs = [j for j in self.jobs if j.id in db_ids]
+        if len(self.jobs) != before:
+            needs_refresh = True
+
+        if needs_refresh:
+            if self.queue_container:
+                try: self.queue_container.refresh()
+                except Exception: pass
+            if self.stats_container:
+                try: self.stats_container.refresh()
+                except Exception: pass
+            if self.job_count_container:
+                try: self.job_count_container.refresh()
+                except Exception: pass
+
     def process_queue(self):
         now = datetime.now()
         
@@ -263,15 +357,21 @@ class RenderApp:
             job.progress = 100
             self.current_job = None
             self.log(f"Complete: {job.name}")
+            if self.network_mode and self.db:
+                self.db.update_job(job.id, status="completed", progress=100,
+                                   end_time=datetime.now().isoformat())
             self.save_config()
             self._ui_needs_update = True
             self._render_finished = True
-        
+
         def on_error(err):
             job.status = "failed"
             job.error_message = err
             self.current_job = None
             self.log(f"Failed: {job.name} - {err}")
+            if self.network_mode and self.db:
+                self.db.update_job(job.id, status="failed", error_message=err,
+                                   end_time=datetime.now().isoformat())
             self.save_config()
             self._ui_needs_update = True
             self._render_finished = True
@@ -280,6 +380,7 @@ class RenderApp:
         engine.start_render(job, start_frame, on_progress, on_complete, on_error, self.log)
     
     def save_config(self):
+        # In network mode, persist to JSON as backup but DB is primary
         data = {"jobs": [{
             "id": j.id, "name": j.name, "engine_type": j.engine_type,
             "file_path": j.file_path, "output_folder": j.output_folder,

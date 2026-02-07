@@ -26,12 +26,12 @@ import sys
 import threading
 
 # ============================================================================
-# CRITICAL: Disable GPU acceleration in QtWebEngine
-# This prevents Wain from competing with Vantage/Blender for GPU memory
-# Without this, launching Vantage can crash due to GPU memory exhaustion
+# QtWebEngine GPU configuration
+# Disable GPU hardware acceleration in QtWebEngine to prevent conflicts
+# with render engines (Vantage, Toolbag) that need full GPU access.
+# UI smoothness is achieved via CSS/JS optimizations instead.
 # ============================================================================
-os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing --disable-software-rasterizer'
-os.environ['QT_QUICK_BACKEND'] = 'software'
+os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing'
 os.environ['QTWEBENGINE_DISABLE_SANDBOX'] = '1'
 
 # Check if native mode is available
@@ -46,7 +46,7 @@ try:
     import webview
     
     HAS_NATIVE_MODE = True
-    print("Native mode: PyQt6 + WebEngine + qtpy available (GPU disabled for render engine compatibility)")
+    print("Native mode: PyQt6 + WebEngine + qtpy available (GPU reserved for render engines)")
 except ImportError as e:
     print(f"Native mode unavailable ({e}) - will use browser mode")
 

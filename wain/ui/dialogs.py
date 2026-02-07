@@ -112,7 +112,7 @@ async def show_add_job_dialog():
         if 'engine_settings' in accent_elements:
             accent_elements['engine_settings'].refresh()
     
-    with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
+    with ui.dialog().props('transition-show="jump-up" transition-hide="jump-down" transition-duration="150"') as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
         with ui.row().classes('w-full items-center justify-between p-4'):
             ui.label('Add Render Job').classes('text-lg font-bold')
             ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
@@ -507,7 +507,7 @@ async def show_edit_job_dialog(job):
         'vantage_denoiser': job.engine_settings.get('denoiser', 'nvidia'),
     }
     
-    with ui.dialog() as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
+    with ui.dialog().props('transition-show="jump-up" transition-hide="jump-down" transition-duration="150"') as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
         with ui.row().classes('w-full items-center justify-between p-4'):
             ui.label('Edit Job').classes('text-lg font-bold')
             ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm')
@@ -732,7 +732,7 @@ async def show_edit_job_dialog(job):
 
 
 async def show_settings_dialog():
-    with ui.dialog() as dialog, ui.card().style('width: 550px; max-width: 95vw; padding: 0;'):
+    with ui.dialog().props('transition-show="jump-up" transition-hide="jump-down" transition-duration="150"') as dialog, ui.card().style('width: 550px; max-width: 95vw; padding: 0;'):
         with ui.row().classes('w-full items-center justify-between p-4 border-b border-zinc-700'):
             ui.label('Settings').classes('text-lg font-bold')
             ui.button(icon='close', on_click=dialog.close).props('flat round dense size=sm').classes('text-zinc-400')

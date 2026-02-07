@@ -90,6 +90,15 @@ def main_page():
             60% { content: '..'; }
             80%, 100% { content: '...'; }
         }
+
+        /* Smooth dialog rendering */
+        .q-dialog__inner > .q-card {
+            will-change: transform, opacity;
+            contain: content;
+        }
+        .q-dialog__backdrop {
+            transition: opacity 150ms ease !important;
+        }
     </style>''')
     
     # Add JavaScript for progress animation
@@ -144,6 +153,11 @@ def main_page():
             };
             
             function animateProgressBars() {
+                // Skip animation when a dialog is open to free up frame budget
+                if (document.querySelector('.q-dialog')) {
+                    requestAnimationFrame(animateProgressBars);
+                    return;
+                }
                 document.querySelectorAll('.custom-progress-fill[data-target]').forEach(function(fill) {
                     const id = fill.id;
                     if (!id) return;

@@ -29,7 +29,7 @@ class WorkerClient:
     """Headless render worker that connects to a Wain server."""
 
     def __init__(self, server_url: str, worker_id: Optional[str] = None,
-                 path_map: Optional[tuple] = None):
+                 path_maps: Optional[List[tuple]] = None):
         self.server_url = server_url.rstrip("/")
         if not self.server_url.startswith("http"):
             self.server_url = f"http://{self.server_url}"
@@ -37,7 +37,7 @@ class WorkerClient:
         self.worker_id = worker_id or socket.gethostname()
         self.hostname = socket.gethostname()
         self.ip_address = self._get_local_ip()
-        self.path_map = path_map  # (from_prefix, to_prefix) e.g. ("F:", "Z:")
+        self.path_maps = path_maps or []  # [(from, to), ...] e.g. [("F:", "Z:"), ("E:", "E:")]
 
         self.engine_registry = EngineRegistry()
         self.supported_engines = ["blender"]  # Phase 1: Blender only
@@ -198,12 +198,11 @@ class WorkerClient:
         job.file_path = self._remap_path(job.file_path)
         job.output_folder = self._remap_path(job.output_folder)
 
-        # Pass path_map to engine so it can remap internal file references
-        if self.path_map:
-            job.engine_settings["path_map"] = {
-                "from": self.path_map[0],
-                "to": self.path_map[1],
-            }
+        # Pass path_maps to engine so it can remap internal file references
+        if self.path_maps:
+            job.engine_settings["path_maps"] = [
+                {"from": f, "to": t} for f, t in self.path_maps
+            ]
 
         self._current_job = job
         self._render_done.clear()
@@ -366,12 +365,12 @@ class WorkerClient:
     # ====================================================================
 
     def _remap_path(self, path: str) -> str:
-        """Remap a file path using the configured path mapping."""
-        if not self.path_map or not path:
+        """Remap a file path using the configured path mappings."""
+        if not self.path_maps or not path:
             return path
-        from_prefix, to_prefix = self.path_map
-        if path.upper().startswith(from_prefix.upper()):
-            return to_prefix + path[len(from_prefix):]
+        for from_prefix, to_prefix in self.path_maps:
+            if path.upper().startswith(from_prefix.upper()):
+                return to_prefix + path[len(from_prefix):]
         return path
 
     def _get_local_ip(self) -> str:

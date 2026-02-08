@@ -220,28 +220,30 @@ print("INFO_END")
         
         fmt = self.OUTPUT_FORMATS.get(job.output_format, "PNG")
         
-        # Build path remap code if worker provided a path_map
+        # Build path remap code if worker provided path mappings
         path_remap_code = ""
-        path_map = job.engine_settings.get("path_map")
-        if path_map:
-            from_prefix = path_map["from"].replace("\\", "\\\\")
-            to_prefix = path_map["to"].replace("\\", "\\\\")
+        path_maps = job.engine_settings.get("path_maps", [])
+        # Support legacy single path_map too
+        legacy = job.engine_settings.get("path_map")
+        if legacy and not path_maps:
+            path_maps = [legacy]
+        if path_maps:
+            maps_repr = repr([(m["from"], m["to"]) for m in path_maps])
             path_remap_code = f'''
-# Remap file paths for network rendering (drive letter difference)
-import os
-_from = "{from_prefix}"
-_to = "{to_prefix}"
+# Remap file paths for network rendering (drive letter differences)
+_path_maps = {maps_repr}
 _remapped = 0
-for img in bpy.data.images:
-    if img.filepath and img.filepath.upper().startswith(_from.upper()):
-        img.filepath = _to + img.filepath[len(_from):]
-        _remapped += 1
-for lib in bpy.data.libraries:
-    if lib.filepath and lib.filepath.upper().startswith(_from.upper()):
-        lib.filepath = _to + lib.filepath[len(_from):]
-        _remapped += 1
+for _from, _to in _path_maps:
+    for img in bpy.data.images:
+        if img.filepath and img.filepath.upper().startswith(_from.upper()):
+            img.filepath = _to + img.filepath[len(_from):]
+            _remapped += 1
+    for lib in bpy.data.libraries:
+        if lib.filepath and lib.filepath.upper().startswith(_from.upper()):
+            lib.filepath = _to + lib.filepath[len(_from):]
+            _remapped += 1
 if _remapped > 0:
-    print(f"[Wain] Remapped {{_remapped}} file path(s): {{_from}} -> {{_to}}")
+    print(f"[Wain] Remapped {{_remapped}} file path(s) across {{len(_path_maps)}} drive mapping(s)")
 '''
 
         base_script = f'''import bpy

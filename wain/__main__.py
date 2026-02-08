@@ -87,7 +87,7 @@ def parse_args():
     )
     parser.add_argument(
         '--path-map', type=str, default=None,
-        help='Path remapping for worker mode (e.g., F:=Z: to remap F:\\ to Z:\\)',
+        help='Path remapping for worker mode. Comma-separated (e.g., F:=Z:,E:=E:)',
     )
     parser.add_argument(
         '--debug', action='store_true',
@@ -375,18 +375,19 @@ def run_worker(args):
 
     from wain.network.worker import WorkerClient
 
-    # Parse path mapping (e.g., "F:=Z:" means replace F:\ with Z:\)
-    path_map = None
+    # Parse path mappings (e.g., "F:=Z:,E:=E:")
+    path_maps = []
     if args.path_map:
-        parts = args.path_map.split("=")
-        if len(parts) == 2:
-            path_map = (parts[0].strip(), parts[1].strip())
-            print(f"[Worker] Path mapping: {path_map[0]} -> {path_map[1]}")
+        for mapping in args.path_map.split(","):
+            parts = mapping.strip().split("=")
+            if len(parts) == 2:
+                path_maps.append((parts[0].strip(), parts[1].strip()))
+                print(f"[Worker] Path mapping: {parts[0].strip()} -> {parts[1].strip()}")
 
     client = WorkerClient(
         server_url=args.server,
         worker_id=args.worker_id,
-        path_map=path_map,
+        path_maps=path_maps or None,
     )
     client.run()
 

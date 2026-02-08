@@ -77,6 +77,7 @@ class JobDatabase:
                 pass_total_frames INTEGER NOT NULL DEFAULT 0,
                 assigned_to       TEXT DEFAULT NULL,
                 claimed_at        TEXT DEFAULT NULL,
+                target_worker     TEXT NOT NULL DEFAULT '',
                 priority          INTEGER NOT NULL DEFAULT 0,
                 created_at        TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
@@ -221,6 +222,7 @@ class JobDatabase:
         conn = self._get_conn()
         with self._lock:
             # Find and claim in one atomic operation
+            # Only claim jobs targeted to this worker or to "any" (empty string)
             cursor = conn.execute(f"""
                 UPDATE jobs
                 SET status = 'claimed',
@@ -231,12 +233,13 @@ class JobDatabase:
                     SELECT id FROM jobs
                     WHERE status = 'queued'
                       AND engine_type IN ({placeholders})
+                      AND (target_worker = '' OR target_worker = ?)
                     ORDER BY priority DESC, created_at ASC
                     LIMIT 1
                 )
                 AND status = 'queued'
                 RETURNING *
-            """, [worker_id, now, now] + supported_engines)
+            """, [worker_id, now, now] + supported_engines + [worker_id])
             row = cursor.fetchone()
             conn.commit()
 

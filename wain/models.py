@@ -56,6 +56,7 @@ class RenderJob:
     # Network rendering fields
     assigned_to: Optional[str] = None       # worker_id that claimed this job
     claimed_at: Optional[str] = None        # ISO timestamp when claimed
+    target_worker: str = ""                 # "" = any, "local" = server only, or worker_id
     priority: int = 0                       # higher = rendered first
     created_at: Optional[str] = None        # ISO timestamp
     updated_at: Optional[str] = None        # ISO timestamp
@@ -82,6 +83,7 @@ class RenderJob:
             "total_passes": self.total_passes, "pass_frame": self.pass_frame,
             "pass_total_frames": self.pass_total_frames,
             "assigned_to": self.assigned_to, "claimed_at": self.claimed_at,
+            "target_worker": self.target_worker,
             "priority": self.priority, "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -135,6 +137,7 @@ class RenderJob:
             pass_total_frames=int(data.get("pass_total_frames", 0)),
             assigned_to=data.get("assigned_to"),
             claimed_at=data.get("claimed_at"),
+            target_worker=data.get("target_worker", ""),
             priority=int(data.get("priority", 0)),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),

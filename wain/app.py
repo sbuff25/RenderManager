@@ -271,6 +271,9 @@ class RenderApp:
         if self.current_job is None:
             for job in self.jobs:
                 if job.status == "queued":
+                    # In network mode, only render jobs targeted to local or any
+                    if self.network_mode and job.target_worker and job.target_worker != "local":
+                        continue
                     self.start_render(job)
                     break
     

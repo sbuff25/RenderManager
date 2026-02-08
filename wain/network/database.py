@@ -287,12 +287,23 @@ class JobDatabase:
                         **progress_fields) -> bool:
         """Update job progress. Validates that the worker owns the job."""
         conn = self._get_conn()
-        # Verify ownership
+        # Verify ownership and current status
         row = conn.execute(
-            "SELECT assigned_to FROM jobs WHERE id = ?", (job_id,)
+            "SELECT assigned_to, status FROM jobs WHERE id = ?", (job_id,)
         ).fetchone()
         if row is None or row["assigned_to"] != worker_id:
             return False
+
+        # Don't let worker overwrite a server-initiated status change
+        # (e.g., worker sending "rendering" after server set "paused")
+        db_status = row["status"]
+        req_status = progress_fields.get("status")
+        if req_status == "rendering" and db_status in ("paused", "failed", "queued"):
+            progress_fields.pop("status", None)
+            progress_fields.pop("status_message", None)
+
+        if not progress_fields:
+            return True
 
         return self.update_job(job_id, **progress_fields)
 

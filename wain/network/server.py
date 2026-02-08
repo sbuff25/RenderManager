@@ -19,7 +19,7 @@ from wain.models import RenderJob
 from wain.network.database import JobDatabase
 
 
-def register_api_routes(nicegui_app, db: JobDatabase):
+def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
     """Register all REST API routes on the NiceGUI app."""
 
     _start_time = time.time()
@@ -283,6 +283,27 @@ def register_api_routes(nicegui_app, db: JobDatabase):
     async def api_list_workers(request: Request) -> JSONResponse:
         workers = db.get_workers()
         return JSONResponse({"workers": workers})
+
+    # ====================================================================
+    # Worker Log Relay
+    # ====================================================================
+
+    @nicegui_app.post("/api/log")
+    async def api_worker_log(request: Request) -> JSONResponse:
+        """Receive batched log messages from a worker."""
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+        worker_id = body.get("worker_id", "unknown")
+        messages = body.get("messages", [])
+
+        if render_app and messages:
+            for msg in messages[:50]:  # Cap at 50 per batch
+                render_app.log(f"[{worker_id}] {msg}")
+
+        return JSONResponse({"ok": True, "received": len(messages)})
 
     # ====================================================================
     # Background Task: Stale Worker Cleanup

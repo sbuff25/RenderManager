@@ -151,7 +151,7 @@ print("INFO_END")
             
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            result = subprocess.run([blender_exe, "-b", file_path, "--python", temp_path], capture_output=True, timeout=60, startupinfo=startupinfo)
+            result = subprocess.run([blender_exe, "-b", "--factory-startup", file_path, "--python", temp_path], capture_output=True, timeout=60, startupinfo=startupinfo)
             os.unlink(temp_path)
             
             stdout = result.stdout.decode('utf-8', errors='replace')
@@ -247,6 +247,31 @@ if _remapped > 0:
 '''
 
         base_script = f'''import bpy
+
+# Enable GPU compute device (factory-startup resets to CPU)
+if bpy.context.scene.render.engine == 'CYCLES':
+    try:
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        prefs.refresh_devices()
+        # Try OptiX first, then CUDA, then HIP
+        for ctype in ('OPTIX', 'CUDA', 'HIP'):
+            try:
+                prefs.compute_device_type = ctype
+                prefs.refresh_devices()
+                devices = prefs.get_devices_for_type(ctype)
+                if devices:
+                    for d in devices:
+                        d.use = True
+                    bpy.context.scene.cycles.device = 'GPU'
+                    print(f"[Wain] GPU enabled: {{ctype}} ({{len(devices)}} device(s))")
+                    break
+            except Exception:
+                continue
+        else:
+            print("[Wain] No GPU devices found, using CPU")
+    except Exception as e:
+        print(f"[Wain] GPU setup note: {{e}}")
+
 bpy.context.scene.render.image_settings.file_format = '{fmt}'
 bpy.context.scene.render.resolution_x = {job.res_width}
 bpy.context.scene.render.resolution_y = {job.res_height}
@@ -276,7 +301,7 @@ def skip_existing_handler(scene, depsgraph):
             f.write(script)
         
         output_path = os.path.join(job.output_folder, job.output_name)
-        cmd = [blender_exe, "-b", job.file_path, "--python", self.temp_script_path, "-o", output_path, "-F", fmt, "-x", "1"]
+        cmd = [blender_exe, "-b", "--factory-startup", job.file_path, "--python", self.temp_script_path, "-o", output_path, "-F", fmt, "-x", "1"]
         
         if job.is_animation:
             cmd.extend(["-s", str(start_frame), "-e", str(job.frame_end), "-a"])
@@ -318,7 +343,7 @@ def skip_existing_handler(scene, depsgraph):
                         if on_log and safe_line:
                             on_log(safe_line)
                         
-                        frame_match = re.search(r'Fra:(\d+)', line)
+                        frame_match = re.search(r'Fra:\s*(\d+)', line)
                         if frame_match:
                             on_progress(int(frame_match.group(1)), safe_line)
                         elif "Saved:" in line:

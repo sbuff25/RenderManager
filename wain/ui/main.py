@@ -105,12 +105,14 @@ def main_page():
                 
                 if (fill) fill.dataset.target = progress;
                 if (label) label.textContent = progress + '%';
-                if (info && elapsed) {
+                if (info) {
                     var baseText = info.textContent;
                     if (renderProgress) baseText = baseText.replace(renderProgress.textContent, '').trim();
-                    if (baseText.includes('Time:')) baseText = baseText.replace(/Time: [0-9:]+/, 'Time: ' + elapsed);
-                    else baseText = baseText + ' | Time: ' + elapsed;
-                    
+                    if (elapsed) {
+                        if (baseText.includes('Time:')) baseText = baseText.replace(/Time: [0-9:]+/, 'Time: ' + elapsed);
+                        else baseText = baseText + ' | Time: ' + elapsed;
+                    }
+
                     var progressParts = [];
                     if (passDisplay && passDisplay.length > 0) progressParts.push(passDisplay);
                     if (framesDisplay && framesDisplay.length > 0 && framesDisplay.includes('/')) {

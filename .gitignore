@@ -22,6 +22,8 @@ Desktop.ini
 wain_config.json
 wain_render_log.txt
 vantage_debug_*.log
+logs/
+wain_jobs.db*
 
 # Environment
 .env

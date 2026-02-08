@@ -87,6 +87,7 @@ class RenderApp:
         
         if action == "start":
             job.status = "queued"
+            job.assigned_to = None  # Clear worker assignment so it can be reclaimed
         elif action == "pause":
             if self.current_job and self.current_job.id == job.id:
                 # Locally rendering job — cancel the engine directly
@@ -108,6 +109,7 @@ class RenderApp:
             job.status = "paused"
         elif action == "retry":
             job.status = "queued"
+            job.assigned_to = None
             job.current_frame = 0
             job.rendering_frame = 0
             job.error_message = ""
@@ -136,16 +138,31 @@ class RenderApp:
                 # For paused Vantage jobs, close Vantage
                 if engine:
                     engine.cancel_render()  # Non-blocking, closes Vantage
+            # If a remote worker is rendering this job, mark as failed first
+            # so the worker detects the cancellation before we delete it
+            if self.network_mode and self.db and job.assigned_to and job.status == "rendering":
+                self.db.update_job(job.id, status="failed",
+                                   status_message="Deleted by server")
             self.jobs = [j for j in self.jobs if j.id != job.id]
             if self.network_mode and self.db:
                 self.db.delete_job(job.id)
 
         # Sync action to database in network mode
         if self.network_mode and self.db and action != "delete":
-            self.db.update_job(job.id, status=job.status, progress=job.progress,
-                               error_message=job.error_message,
-                               accumulated_seconds=job.accumulated_seconds,
-                               elapsed_time=job.elapsed_time)
+            sync_fields = dict(
+                status=job.status, progress=job.progress,
+                error_message=job.error_message,
+                accumulated_seconds=job.accumulated_seconds,
+                elapsed_time=job.elapsed_time,
+                assigned_to=job.assigned_to,
+            )
+            # Only write frame fields on "retry" (which resets them to 0).
+            # For "start" (resume), the DB already has the correct current_frame
+            # from the worker's progress report — don't overwrite with stale local value.
+            if action == "retry":
+                sync_fields["current_frame"] = job.current_frame
+                sync_fields["rendering_frame"] = job.rendering_frame
+            self.db.update_job(job.id, **sync_fields)
 
         self.save_config()
         if self.queue_container: self.queue_container.refresh()
@@ -180,7 +197,7 @@ class RenderApp:
                 if (self.current_job and self.current_job.id == local_job.id):
                     continue
                 # Update from DB if the job is being rendered by a remote worker
-                if db_job.assigned_to and db_job.status in ("rendering", "claimed", "completed", "failed"):
+                if db_job.assigned_to and db_job.status in ("rendering", "claimed", "completed", "failed", "paused"):
                     old_status = local_job.status
                     local_job.status = db_job.status
                     local_job.progress = db_job.progress

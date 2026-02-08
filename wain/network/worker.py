@@ -51,6 +51,43 @@ class WorkerClient:
         self._last_cancel_check = 0.0
         self._render_done = threading.Event()
         self._render_result: Dict[str, Any] = {}
+        self._log_buffer: List[str] = []
+        self._log_lock = threading.Lock()
+        self._soft_cancel = False
+        self._log_file = self._init_log_file()
+
+    # ====================================================================
+    # Logging
+    # ====================================================================
+
+    def _init_log_file(self):
+        """Create a log file in the logs/ directory."""
+        from datetime import datetime
+        logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        log_path = os.path.join(logs_dir, f"worker_{self.worker_id}_{date_str}.log")
+        try:
+            f = open(log_path, "a", encoding="utf-8")
+            f.write(f"\n{'='*60}\n")
+            f.write(f"Worker session started: {datetime.now().isoformat()}\n")
+            f.write(f"{'='*60}\n")
+            return f
+        except Exception:
+            return None
+
+    def _log(self, msg: str):
+        """Write to both console and log file."""
+        print(msg)
+        if self._log_file:
+            try:
+                from datetime import datetime
+                ts = datetime.now().strftime("%H:%M:%S")
+                self._log_file.write(f"[{ts}] {msg}\n")
+                self._log_file.flush()
+            except Exception:
+                pass
 
     # ====================================================================
     # Main Loop
@@ -58,14 +95,14 @@ class WorkerClient:
 
     def run(self):
         """Main worker loop. Blocks until shutdown."""
-        print(f"[Worker] Starting worker '{self.worker_id}'")
-        print(f"[Worker] Server: {self.server_url}")
-        print(f"[Worker] Hostname: {self.hostname} ({self.ip_address})")
-        print(f"[Worker] Supported engines: {self.supported_engines}")
+        self._log(f"[Worker] Starting worker '{self.worker_id}'")
+        self._log(f"[Worker] Server: {self.server_url}")
+        self._log(f"[Worker] Hostname: {self.hostname} ({self.ip_address})")
+        self._log(f"[Worker] Supported engines: {self.supported_engines}")
 
         # Verify server connectivity
         if not self._verify_server():
-            print("[Worker] Cannot connect to server. Exiting.")
+            self._log("[Worker] Cannot connect to server. Exiting.")
             return
 
         # Start heartbeat thread
@@ -74,7 +111,7 @@ class WorkerClient:
         )
         self._heartbeat_thread.start()
 
-        print("[Worker] Ready. Polling for jobs...")
+        self._log("[Worker] Ready. Polling for jobs...")
 
         try:
             while self.running:
@@ -87,10 +124,10 @@ class WorkerClient:
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:
-                    print(f"[Worker] Error in poll loop: {e}")
+                    self._log(f"[Worker] Error in poll loop: {e}")
                     time.sleep(10)
         except KeyboardInterrupt:
-            print("\n[Worker] Shutting down...")
+            self._log("\n[Worker] Shutting down...")
         finally:
             self.stop()
 
@@ -102,7 +139,7 @@ class WorkerClient:
                 self._current_engine.cancel_render()
             except Exception:
                 pass
-        print("[Worker] Stopped.")
+        self._log("[Worker] Stopped.")
 
     # ====================================================================
     # Server Communication
@@ -130,18 +167,18 @@ class WorkerClient:
             except Exception:
                 return None
         except Exception as e:
-            print(f"[Worker] API error ({method} {path}): {e}")
+            self._log(f"[Worker] API error ({method} {path}): {e}")
             return None
 
     def _verify_server(self) -> bool:
         """Check that the server is reachable."""
-        print(f"[Worker] Connecting to {self.server_url}...")
+        self._log(f"[Worker] Connecting to {self.server_url}...")
         result = self._api_call("GET", "/api/status")
         if result and result.get("app") == "Wain":
-            print(f"[Worker] Connected to Wain server v{result.get('version')}")
-            print(f"[Worker] Server has {result.get('queued_jobs', 0)} queued job(s)")
+            self._log(f"[Worker] Connected to Wain server v{result.get('version')}")
+            self._log(f"[Worker] Server has {result.get('queued_jobs', 0)} queued job(s)")
             return True
-        print("[Worker] Failed to connect to server")
+        self._log("[Worker] Failed to connect to server")
         return False
 
     # ====================================================================
@@ -181,8 +218,8 @@ class WorkerClient:
 
         if result and result.get("claimed"):
             job_data = result["job"]
-            print(f"[Worker] Claimed job '{job_data.get('name', job_data['id'])}'"
-                  f" ({job_data['engine_type']})")
+            self._log(f"[Worker] Claimed job '{job_data.get('name', job_data['id'])}'"
+                      f" ({job_data['engine_type']})")
             return job_data
         return None
 
@@ -208,11 +245,13 @@ class WorkerClient:
         self._render_done.clear()
         self._render_result = {"status": None, "error": None}
         self._last_progress_report = 0.0
+        self._render_start_time = time.time()
+        self._soft_cancel = False
 
         engine = self.engine_registry.get(job.engine_type)
         if engine is None:
             error = f"Engine '{job.engine_type}' not available"
-            print(f"[Worker] {error}")
+            self._log(f"[Worker] {error}")
             self._report_error(job.id, error)
             self._current_job = None
             return
@@ -226,11 +265,13 @@ class WorkerClient:
             "status_message": f"Rendering on {self.worker_id}",
         })
 
-        print(f"[Worker] Starting render: {job.file_path}")
-        print(f"[Worker] Output: {job.output_folder}")
+        self._log(f"[Worker] Starting render: {job.file_path}")
+        self._log(f"[Worker] Output: {job.output_folder}")
 
         start_frame = job.frame_start
-        if job.original_start > 0:
+        if job.is_animation and job.current_frame > 0:
+            start_frame = job.current_frame + 1
+        elif job.original_start > 0:
             start_frame = job.original_start
 
         def on_progress(frame, msg=""):
@@ -246,7 +287,9 @@ class WorkerClient:
             self._render_done.set()
 
         def on_log(msg):
-            print(f"[Worker] {msg}")
+            self._log(f"[Worker] {msg}")
+            with self._log_lock:
+                self._log_buffer.append(str(msg)[:200])
 
         try:
             engine.start_render(
@@ -258,18 +301,18 @@ class WorkerClient:
             self._render_done.wait()
 
             if self._render_result["status"] == "completed":
-                print(f"[Worker] Job '{job.name or job.id}' completed")
+                self._log(f"[Worker] Job '{job.name or job.id}' completed")
                 self._report_complete(job.id)
             elif self._render_result["status"] == "cancelled":
-                print(f"[Worker] Job '{job.name or job.id}' cancelled")
+                self._log(f"[Worker] Job '{job.name or job.id}' cancelled")
                 # Server already set the status, no need to report
             else:
                 error = self._render_result.get("error", "Unknown error")
-                print(f"[Worker] Job '{job.name or job.id}' failed: {error}")
+                self._log(f"[Worker] Job '{job.name or job.id}' failed: {error}")
                 self._report_error(job.id, error)
 
         except Exception as e:
-            print(f"[Worker] Render exception: {e}")
+            self._log(f"[Worker] Render exception: {e}")
             self._report_error(job.id, str(e))
 
         self._current_job = None
@@ -282,7 +325,7 @@ class WorkerClient:
         # Update local job state
         if frame >= 0:
             job.rendering_frame = frame
-            if frame > job.current_frame:
+            if frame >= job.current_frame:
                 job.current_frame = frame
 
         # Calculate progress percentage
@@ -293,6 +336,9 @@ class WorkerClient:
         elif frame == -1:
             # Single frame complete signal
             job.progress = 100
+        elif not job.is_animation and job.total_samples > 0 and job.current_sample > 0:
+            # Single frame: use sample progress
+            job.progress = min(int((job.current_sample / job.total_samples) * 100), 99)
 
         # Parse sample info from Blender output
         if msg:
@@ -307,9 +353,23 @@ class WorkerClient:
                 job.current_tile = int(tile_match.group(1))
                 job.total_tiles = int(tile_match.group(2))
 
-        # Check if server cancelled this job
-        if self._check_cancellation(job.id):
-            print(f"[Worker] Job '{job.name or job.id}' cancelled by server")
+        # Check if server cancelled/paused this job
+        if not self._soft_cancel and self._check_cancellation(job.id):
+            self._log(f"[Worker] Job '{job.name or job.id}' paused by server — finishing current frame")
+            self._soft_cancel = True
+
+        # If soft cancel is active, wait for current frame to save then stop
+        if self._soft_cancel and msg and "Saved:" in msg:
+            self._log(f"[Worker] Frame saved, stopping render (paused at frame {job.current_frame})")
+            self._flush_log_buffer()
+            # Report final frame position so resume works correctly
+            self._api_call("PUT", f"/api/jobs/{job.id}/progress", {
+                "worker_id": self.worker_id,
+                "current_frame": job.current_frame,
+                "rendering_frame": job.rendering_frame,
+                "status": "paused",
+                "status_message": f"Paused at frame {job.current_frame}",
+            })
             if self._current_engine:
                 self._current_engine.cancel_render()
             self._render_result["status"] = "cancelled"
@@ -321,6 +381,14 @@ class WorkerClient:
             return
         self._last_progress_report = now
 
+        self._flush_log_buffer()
+
+        # Compute elapsed time
+        total_secs = job.accumulated_seconds + int(now - self._render_start_time)
+        h, rem = divmod(total_secs, 3600)
+        m, s = divmod(rem, 60)
+        elapsed = f"{h}:{m:02d}:{s:02d}"
+
         self._api_call("PUT", f"/api/jobs/{job.id}/progress", {
             "worker_id": self.worker_id,
             "progress": job.progress,
@@ -328,6 +396,8 @@ class WorkerClient:
             "rendering_frame": job.rendering_frame,
             "status": "rendering",
             "status_message": msg[:200] if msg else "",
+            "elapsed_time": elapsed,
+            "accumulated_seconds": total_secs,
             "current_sample": job.current_sample,
             "total_samples": job.total_samples,
             "current_tile": job.current_tile,
@@ -343,18 +413,38 @@ class WorkerClient:
         self._last_cancel_check = now
 
         result = self._api_call("GET", f"/api/jobs/{job_id}/status")
-        if result and result.get("status") in ("paused", "queued", "failed"):
+        if result is None:
+            # Server unreachable or job deleted (404) — treat as cancelled
+            return True
+        if result.get("status") in ("paused", "queued", "failed"):
+            return True
+        if result.get("error"):
+            # Job not found (deleted) — treat as cancelled
             return True
         return False
 
+    def _flush_log_buffer(self):
+        """Send buffered log messages to the server."""
+        with self._log_lock:
+            if not self._log_buffer:
+                return
+            messages = self._log_buffer[:]
+            self._log_buffer.clear()
+        self._api_call("POST", "/api/log", {
+            "worker_id": self.worker_id,
+            "messages": messages,
+        })
+
     def _report_complete(self, job_id: str):
         """Report job completion to server."""
+        self._flush_log_buffer()
         self._api_call("PUT", f"/api/jobs/{job_id}/complete", {
             "worker_id": self.worker_id,
         })
 
     def _report_error(self, job_id: str, error_message: str):
         """Report job failure to server."""
+        self._flush_log_buffer()
         self._api_call("PUT", f"/api/jobs/{job_id}/error", {
             "worker_id": self.worker_id,
             "error_message": error_message,

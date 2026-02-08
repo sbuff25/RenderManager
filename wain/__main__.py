@@ -86,6 +86,10 @@ def parse_args():
         help='Port number (default: 8080)',
     )
     parser.add_argument(
+        '--path-map', type=str, default=None,
+        help='Path remapping for worker mode (e.g., F:=Z: to remap F:\\ to Z:\\)',
+    )
+    parser.add_argument(
         '--debug', action='store_true',
         help='Debug mode',
     )
@@ -340,6 +344,7 @@ def run_server(args):
             reconnect_timeout=0,
             show=True,
             port=port,
+            host='0.0.0.0',
         )
     else:
         print(f"Starting UI (browser + network mode, port {port})...")
@@ -370,9 +375,18 @@ def run_worker(args):
 
     from wain.network.worker import WorkerClient
 
+    # Parse path mapping (e.g., "F:=Z:" means replace F:\ with Z:\)
+    path_map = None
+    if args.path_map:
+        parts = args.path_map.split("=")
+        if len(parts) == 2:
+            path_map = (parts[0].strip(), parts[1].strip())
+            print(f"[Worker] Path mapping: {path_map[0]} -> {path_map[1]}")
+
     client = WorkerClient(
         server_url=args.server,
         worker_id=args.worker_id,
+        path_map=path_map,
     )
     client.run()
 

@@ -28,7 +28,8 @@ from wain.models import RenderJob
 class WorkerClient:
     """Headless render worker that connects to a Wain server."""
 
-    def __init__(self, server_url: str, worker_id: Optional[str] = None):
+    def __init__(self, server_url: str, worker_id: Optional[str] = None,
+                 path_map: Optional[tuple] = None):
         self.server_url = server_url.rstrip("/")
         if not self.server_url.startswith("http"):
             self.server_url = f"http://{self.server_url}"
@@ -36,6 +37,7 @@ class WorkerClient:
         self.worker_id = worker_id or socket.gethostname()
         self.hostname = socket.gethostname()
         self.ip_address = self._get_local_ip()
+        self.path_map = path_map  # (from_prefix, to_prefix) e.g. ("F:", "Z:")
 
         self.engine_registry = EngineRegistry()
         self.supported_engines = ["blender"]  # Phase 1: Blender only
@@ -190,6 +192,11 @@ class WorkerClient:
     def _render_job(self, job_data: Dict):
         """Render a claimed job locally using the appropriate engine."""
         job = RenderJob.from_dict(job_data)
+
+        # Remap paths for this worker's drive mapping
+        job.file_path = self._remap_path(job.file_path)
+        job.output_folder = self._remap_path(job.output_folder)
+
         self._current_job = job
         self._render_done.clear()
         self._render_result = {"status": None, "error": None}
@@ -324,6 +331,15 @@ class WorkerClient:
     # ====================================================================
     # Utility
     # ====================================================================
+
+    def _remap_path(self, path: str) -> str:
+        """Remap a file path using the configured path mapping."""
+        if not self.path_map or not path:
+            return path
+        from_prefix, to_prefix = self.path_map
+        if path.upper().startswith(from_prefix.upper()):
+            return to_prefix + path[len(from_prefix):]
+        return path
 
     def _get_local_ip(self) -> str:
         """Get the local IP address."""

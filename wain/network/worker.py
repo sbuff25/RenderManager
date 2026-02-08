@@ -48,6 +48,7 @@ class WorkerClient:
         self._current_job: Optional[RenderJob] = None
         self._current_engine = None
         self._last_progress_report = 0.0
+        self._last_cancel_check = 0.0
         self._render_done = threading.Event()
         self._render_result: Dict[str, Any] = {}
 
@@ -197,6 +198,13 @@ class WorkerClient:
         job.file_path = self._remap_path(job.file_path)
         job.output_folder = self._remap_path(job.output_folder)
 
+        # Pass path_map to engine so it can remap internal file references
+        if self.path_map:
+            job.engine_settings["path_map"] = {
+                "from": self.path_map[0],
+                "to": self.path_map[1],
+            }
+
         self._current_job = job
         self._render_done.clear()
         self._render_result = {"status": None, "error": None}
@@ -253,6 +261,9 @@ class WorkerClient:
             if self._render_result["status"] == "completed":
                 print(f"[Worker] Job '{job.name or job.id}' completed")
                 self._report_complete(job.id)
+            elif self._render_result["status"] == "cancelled":
+                print(f"[Worker] Job '{job.name or job.id}' cancelled")
+                # Server already set the status, no need to report
             else:
                 error = self._render_result.get("error", "Unknown error")
                 print(f"[Worker] Job '{job.name or job.id}' failed: {error}")
@@ -297,6 +308,15 @@ class WorkerClient:
                 job.current_tile = int(tile_match.group(1))
                 job.total_tiles = int(tile_match.group(2))
 
+        # Check if server cancelled this job
+        if self._check_cancellation(job.id):
+            print(f"[Worker] Job '{job.name or job.id}' cancelled by server")
+            if self._current_engine:
+                self._current_engine.cancel_render()
+            self._render_result["status"] = "cancelled"
+            self._render_done.set()
+            return
+
         # Throttle API calls
         if now - self._last_progress_report < PROGRESS_REPORT_INTERVAL:
             return
@@ -314,6 +334,19 @@ class WorkerClient:
             "current_tile": job.current_tile,
             "total_tiles": job.total_tiles,
         })
+
+    def _check_cancellation(self, job_id: str) -> bool:
+        """Check if the server has cancelled this job. Returns True if cancelled."""
+        now = time.time()
+        # Only check every 3 seconds to avoid spamming the server
+        if now - self._last_cancel_check < 3.0:
+            return False
+        self._last_cancel_check = now
+
+        result = self._api_call("GET", f"/api/jobs/{job_id}/status")
+        if result and result.get("status") in ("paused", "queued", "failed"):
+            return True
+        return False
 
     def _report_complete(self, job_id: str):
         """Report job completion to server."""

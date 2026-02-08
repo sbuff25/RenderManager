@@ -89,17 +89,22 @@ class RenderApp:
             job.status = "queued"
         elif action == "pause":
             if self.current_job and self.current_job.id == job.id:
+                # Locally rendering job — cancel the engine directly
                 if self.render_start_time:
                     job.accumulated_seconds += int((datetime.now() - self.render_start_time).total_seconds())
                 engine = self.engine_registry.get(job.engine_type)
                 if engine:
-                    # Run in background - pause_render is now non-blocking
                     if hasattr(engine, 'pause_render'):
                         engine.pause_render()
                     else:
                         engine.cancel_render()
                 self.current_job = None
                 self.render_start_time = None
+            elif self.network_mode and self.db and job.assigned_to:
+                # Remote worker job — tell the server DB to cancel it
+                # Worker will pick up the status change and stop
+                self.db.update_job(job.id, status="paused",
+                                   status_message="Cancelled by server")
             job.status = "paused"
         elif action == "retry":
             job.status = "queued"

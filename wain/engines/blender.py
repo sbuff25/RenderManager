@@ -220,13 +220,37 @@ print("INFO_END")
         
         fmt = self.OUTPUT_FORMATS.get(job.output_format, "PNG")
         
+        # Build path remap code if worker provided a path_map
+        path_remap_code = ""
+        path_map = job.engine_settings.get("path_map")
+        if path_map:
+            from_prefix = path_map["from"].replace("\\", "\\\\")
+            to_prefix = path_map["to"].replace("\\", "\\\\")
+            path_remap_code = f'''
+# Remap file paths for network rendering (drive letter difference)
+import os
+_from = "{from_prefix}"
+_to = "{to_prefix}"
+_remapped = 0
+for img in bpy.data.images:
+    if img.filepath and img.filepath.upper().startswith(_from.upper()):
+        img.filepath = _to + img.filepath[len(_from):]
+        _remapped += 1
+for lib in bpy.data.libraries:
+    if lib.filepath and lib.filepath.upper().startswith(_from.upper()):
+        lib.filepath = _to + lib.filepath[len(_from):]
+        _remapped += 1
+if _remapped > 0:
+    print(f"[Wain] Remapped {{_remapped}} file path(s): {{_from}} -> {{_to}}")
+'''
+
         base_script = f'''import bpy
 bpy.context.scene.render.image_settings.file_format = '{fmt}'
 bpy.context.scene.render.resolution_x = {job.res_width}
 bpy.context.scene.render.resolution_y = {job.res_height}
 bpy.context.scene.render.resolution_percentage = 100
 print(f"[Wain] Resolution set to {{bpy.context.scene.render.resolution_x}}x{{bpy.context.scene.render.resolution_y}}")
-'''
+{path_remap_code}'''
         
         if job.is_animation and not job.overwrite_existing:
             ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}

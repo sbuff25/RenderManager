@@ -227,6 +227,27 @@ def register_api_routes(nicegui_app, db: JobDatabase):
 
         return JSONResponse({"ok": True, "status": "failed"})
 
+    @nicegui_app.post("/api/jobs/{job_id}/cancel")
+    async def api_cancel_job(request: Request) -> JSONResponse:
+        """Server requests cancellation of a job being rendered by a worker."""
+        job_id = request.path_params["job_id"]
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+
+        # Mark the job as cancelled in the database
+        db.update_job(job_id, status="paused", status_message="Cancelled by server")
+        return JSONResponse({"ok": True, "status": "paused"})
+
+    @nicegui_app.get("/api/jobs/{job_id}/status")
+    async def api_job_status(request: Request) -> JSONResponse:
+        """Worker polls this to check if its job was cancelled."""
+        job_id = request.path_params["job_id"]
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+        return JSONResponse({"status": job.status})
+
     # ====================================================================
     # Worker Endpoints
     # ====================================================================

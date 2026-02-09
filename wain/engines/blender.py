@@ -220,7 +220,55 @@ print("INFO_END")
         
         fmt = self.OUTPUT_FORMATS.get(job.output_format, "PNG")
         
-        # Build path remap code if worker provided path mappings
+        # Stage 1 — Resolve relative paths to absolute and reload missing images
+        path_resolve_code = '''
+import os as _os
+
+# Resolve relative paths to absolute so assets load regardless of CWD
+_collections = [
+    ("images", bpy.data.images),
+    ("libraries", bpy.data.libraries),
+    ("fonts", bpy.data.fonts),
+    ("sounds", bpy.data.sounds),
+    ("movieclips", bpy.data.movieclips),
+]
+_resolved_total = 0
+for _col_name, _col in _collections:
+    _resolved = 0
+    for _block in _col:
+        if not _block.filepath:
+            continue
+        if hasattr(_block, "packed_file") and _block.packed_file:
+            continue
+        _abs = bpy.path.abspath(_block.filepath)
+        if _abs != _block.filepath:
+            _block.filepath = _abs
+            _resolved += 1
+    if _resolved:
+        print(f"[Wain] Resolved {{_col_name}}: {{_resolved}} path(s) made absolute")
+        _resolved_total += _resolved
+if _resolved_total == 0:
+    print("[Wain] All asset paths already absolute")
+
+# Reload images that exist on disk but have no pixel data loaded
+# (--factory-startup can prevent images from being read into memory)
+_reloaded = 0
+for _img in bpy.data.images:
+    if not _img.filepath or _img.source not in ('FILE', 'SEQUENCE'):
+        continue
+    if hasattr(_img, "packed_file") and _img.packed_file:
+        continue
+    if not _img.has_data and _os.path.exists(bpy.path.abspath(_img.filepath)):
+        try:
+            _img.reload()
+            _reloaded += 1
+        except Exception:
+            pass
+if _reloaded:
+    print(f"[Wain] Reloaded {{_reloaded}} image(s) from disk")
+'''
+
+        # Stage 2 — Drive letter remapping for network renders
         path_remap_code = ""
         path_maps = job.engine_settings.get("path_maps", [])
         # Support legacy single path_map too
@@ -234,14 +282,11 @@ print("INFO_END")
 _path_maps = {maps_repr}
 _remapped = 0
 for _from, _to in _path_maps:
-    for img in bpy.data.images:
-        if img.filepath and img.filepath.upper().startswith(_from.upper()):
-            img.filepath = _to + img.filepath[len(_from):]
-            _remapped += 1
-    for lib in bpy.data.libraries:
-        if lib.filepath and lib.filepath.upper().startswith(_from.upper()):
-            lib.filepath = _to + lib.filepath[len(_from):]
-            _remapped += 1
+    for _col_name, _col in _collections:
+        for _block in _col:
+            if _block.filepath and _block.filepath.upper().startswith(_from.upper()):
+                _block.filepath = _to + _block.filepath[len(_from):]
+                _remapped += 1
 if _remapped > 0:
     print(f"[Wain] Remapped {{_remapped}} file path(s) across {{len(_path_maps)}} drive mapping(s)")
 '''
@@ -277,7 +322,7 @@ bpy.context.scene.render.resolution_x = {job.res_width}
 bpy.context.scene.render.resolution_y = {job.res_height}
 bpy.context.scene.render.resolution_percentage = 100
 print(f"[Wain] Resolution set to {{bpy.context.scene.render.resolution_x}}x{{bpy.context.scene.render.resolution_y}}")
-{path_remap_code}'''
+{path_resolve_code}{path_remap_code}'''
         
         if job.is_animation and not job.overwrite_existing:
             ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}

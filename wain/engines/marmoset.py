@@ -1,13 +1,13 @@
 """
-Wain Marmoset Engine - v2.16.0
+Wain Marmoset Engine - v2.18.0
 =========================================
 
 Multi-pass render support with scene probing for camera and pass detection.
-Uses renderCamera(viewportPass=...) for per-pass still rendering.
+Uses RenderObject.renderImages() for reliable rendering of ALL pass types
+(including geometry passes like Wireframe, Depth, Normals, Position that
+renderCamera(viewportPass=...) cannot handle).
 
-Corrected subprocess flags for GUI application startup.
-The CREATE_NO_WINDOW flag (0x08000000) is for console apps only and
-prevents Toolbag from starting. Now uses wShowWindow=0 with creation_flags=0.
+Falls back to renderCamera() only when no RenderObject is found in scene.
 """
 
 import os
@@ -43,9 +43,10 @@ class MarmosetEngine(RenderEngine):
         "PSD (16-bit)": "PSD (16-bit)", "EXR (16-bit)": "EXR (16-bit)", "EXR (32-bit)": "EXR (32-bit)",
     }
 
-    # Pass names must match Toolbag's RenderObject pass names exactly.
+    # Pass names must match Toolbag's RenderPassOptions.renderPass strings.
     # "pass" field = the string set on RenderPassOptions.renderPass.
-    # Beauty = "Full Quality". Rendered via RenderObject.renderImages().
+    # Beauty = "Full Quality". Rendered via RenderObject.renderImages()
+    # one pass at a time for per-pass progress tracking.
     # See: https://www.marmoset.co/python/reference5.html
     RENDER_PASSES = [
         # Common
@@ -208,23 +209,29 @@ def main():
         if not result["active_camera"]:
             result["active_camera"] = result["cameras"][0]
 
-        # === Render Pass Discovery ===
+        # === Render Pass Discovery (via RenderObject) ===
         try:
+            render_obj = None
             for obj in mset.getAllObjects():
-                try:
-                    obj_type = type(obj).__name__
-                    if "RenderPass" in obj_type or "Render" in obj_type:
-                        pass_name = getattr(obj, "name", "")
-                        pass_enabled = getattr(obj, "enabled", True)
-                        if pass_name:
-                            result["render_passes"].append({{
-                                "name": pass_name,
-                                "enabled": pass_enabled,
-                            }})
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                if type(obj).__name__ == "RenderObject":
+                    render_obj = obj
+                    break
+
+            if render_obj is not None and hasattr(render_obj, 'renderPasses'):
+                for rp in render_obj.renderPasses:
+                    pass_name = getattr(rp, 'renderPass', '')
+                    pass_enabled = getattr(rp, 'enabled', True)
+                    if pass_name:
+                        result["render_passes"].append({{
+                            "name": pass_name,
+                            "enabled": pass_enabled,
+                        }})
+                        log(f"Found render pass: {{pass_name}} (enabled={{pass_enabled}})")
+                log(f"Total render passes found: {{len(result['render_passes'])}}")
+            else:
+                log("No RenderObject found in scene")
+        except Exception as e:
+            log(f"Render pass discovery: {{e}}")
 
         # === Timeline / Animation ===
         try:
@@ -597,7 +604,13 @@ main()
             on_error(f"Failed to start render: {e}")
 
     def _generate_render_script(self, job, start_frame: int) -> str:
-        """Generate the Python script that Toolbag will execute for multi-pass rendering."""
+        """Generate the Python script that Toolbag will execute for multi-pass rendering.
+
+        Uses RenderObject.renderImages() which goes through Toolbag's proper
+        render pipeline and correctly handles ALL pass types (including geometry
+        passes like Wireframe, Depth, Normals, Position that renderCamera's
+        viewportPass parameter cannot render).
+        """
         scene_path = job.file_path.replace('\\', '\\\\')
         output_folder = job.output_folder.replace('\\', '\\\\')
         progress_path = self._progress_file_path.replace('\\', '\\\\')
@@ -633,7 +646,7 @@ main()
 
         return f'''# Wain Marmoset Multi-Pass Render Script
 # Auto-generated - do not edit
-# Uses per-pass renderCamera() for accurate progress tracking.
+# Uses RenderObject.renderImages() for reliable multi-pass rendering.
 # See: https://www.marmoset.co/python/reference5.html
 import mset
 import json
@@ -641,6 +654,7 @@ import os
 import sys
 import time
 import threading
+import shutil
 
 SCENE_PATH = r"{scene_path}"
 OUTPUT_FOLDER = r"{output_folder}"
@@ -655,6 +669,7 @@ TRANSPARENCY = {str(use_transparency)}
 CAMERA_NAME = "{camera_name}"
 PASSES = {passes_json}
 RENDER_TYPE = "{render_type}"
+LOG_PATH = os.path.join(OUTPUT_FOLDER, "_wain_render_log.txt")
 
 # --- Threaded progress writer ---
 _progress_lock = threading.Lock()
@@ -680,6 +695,11 @@ _writer_thread.start()
 def log(msg):
     print(f"[Wain] {{msg}}")
     sys.stdout.flush()
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{{time.strftime('%H:%M:%S')}}] {{msg}}\\n")
+    except Exception:
+        pass
 
 def update_progress(status, progress=0, current=0, total=0, error="", pass_name="", pass_num=0, total_passes=0):
     with _progress_lock:
@@ -741,71 +761,20 @@ def main():
             else:
                 pass_names.append(p["pass"])
 
-        # === Render each pass individually with renderCamera() ===
-        # This gives accurate per-pass progress updates.
-        # viewportPass uses Title Case names; empty string = beauty (Full Quality).
-        log(f"Rendering {{total_passes}} passes with renderCamera()")
-        render_start = time.time()
-        success_count = 0
+        # === Find the RenderObject ===
+        render_obj = None
+        for obj in mset.getAllObjects():
+            if type(obj).__name__ == "RenderObject":
+                render_obj = obj
+                break
 
-        for i, pass_info in enumerate(PASSES):
-            pass_id = pass_info["id"]
-            pass_name = pass_names[i]
-            display_name = "Beauty" if pass_name == "Full Quality" else pass_name
-
-            # Build output path directly (no post-render renaming needed)
-            if total_passes == 1 and pass_id == "beauty":
-                output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}.{{EXT}}")
-            else:
-                output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}")
-
-            # Update progress before the blocking renderCamera() call
-            update_progress(
-                "rendering",
-                progress=int((i / total_passes) * 100),
-                current=i,
-                total=total_passes,
-                pass_name=display_name,
-                pass_num=i + 1,
-                total_passes=total_passes,
-            )
-            log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}} -> {{os.path.basename(output_path)}}")
-
-            # viewportPass: empty string = Full Quality (beauty)
-            viewport_pass = "" if pass_name == "Full Quality" else pass_name
-
-            try:
-                mset.renderCamera(
-                    path=output_path,
-                    width=WIDTH,
-                    height=HEIGHT,
-                    sampling=SAMPLES,
-                    transparency=TRANSPARENCY,
-                    camera=CAMERA_NAME if CAMERA_NAME else "",
-                    viewportPass=viewport_pass,
-                )
-
-                if os.path.exists(output_path):
-                    size = os.path.getsize(output_path)
-                    log(f"  Output: {{os.path.basename(output_path)}} ({{size:,}} bytes)")
-                    success_count += 1
-                else:
-                    log(f"  WARNING: Output file not created for pass '{{display_name}}'")
-            except Exception as e:
-                log(f"  ERROR rendering pass '{{display_name}}': {{e}}")
-
-        render_time = time.time() - render_start
-        log("")
-        log("=" * 50)
-        log(f"Render complete: {{success_count}}/{{total_passes}} passes in {{render_time:.1f}}s")
-        log("=" * 50)
-
-        if success_count > 0:
-            update_progress("complete", 100, total_passes, total_passes,
-                          pass_name="", pass_num=total_passes, total_passes=total_passes)
+        if render_obj is not None:
+            log("Found RenderObject — using renderImages() pipeline")
+            _render_with_render_object(render_obj, pass_names, total_passes)
         else:
-            update_progress("error", 0, 0, total_passes,
-                          error="No output files created")
+            log("WARNING: No RenderObject found — falling back to renderCamera()")
+            log("Note: Geometry passes (Wireframe, Depth, etc.) may not render correctly")
+            _render_with_camera(pass_names, total_passes)
 
     except Exception as e:
         log(f"FATAL ERROR: {{e}}")
@@ -817,6 +786,224 @@ def main():
     time.sleep(1.5)  # Let writer flush final state
     log("Quitting Toolbag...")
     mset.quit()
+
+
+def _render_with_render_object(render_obj, pass_names, total_passes):
+    """Render passes using RenderObject.renderImages().
+
+    This uses Toolbag's proper render pipeline which correctly handles
+    ALL pass types including geometry passes (Wireframe, Depth, Normals,
+    Position) that renderCamera(viewportPass=...) cannot render.
+
+    Strategy: render one pass at a time via renderImages() to a temp
+    directory, then move/rename output files to the expected locations.
+    """
+    # Create temp directory for renderImages() output
+    render_dir = os.path.join(OUTPUT_FOLDER, "_wain_temp")
+    os.makedirs(render_dir, exist_ok=True)
+
+    # Configure output settings on the RenderObject
+    try:
+        img = render_obj.images
+        img.outputPath = render_dir
+        img.format = FMT
+        img.width = WIDTH
+        img.height = HEIGHT
+        img.samples = SAMPLES
+        img.transparency = TRANSPARENCY
+        img.overwrite = True
+        log(f"Configured RenderObject: {{render_dir}}, {{FMT}}, {{WIDTH}}x{{HEIGHT}}, {{SAMPLES}} samples")
+    except Exception as e:
+        log(f"WARNING: Could not fully configure RenderObject output: {{e}}")
+
+    # Build a lookup of existing passes on the RenderObject
+    existing_passes = {{}}
+    try:
+        for rp in render_obj.renderPasses:
+            name = getattr(rp, 'renderPass', '')
+            if name:
+                existing_passes[name] = rp
+                rp.enabled = False  # Disable all initially
+    except Exception as e:
+        log(f"Error reading existing passes: {{e}}")
+
+    log(f"Scene has {{len(existing_passes)}} existing pass(es): {{sorted(existing_passes.keys())}}")
+
+    # Register any missing passes
+    for p_name in pass_names:
+        if p_name in existing_passes:
+            log(f"  Pass exists: {{p_name}}")
+        else:
+            try:
+                rpo = mset.RenderPassOptions()
+                rpo.renderPass = p_name
+                rpo.enabled = False
+                render_obj.renderPasses.append(rpo)
+                existing_passes[p_name] = rpo
+                log(f"  Registered new pass: {{p_name}}")
+            except Exception as e:
+                log(f"  Failed to register '{{p_name}}': {{e}}")
+
+    # === Render each pass one at a time ===
+    render_start = time.time()
+    success_count = 0
+
+    for i, pass_info in enumerate(PASSES):
+        pass_id = pass_info["id"]
+        pass_name = pass_names[i]
+        display_name = "Beauty" if pass_name == "Full Quality" else pass_name
+
+        # Disable all passes, enable only the current one
+        for rp in render_obj.renderPasses:
+            try:
+                rp.enabled = (getattr(rp, 'renderPass', '') == pass_name)
+            except Exception:
+                pass
+
+        # Update progress
+        update_progress(
+            "rendering",
+            progress=int((i / total_passes) * 100),
+            current=i,
+            total=total_passes,
+            pass_name=display_name,
+            pass_num=i + 1,
+            total_passes=total_passes,
+        )
+        log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}}")
+
+        # Record files in temp dir before rendering
+        try:
+            pre_files = set(os.listdir(render_dir))
+        except Exception:
+            pre_files = set()
+
+        # Render this single pass
+        try:
+            render_obj.renderImages()
+        except Exception as e:
+            log(f"  renderImages() error: {{e}}")
+            continue
+
+        # Find new file(s) created by this render
+        try:
+            post_files = set(os.listdir(render_dir))
+        except Exception:
+            post_files = set()
+
+        new_files = sorted(post_files - pre_files)
+
+        if new_files:
+            src_name = new_files[0]
+            src_path = os.path.join(render_dir, src_name)
+
+            # Build our expected output filename
+            if total_passes == 1 and pass_id == "beauty":
+                target_name = f"{{OUTPUT_NAME}}.{{EXT}}"
+            else:
+                target_name = f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}"
+
+            dst_path = os.path.join(OUTPUT_FOLDER, target_name)
+
+            try:
+                shutil.move(src_path, dst_path)
+                size = os.path.getsize(dst_path)
+                log(f"  OK: {{target_name}} ({{size:,}} bytes) [from {{src_name}}]")
+                success_count += 1
+            except Exception as e:
+                log(f"  Error moving file: {{e}}")
+
+            # If renderImages() created extra files, log them
+            if len(new_files) > 1:
+                log(f"  Note: {{len(new_files)}} files created (expected 1): {{new_files}}")
+        else:
+            log(f"  WARNING: No output file for '{{display_name}}'")
+
+    # Clean up temp directory
+    try:
+        shutil.rmtree(render_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    render_time = time.time() - render_start
+    log("")
+    log("=" * 50)
+    log(f"Render complete: {{success_count}}/{{total_passes}} passes in {{render_time:.1f}}s")
+    log("=" * 50)
+
+    if success_count > 0:
+        update_progress("complete", 100, total_passes, total_passes,
+                      pass_name="", pass_num=total_passes, total_passes=total_passes)
+    else:
+        update_progress("error", 0, 0, total_passes,
+                      error="No output files created")
+
+
+def _render_with_camera(pass_names, total_passes):
+    """Fallback: render using renderCamera(viewportPass=...).
+
+    Note: Geometry passes (Wireframe, Depth, Normals, Position) may not
+    produce output with this approach — they require the RenderObject pipeline.
+    """
+    render_start = time.time()
+    success_count = 0
+
+    for i, pass_info in enumerate(PASSES):
+        pass_id = pass_info["id"]
+        pass_name = pass_names[i]
+        display_name = "Beauty" if pass_name == "Full Quality" else pass_name
+
+        if total_passes == 1 and pass_id == "beauty":
+            output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}.{{EXT}}")
+        else:
+            output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}")
+
+        update_progress(
+            "rendering",
+            progress=int((i / total_passes) * 100),
+            current=i,
+            total=total_passes,
+            pass_name=display_name,
+            pass_num=i + 1,
+            total_passes=total_passes,
+        )
+        log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}} -> {{os.path.basename(output_path)}}")
+
+        viewport_pass = "" if pass_name == "Full Quality" else pass_name
+
+        try:
+            mset.renderCamera(
+                path=output_path,
+                width=WIDTH,
+                height=HEIGHT,
+                sampling=SAMPLES,
+                transparency=TRANSPARENCY,
+                camera=CAMERA_NAME if CAMERA_NAME else "",
+                viewportPass=viewport_pass,
+            )
+
+            if os.path.exists(output_path):
+                size = os.path.getsize(output_path)
+                log(f"  Output: {{os.path.basename(output_path)}} ({{size:,}} bytes)")
+                success_count += 1
+            else:
+                log(f"  WARNING: Output file not created for '{{display_name}}'")
+        except Exception as e:
+            log(f"  ERROR rendering '{{display_name}}': {{e}}")
+
+    render_time = time.time() - render_start
+    log("")
+    log("=" * 50)
+    log(f"Render complete: {{success_count}}/{{total_passes}} passes in {{render_time:.1f}}s")
+    log("=" * 50)
+
+    if success_count > 0:
+        update_progress("complete", 100, total_passes, total_passes,
+                      pass_name="", pass_num=total_passes, total_passes=total_passes)
+    else:
+        update_progress("error", 0, 0, total_passes,
+                      error="No output files created")
+
 
 # Run main
 main()

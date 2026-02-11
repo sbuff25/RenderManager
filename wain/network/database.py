@@ -36,7 +36,7 @@ class JobDatabase:
         return self._local.conn
 
     def initialize(self):
-        """Create tables if they don't exist."""
+        """Create tables if they don't exist, and reset worker state."""
         conn = self._get_conn()
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS jobs (
@@ -101,6 +101,37 @@ class JobDatabase:
                 ON workers(last_heartbeat);
         """)
         conn.commit()
+
+        # On server startup, mark all workers as offline (they will
+        # re-register via heartbeat when they reconnect).  Also release
+        # any jobs that were being rendered — they'll be re-queued.
+        self._reset_workers_on_startup(conn)
+
+    def _reset_workers_on_startup(self, conn: sqlite3.Connection):
+        """Mark all previously-known workers as offline and re-queue
+        their in-flight jobs so nothing gets stuck after a server restart."""
+        with self._lock:
+            # Mark all workers offline but keep their records so the UI
+            # can show "previously connected" workers.
+            conn.execute("""
+                UPDATE workers
+                SET status = 'offline', current_job_id = NULL
+            """)
+            # Re-queue any jobs that were actively rendering or claimed
+            cursor = conn.execute("""
+                UPDATE jobs
+                SET status = 'queued',
+                    assigned_to = NULL,
+                    claimed_at = NULL,
+                    updated_at = datetime('now')
+                WHERE status IN ('claimed', 'rendering')
+                  AND assigned_to IS NOT NULL
+            """)
+            released = cursor.rowcount
+            conn.commit()
+
+        if released > 0:
+            print(f"[Wain] Server restart: re-queued {released} in-flight job(s)")
 
     # ========================================================================
     # Job CRUD

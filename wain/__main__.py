@@ -7,7 +7,7 @@ Entry point for running as a package: python -m wain
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.15.65 - Comprehensive audit, bug fixes, and optimizations
+v2.18.0 - Network stability: token auth, auto-reconnect, connection status UI
 
 https://github.com/sbuff25/RenderManager
 """
@@ -88,6 +88,10 @@ def parse_args():
     parser.add_argument(
         '--path-map', type=str, default=None,
         help='Path remapping for worker mode. Comma-separated (e.g., F:=Z:,E:=E:)',
+    )
+    parser.add_argument(
+        '--token', type=str, default=None,
+        help='API token for worker authentication (shown when server starts)',
     )
     parser.add_argument(
         '--debug', action='store_true',
@@ -299,7 +303,8 @@ def run_standalone():
 # ============================================================================
 def run_server(args):
     """Run Wain in network server mode with REST API."""
-    from wain.config import DATABASE_FILE, NETWORK_DEFAULT_PORT
+    from wain.config import DATABASE_FILE, NETWORK_DEFAULT_PORT, AUTH_TOKEN_FILE
+    from wain.network.auth import load_or_create_token
     from wain.network.database import JobDatabase
     from wain.network.server import register_api_routes
 
@@ -313,6 +318,11 @@ def run_server(args):
     db = JobDatabase(DATABASE_FILE)
     print(f"[Wain] Database: {os.path.abspath(DATABASE_FILE)}")
 
+    # Load or generate API authentication token
+    api_token = load_or_create_token(AUTH_TOKEN_FILE)
+    print(f"[Wain] API Token: {api_token}")
+    print(f"[Wain] Workers must use: --token {api_token}")
+
     # Import existing jobs from JSON if database is empty
     existing = db.get_all_jobs()
     if not existing:
@@ -325,8 +335,8 @@ def run_server(args):
     # Enable network mode on the render app
     render_app.enable_network_mode(db)
 
-    # Register REST API routes
-    register_api_routes(app, db, render_app)
+    # Register REST API routes (with auth token)
+    register_api_routes(app, db, render_app, api_token=api_token)
 
     _assets_dir, favicon_path = _setup_assets()
 
@@ -388,6 +398,7 @@ def run_worker(args):
         server_url=args.server,
         worker_id=args.worker_id,
         path_maps=path_maps or None,
+        api_token=args.token,
     )
     client.run()
 

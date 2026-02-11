@@ -90,6 +90,15 @@ def main_page():
             60% { content: '..'; }
             80%, 100% { content: '...'; }
         }
+
+        /* Smooth dialog rendering */
+        .q-dialog__inner > .q-card {
+            will-change: transform, opacity;
+            contain: content;
+        }
+        .q-dialog__backdrop {
+            transition: opacity 150ms ease !important;
+        }
     </style>''')
     
     # Add JavaScript for progress animation
@@ -146,6 +155,11 @@ def main_page():
             };
             
             function animateProgressBars() {
+                // Skip animation when a dialog is open to free up frame budget
+                if (document.querySelector('.q-dialog')) {
+                    requestAnimationFrame(animateProgressBars);
+                    return;
+                }
                 document.querySelectorAll('.custom-progress-fill[data-target]').forEach(function(fill) {
                     const id = fill.id;
                     if (!id) return;
@@ -256,74 +270,88 @@ def main_page():
             render_app.log_container = log_display
             log_display()
     
-    # Workers panel (dynamically shown/hidden based on network mode)
-    @ui.refreshable
-    def network_panel():
-        if not render_app.network_mode:
-            return
-        with ui.row().classes('w-full items-center justify-between mt-4'):
-            ui.label('Workers').classes('text-xl font-bold')
+    # Workers panel (network mode only)
+    if render_app.network_mode:
+        with ui.column().classes('w-full gap-2 mt-4'):
+            @ui.refreshable
+            def workers_section():
+                workers = render_app.db.get_workers() if render_app.db else []
+                connected = [w for w in workers if not w.get("is_stale") and w.get("status") != "offline"]
+                offline = [w for w in workers if w.get("is_stale") or w.get("status") == "offline"]
 
-        @ui.refreshable
-        def workers_section():
-            workers = render_app.db.get_workers() if render_app.db else []
-            active = [w for w in workers if not w.get("is_stale")]
-            ui.label(f'{len(active)} active').classes('text-gray-400')
+                with ui.row().classes('w-full items-center justify-between'):
+                    ui.label('Workers').classes('text-xl font-bold')
+                    with ui.row().classes('gap-3 items-center'):
+                        if connected:
+                            ui.label(f'{len(connected)} connected').style('color: #22c55e; font-size: 14px;')
+                        if offline:
+                            ui.label(f'{len(offline)} offline').style('color: #71717a; font-size: 14px;')
 
-            if not workers:
-                with ui.card().classes('w-full'):
-                    with ui.column().classes('w-full items-center py-4'):
-                        ui.icon('devices').classes('text-4xl text-gray-600')
-                        ui.label('No workers connected').classes('text-gray-400 mt-2')
-                        ui.label('Start a worker with: python -m wain --worker --server <this-ip>:8080').classes('text-gray-500 text-sm')
-            else:
-                for w in workers:
+                if not workers:
                     with ui.card().classes('w-full'):
-                        with ui.row().classes('w-full items-center gap-3 px-4 py-2'):
-                            is_stale = w.get("is_stale", False)
-                            w_status = w.get("status", "offline")
-                            if is_stale:
-                                icon_color = '#ef4444'
-                            elif w_status == "rendering":
-                                icon_color = '#22c55e'
-                            else:
-                                icon_color = '#a1a1aa'
-                            ui.icon('computer').style(f'color: {icon_color}; font-size: 24px;')
-                            with ui.column().classes('gap-0 flex-1'):
-                                ui.label(w.get("worker_id", "Unknown")).classes('font-bold text-white')
-                                ui.label(f'{w.get("hostname", "")} ({w.get("ip_address", "")})').classes('text-sm text-gray-400')
-                            status_text = "STALE" if is_stale else w_status.upper()
-                            ui.label(status_text).classes('text-sm text-gray-400')
-                            if w.get("current_job_id"):
-                                ui.label(f'Job: {w["current_job_id"]}').classes('text-xs text-gray-500')
+                        with ui.column().classes('w-full items-center py-4'):
+                            ui.icon('devices').classes('text-4xl text-gray-600')
+                            ui.label('No workers connected').classes('text-gray-400 mt-2')
+                            ui.label('Start a worker with: python -m wain --worker --server <this-ip>:8080').classes('text-gray-500 text-sm')
+                else:
+                    for w in workers:
+                        is_stale = w.get("is_stale", False)
+                        w_status = w.get("status", "offline")
 
-        render_app.workers_container = workers_section
-        workers_section()
+                        # Determine visual state
+                        if w_status == "offline" or is_stale:
+                            icon_name = 'cloud_off'
+                            icon_color = '#71717a'    # Gray
+                            status_text = 'OFFLINE'
+                            status_color = '#71717a'
+                            border_color = '#27272a'
+                        elif w_status == "rendering":
+                            icon_name = 'cloud_done'
+                            icon_color = '#22c55e'    # Green
+                            status_text = 'RENDERING'
+                            status_color = '#22c55e'
+                            border_color = '#166534'
+                        else:
+                            # idle / connected
+                            icon_name = 'cloud_done'
+                            icon_color = '#3b82f6'    # Blue
+                            status_text = 'CONNECTED'
+                            status_color = '#3b82f6'
+                            border_color = '#1e3a5f'
 
-    render_app.network_panel = network_panel
-    network_panel()
+                        with ui.card().classes('w-full').style(f'border-left: 3px solid {border_color};'):
+                            with ui.row().classes('w-full items-center gap-3 px-4 py-2'):
+                                ui.icon(icon_name).style(f'color: {icon_color}; font-size: 24px;')
+                                with ui.column().classes('gap-0 flex-1'):
+                                    ui.label(w.get("worker_id", "Unknown")).classes('font-bold text-white')
+                                    detail = f'{w.get("hostname", "")} ({w.get("ip_address", "")})'
+                                    ui.label(detail).classes('text-sm text-gray-400')
+                                    # Show last heartbeat time for offline workers
+                                    if w_status == "offline" or is_stale:
+                                        last_hb = w.get("last_heartbeat", "")
+                                        if last_hb:
+                                            ui.label(f'Last seen: {last_hb}').classes('text-xs text-gray-600')
+                                with ui.column().classes('gap-0 items-end'):
+                                    ui.label(status_text).style(
+                                        f'color: {status_color}; font-size: 12px; font-weight: 600; '
+                                        f'letter-spacing: 0.05em;'
+                                    )
+                                    if w.get("current_job_id") and w_status == "rendering":
+                                        ui.label(f'Job: {w["current_job_id"]}').classes('text-xs text-gray-500')
 
-    # Timers — always created, but guarded to no-op when network mode is off
-    def _workers_refresh():
-        if render_app.network_mode and render_app.workers_container:
-            try:
-                render_app.workers_container.refresh()
-            except Exception:
-                pass
+            render_app.workers_container = workers_section
+            workers_section()
 
-    def _db_sync():
-        if render_app.network_mode:
-            render_app.sync_from_db()
+        # Refresh workers list every 5 seconds
+        ui.timer(5.0, workers_section.refresh)
+        # Sync jobs from database every 2 seconds
+        ui.timer(2.0, render_app.sync_from_db)
 
-    ui.timer(5.0, _workers_refresh)
-    ui.timer(2.0, _db_sync)
     ui.timer(0.25, render_app.process_queue)
 
     render_app.log(f"Wain v{APP_VERSION} started")
     if render_app.network_mode:
-        render_app.log("Network mode enabled -- REST API active")
-    else:
-        render_app.log("Standalone mode -- toggle network in Settings")
+        render_app.log("Network mode enabled — REST API active")
 
     for engine in render_app.engine_registry.get_all():
         if engine.is_available:

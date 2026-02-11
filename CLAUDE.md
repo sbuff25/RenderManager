@@ -7,9 +7,52 @@
 
 ---
 
+## ⚠ CRITICAL RULES — MUST READ FIRST
+
+These rules are **non-negotiable**. Violating any of them will break the project, corrupt data, or damage hardware.
+
+### 1. Hardware Safety — TOP PRIORITY
+
+**NEVER** develop anything that could be potentially harmful to computer hardware:
+
+- Never write code that disables thermal throttling or overrides GPU/CPU safety limits
+- Never bypass power management or sleep states during rendering
+- Always respect system resource limits
+- Vantage renders are GPU-intensive — never spawn multiple simultaneous Vantage renders on the same machine
+- When implementing GPU temperature monitoring (see Feature Roadmap), use read-only queries only — never attempt to modify GPU clocks, fan curves, or power limits
+- All timeout and retry logic must have hard upper bounds to prevent infinite loops that could overheat hardware
+
+### 2. Application Naming
+
+- The application name is **Wain** (not "Wane")
+- All internal references, imports, log prefixes use `wain` (lowercase)
+- Package folder is `wain/`, import as `from wain.xxx import ...`
+- Temp files use `_wain_render_` prefix
+- Log messages use `[Wain]`, `[Blender]`, `[Marmoset]`, `[Vantage]` prefixes
+
+### 3. GitHub Standards
+
+- The readme file MUST always be `readme.md` (lowercase)
+- GitHub link (https://github.com/sbuff25/RenderManager) should be referenced in relevant source files
+- Include version reference in readme.md
+- Commit messages should reference version numbers
+
+### 4. Version Management
+
+- Version is defined in `wain/config.py` as `APP_VERSION`
+- Also referenced in `wain/__init__.py` and `wain_launcher.pyw`
+- **Always update ALL THREE locations** when bumping version
+- Use semantic versioning: MAJOR.MINOR.PATCH
+
+### 5. Iterative Development
+
+This project is developed iteratively across multiple chat sessions (ITT01 → ITT04-Native and beyond). **Always search past project context before making changes to maintain continuity.** Do not modify code without understanding what currently works — breaking a functioning engine while fixing another is unacceptable.
+
+---
+
 ## Project Overview
 
-Wain is a desktop render queue manager for 3D artists supporting **Blender**, **Marmoset Toolbag**, and **Chaos Vantage 3.1.0**. It provides a unified interface for submitting, monitoring, pausing/resuming, and managing render jobs across multiple engines. The long-term goal is to evolve Wain into a full render farm manager (an alternative to Deadline) with network rendering capabilities.
+Wain is a desktop render queue manager for 3D artists supporting **Blender**, **Marmoset Toolbag**, and **Chaos Vantage 3.1.0**. It provides a unified interface for submitting, monitoring, pausing/resuming, and managing render jobs across multiple engines. The long-term goal is to evolve Wain into a full render farm manager (an indie alternative to AWS Deadline) with network rendering capabilities.
 
 ### Tech Stack
 
@@ -18,6 +61,18 @@ Wain is a desktop render queue manager for 3D artists supporting **Blender**, **
 - **Automation:** pywinauto (Vantage UI automation)
 - **Language:** Python 3.10+
 - **Platform:** Windows (primary target)
+
+### Engine Accent Colors
+
+Each render engine has a distinct themed accent color used throughout the UI:
+
+| Engine    | Color     | Hex       |
+|-----------|-----------|-----------|
+| Blender   | Orange    | `#ea7600` |
+| Marmoset  | Red       | `#ef0343` |
+| Vantage   | Green     | `#77b22a` |
+
+These colors appear on: status badges, action buttons, progress bars, submit buttons, version badges, and all engine-specific UI elements. **Any new engine must get its own distinct accent color.**
 
 ---
 
@@ -63,64 +118,14 @@ wain/
 
 ---
 
-## Critical Rules — READ BEFORE MAKING ANY CHANGES
+## Engine Technical Reference
 
-### 1. Hardware Safety
-
-**NEVER** develop anything that could be potentially harmful to computer hardware. This includes:
-- Never write code that disables thermal throttling or overrides GPU/CPU safety limits
-- Never bypass power management or sleep states during rendering
-- Always respect system resource limits
-- Vantage renders are GPU-intensive — never spawn multiple simultaneous Vantage renders on the same machine
-
-### 2. Naming Conventions
-
-- The application name is **Wain** (not "Wane")
-- All internal references, imports, log prefixes use `wain` (lowercase)
-- Package folder is `wain/`, import as `from wain.xxx import ...`
-- Temp files use `_wain_render_` prefix
-- Log messages use `[Wain]`, `[Blender]`, `[Marmoset]`, `[Vantage]` prefixes
-
-### 3. GitHub Standards
-
-- The readme file MUST always be `readme.md` (lowercase)
-- GitHub link (https://github.com/sbuff25/RenderManager) should be referenced in relevant source files
-- Include version reference in readme.md
-- Commit messages should reference version numbers
-
-### 4. Version Management
-
-- Version is defined in `wain/config.py` as `APP_VERSION`
-- Also referenced in `wain/__init__.py` and `wain_launcher.pyw`
-- **Always update ALL THREE locations** when bumping version
-- Use semantic versioning: MAJOR.MINOR.PATCH
-
-### 5. Engine Accent Colors
-
-Each render engine has a distinct themed accent color used throughout the UI:
-
-| Engine    | Color     | Hex       |
-|-----------|-----------|-----------|
-| Blender   | Orange    | `#ea7600` |
-| Marmoset  | Red       | `#ef0343` |
-| Vantage   | Green     | `#77b22a` |
-
-These colors appear on: status badges, action buttons, progress bars, submit buttons, version badges, and all engine-specific UI elements. **Any new engine must get its own distinct accent color.**
-
-### 6. File Format Standards
-
-- Config file: `wain_config.json`
-- Output formats vary by engine (PNG, JPEG, EXR, TIFF, TGA)
-- Temp scripts go to `%TEMP%` directory to avoid permission issues
-- Progress tracking uses JSON files in `%TEMP%`
-
----
-
-## Engine-Specific Technical Details
-
-### Blender Engine
+### Blender
 
 **Architecture:** Command-line rendering via `blender.exe -b <scene> --python <script>`
+
+**Official Documentation:**
+- CLI arguments: https://docs.blender.org/manual/en/latest/advanced/command_line/arguments.html
 
 **Key Details:**
 - Searches for Blender in `C:\Program Files\Blender Foundation\Blender X.X\`
@@ -135,40 +140,30 @@ These colors appear on: status badges, action buttons, progress bars, submit but
 - Script configures: output path, format, resolution, samples, denoiser, GPU device
 - Script handles both single frame and animation renders
 
-**Common Issues:**
+**Known Issues:**
 - Denoiser names must be normalized between Wain's display names and Blender's internal names
 - `use_compositing` and `use_sequencer` settings can affect render output
 - Frame range must be set correctly for animation vs. still renders
 
-### Marmoset Toolbag Engine
+---
+
+### Marmoset Toolbag
 
 **Architecture:** CLI rendering via `toolbag.exe -hide <script.py>` with Marmoset's Python API
 
-**Python API Reference:** https://www.marmoset.co/python/reference5.html
+**Official Documentation:**
+- Python API reference: https://marmoset.co/python/reference.html
+- Python scripting tutorial: https://marmoset.co/posts/python-scripting-toolbag/
 
-**CRITICAL — renderCamera() API (TB4/TB5):**
-```python
-mset.renderCamera(path='', width=-1, height=-1, sampling=-1,
-                  transparency=False, camera='', viewportPass='')
-```
-- Parameter is `sampling` (NOT `samples`)
-- `camera` accepts camera name string directly (no need for separate `setCamera()`)
-- `viewportPass` uses **Title Case** names from Toolbag's Component View dropdown (e.g., `'Normals'`, `'Wireframe'`, `'Depth'`)
-- Beauty pass = empty string `""` (renders "Full Quality")
-- Unrecognized pass names silently fall back to Full Quality
+**⚠ CRITICAL — Known API Limitations:**
 
-**Render Pass Management:**
-- `mset.RenderPassOptions()` is instantiable — can create new pass configs
-- `RenderPassOptions.renderPass` (str) — pass name, `RenderPassOptions.enabled` (bool)
-- `RenderObject.renderPasses` is a mutable list — supports `append()` and direct assignment
-- **Passes must be registered** in the RenderObject before `renderCamera(viewportPass=...)` will recognize them
-- Pass names: "Full Quality" (beauty), "Normals", "Depth", "Wireframe", "Ambient Occlusion", "Lighting (Direct)", etc.
+1. **`rp.enabled` is IGNORED** — Marmoset's API cannot selectively enable/disable individual render passes. Setting `rp.enabled = False` has no effect.
+2. **`viewportPass` parameter behavior:** `renderCamera()` requires **LOWERCASE** pass names (e.g., `'normals'` not `'Normals'`), even though the scene stores them in title case.
+3. **Beauty pass workaround:** For beauty, use empty string `""` as the viewportPass.
+4. **Multi-pass strategy:** Call `renderImages()` which outputs ALL passes, then **filter/delete unwanted files** after rendering. This is the only reliable method.
+5. **`renderCamera()` for turntable:** Even with lowercase pass names, turntable renders may silently output beauty pass instead of the requested pass. The render-all-then-filter strategy is more reliable.
 
-**Known API Limitations:**
-1. **`renderCamera()` for turntable:** May silently output beauty pass instead of the requested pass. Use `renderImages()` then filter for reliability.
-2. **Unrecognized viewportPass names** silently fall back to "Full Quality" (beauty) — no error raised.
-
-**Subprocess Flags — CRITICAL:**
+**⚠ Subprocess Flags — CRITICAL:**
 ```python
 # CORRECT — for GUI apps like Toolbag:
 startupinfo.wShowWindow = 0  # SW_HIDE
@@ -191,11 +186,18 @@ The `-hide` flag tells Toolbag to run headlessly. Don't add extra subprocess fla
 - Extracts: cameras, render passes, resolution, samples, timeline length
 - Probe also uses `-hide` flag
 
-### Chaos Vantage Engine
+---
+
+### Chaos Vantage (v3.1.0)
 
 **Architecture:** UI automation via pywinauto (Vantage 3.x has NO command-line rendering)
 
-**CRITICAL — Vantage 3.1.0 Specifics:**
+**Official Documentation:**
+- No public automation API — Chaos has not published automation docs for Vantage 3.x
+- This is the reason pywinauto UI automation is required
+
+**⚠ CRITICAL — Vantage 3.1.0 Specifics:**
+
 1. **No CLI rendering** — Modern Vantage (3.x) completely removed command-line rendering capabilities
 2. **Must use UI automation** — pywinauto connects to the running Vantage window
 3. **Scene files:** `.vantage` (JSON-based) and `.vrscene` formats
@@ -203,15 +205,27 @@ The `-hide` flag tells Toolbag to run headlessly. Don't add extra subprocess fla
 5. **Window class:** `LavinaMainWindow`
 6. **HQ Render panel:** Opened via Tools menu or Ctrl+R shortcut
 7. **Live Link port:** 20701 (HTTP API, used by 3ds Max/Maya integration)
+8. **Command port:** 20702
 
-**Settings Storage:**
-- Global settings in `vantage.ini` (located in user AppData)
+**Settings Storage (vantage.ini):**
+- Located in user AppData directory
 - Key INI settings:
   - `snapshotResDefault=@Size(3840 2160)` — Resolution
   - `snapshotSamplesDefault=100` — Sample count
-  - `snapshotDenoiserTypeDefault=0` — Denoiser type
+  - `snapshotDenoiserTypeDefault=0` — Denoiser type (0=Intel OIDN, 6=NVIDIA OptiX, etc.)
+  - `snapshotDenoiseDefault=true` — Denoiser enabled
+  - `snapshotDenoiseIntermediateDefault=true` — Denoise during render
+  - `snapshotTemporalDefault=true` — Temporal accumulation
+  - `snapshotLightCacheDefault=true` — Light cache
+  - `snapshotMoblurDefault=false` — Motion blur
   - `sequenceOutputTypesDefault=1` — Output type
+  - `snapshotMultiFileElementSaveDefault=false` — Multi-file element save
+  - `snapshotRenderElementsDefault=0` — Render elements
+  - `liveLinkPort=20701` — Live Link port
+  - `commandPort=20702` — Command port
+  - `startLiveLinkServerWithApp=true` — Auto-start Live Link
 - Frame range is NOT in INI — it's in the `.vantage` scene file or set via UI
+- INI uses Qt serialization format: `@Size(w h)`, `@Point(x y)`, `@Variant(...)` for colors
 
 **Progress Tracking:**
 - Read from Vantage's progress dialog window via UI automation
@@ -225,7 +239,7 @@ The `-hide` flag tells Toolbag to run headlessly. Don't add extra subprocess fla
 - Wait for window to appear before attempting automation
 - Use `subprocess.Popen([vantage_exe, scene_path])` to launch
 
-**Common Issues:**
+**Known Issues:**
 - Progress percentage being interpreted as frame number (causes "Frame 1/300" display)
 - Large jobs showing incorrect frame counts due to parsing failures
 - 2-hour timeout killing valid long renders (remove arbitrary timeouts)
@@ -236,7 +250,8 @@ The `-hide` flag tells Toolbag to run headlessly. Don't add extra subprocess fla
 
 ### NiceGUI + PyQt6
 
-The UI is built with NiceGUI (web framework) displayed in a native window via pywebview/PyQt6. This means:
+The UI is built with NiceGUI (web framework) displayed in a native window via pywebview/PyQt6:
+
 - The UI is HTML/CSS/JS under the hood (Quasar framework)
 - Styling uses Quasar classes and inline CSS
 - Dark theme is configured in `config.py` DARK_THEME dict
@@ -259,14 +274,223 @@ The UI is built with NiceGUI (web framework) displayed in a native window via py
 
 ---
 
+## Feature Roadmap
+
+Based on competitive analysis of Deadline, Royal Render, Muster, Flamenco, OpenCue, CGRU/Afanasy, and others. Features are ordered by implementation priority.
+
+### Phase 1 — High Priority (Next Implementation Cycle)
+
+#### 1.1 GPU/CPU Temperature Monitoring + Auto-Pause
+*Inspired by: Hardware safety requirement (unique differentiator — no indie render manager does this well)*
+
+- Monitor GPU temperature via `nvidia-smi` queries (NVIDIA) or WMI (AMD/Intel)
+- Query is **read-only** — never attempt to modify GPU settings
+- Warning alert at configurable threshold (default ~80°C)
+- Auto-pause render queue at critical threshold (default ~90°C)
+- Auto-resume when temperature drops below safe threshold
+- Monitor: core temp, memory junction temp, hotspot temp where available
+- Display in UI: real-time temp badge, color-coded (green/yellow/red)
+- Log temperature events for diagnostics
+- **Hardware safety note:** Consumer GPU thermal throttling typically begins 90-95°C. Use conservative defaults.
+
+#### 1.2 Render Preview Thumbnails
+*Inspired by: Royal Render's signature feature*
+
+- Render a sample frame first (frame 1 or user-selected) before committing to full sequence
+- Display preview thumbnail in job card UI
+- Catches composition/lighting errors before wasting hours
+- Implementation: render preview frame → save to temp → display in UI → prompt user to continue or cancel
+- Supports all three engines
+
+#### 1.3 Job Dependencies / Chaining
+*Inspired by: Deadline's most-used feature*
+
+- Job B waits for Job A to complete before starting
+- Enable multi-step workflows: Blender animation → Marmoset turntable → video compilation
+- Store dependency as `depends_on_job_id` in job model
+- Queue processor checks dependency status before starting dependent jobs
+- UI: dropdown to select parent job when adding a new job
+
+#### 1.4 Notifications (Discord Webhook / Desktop Toast)
+*Inspired by: Muster notification system, Blender "Render Notifications" extension*
+
+- **Discord webhook:** POST to user-configured webhook URL with JSON payload
+  - Include: job name, engine, status, duration, preview image (if available)
+  - Discord webhook format is compatible with Slack webhooks
+- **Desktop toast:** Windows toast notification via `win10toast` or `plyer`
+- **Sound alert:** Configurable audio cue on completion/failure
+- Trigger events: render complete, render failed, first frame complete, queue empty
+- Settings: per-event toggles, webhook URL configuration
+
+#### 1.5 Estimated Time Remaining
+*Inspired by: GarageFarm, Deadline cost estimation*
+
+- Track average frame render time after first 2-3 frames complete
+- Calculate and display ETA for full job completion
+- Show in job card: "~2h 15m remaining" or "ETA: 11:45 PM"
+- Historical data stored in SQLite for cross-job estimates
+- Per-engine time tracking (Vantage frames are typically much slower than Blender)
+
+### Phase 2 — Network Rendering
+
+#### 2.1 Server Mode + REST API
+- Expose NiceGUI on `0.0.0.0:8080` for network access
+- REST API endpoints for job CRUD, worker registration, status queries
+- SQLite shared database (REST API approach, not file-based sharing)
+- Authentication for network access
+
+#### 2.2 Worker Mode + Job Claiming
+- Headless worker mode for render nodes
+- Workers poll server for available jobs
+- Atomic job claiming to prevent double-assignment
+- Heartbeat system (30-second intervals, 2-minute stale timeout)
+- Scene files accessed via UNC network paths (`\\server\projects\`)
+
+#### 2.3 Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────┐
+│         MAIN WORKSTATION (Server + Worker)       │
+│         Wain UI + SQLite job database            │
+│         http://your-pc:8080                      │
+└────────────────┬────────────────────────────────┘
+                 │
+      ┌──────────┼──────────┐
+      ▼          ▼          ▼
+  ┌────────┐ ┌────────┐ ┌────────┐
+  │Worker 2│ │Worker 3│ │Worker 4│  ... (5+ nodes)
+  │headless│ │headless│ │headless│
+  └────────┘ └────────┘ └────────┘
+```
+
+#### 2.4 Network Implementation Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 2.1 | Server mode + REST API + SQLite | Planned |
+| Phase 2.2 | Worker mode + job claiming | Planned |
+| Phase 2.3 | Frame splitting + engine routing | Planned |
+| Phase 2.4 | Windows service + auto-reconnection | Planned |
+
+### Phase 3 — Medium Priority Features
+
+#### 3.1 Priority Levels with Weighted Scheduling
+*Inspired by: Deadline weighted scheduling*
+
+- Simple tier system: Low / Normal / High / Critical
+- Higher priority preempts lower at next frame boundary (never mid-frame)
+- For network mode: priority affects which worker claims which job first
+
+#### 3.2 Auto-Retry on Failure with Error Detection
+*Inspired by: Royal Render philosophy — "A job isn't done when frames are sent, it's done when all frames are on your hard drive"*
+
+- Auto-retry failed frames (configurable 1-3 attempts)
+- Detect common error patterns: OOM, missing texture, GPU crash, disk full
+- Flag auto-retried jobs differently than user-cancelled jobs
+- Track retry count per frame
+
+#### 3.3 Post-Render Actions / Scripts
+*Inspired by: Deadline post-job scripts*
+
+- Run configurable actions after job completion
+- Built-in actions: open output folder, EXR→MP4 conversion, copy to network share
+- Custom script hook: run any `.py` or `.bat` after job finishes
+- Actions configured per-job or as global defaults
+
+#### 3.4 Scene Validation / Pre-flight Check
+*Inspired by: RebusFarm RANCHecker*
+
+- Verify before rendering: scene file exists, output path writable, engine executable found, sufficient disk space
+- Engine-specific checks: Blender scene probing, Marmoset scene parsing, Vantage window detection
+- Block job submission if validation fails (with clear error message)
+- Prevents queue-clogging errors
+
+#### 3.5 Job History / Statistics
+*Inspired by: All commercial render managers*
+
+- Track: average frame time per engine, total render hours, jobs completed/failed
+- Store in SQLite (already available)
+- Display in UI: stats dashboard or summary panel
+- Used for ETA calculations (feeds into Feature 1.5)
+
+### Phase 4 — Lower Priority / Network Phase Features
+
+#### 4.1 Frame Slicing / Tile Rendering
+*Inspired by: Muster*
+
+- Split single high-res still across multiple machines (network mode)
+- Auto-composite tiles after all complete
+- Relevant for 8K+ architectural visualization renders
+
+#### 4.2 "Nimby" Mode (Not In My BackYard)
+*Inspired by: CGRU/Afanasy*
+
+- Render only when artist is idle (detect mouse/keyboard inactivity)
+- Pause gracefully when artist returns to workstation
+- Perfect for workstations doubling as render nodes in network mode
+
+#### 4.3 Wake-on-LAN
+*Inspired by: Royal Render, CGRU*
+
+- Wake sleeping render nodes when jobs are queued
+- Shut down nodes when idle (configurable timeout)
+- Power savings for network render farm
+
+#### 4.4 Integrated Output Viewer
+*Inspired by: Muster*
+
+- Built-in thumbnail browser for rendered output
+- Lightweight: click-to-open per frame in system default viewer
+- Show render pass strips for multi-pass jobs
+
+### Features to AVOID (Out of Scope)
+
+These features add enterprise complexity without benefiting Wain's target market:
+
+- Multi-facility cloud bridging (Deadline + Hammerspace)
+- LDAP / Active Directory integration
+- Complex pool/group management (overkill for indie scale)
+- Multi-region rendering (AWS Deadline Cloud)
+- Kubernetes/container orchestration
+
+---
+
+## Competitive Positioning
+
+### Target Market
+
+Wain targets indie 3D artists, visualization studios, architectural firms, game asset creators, and product visualization companies as an alternative to expensive enterprise solutions.
+
+### Pricing Strategy
+
+| Tier | Price | Target |
+|------|-------|--------|
+| Indie | $59-79 | Freelancers |
+| Studio | $149-199 | Small studios (2-10 seats) |
+| Enterprise | $499+ | Large teams |
+
+### Key Differentiators vs. Competition
+
+| Feature | Wain | Deadline | Royal Render | Flamenco |
+|---------|------|----------|--------------|----------|
+| Setup complexity | Minutes | Hours/Days | Hours | Medium |
+| GPU temp monitoring | ✅ Planned | ❌ | ❌ | ❌ |
+| Engine-aware UI | ✅ Native | Plugin-based | Plugin-based | Blender only |
+| Indie pricing | ✅ $59+ | Free (AWS lock-in) | ~$125/node | Free (OSS) |
+| Pipeline TD required | ❌ No | ✅ Yes | Minimal | Minimal |
+| Vantage support | ✅ Native | ❌ | ❌ | ❌ |
+
+---
+
 ## Development Workflow
 
 ### Before Making Changes
 
-1. **Read this entire CLAUDE.md first**
-2. **Check the current version** in `config.py`
-3. **Understand what's working** — don't break functioning engines while fixing another
-4. **Test all three engines** after any cross-cutting changes
+1. **Read the Critical Rules section** at the top of this file
+2. **Search past project chats** for context on what you're modifying
+3. **Check the current version** in `config.py`
+4. **Understand what's working** — don't break functioning engines while fixing another
+5. **Test all three engines** after any cross-cutting changes
 
 ### Making Changes
 
@@ -287,6 +511,7 @@ The UI is built with NiceGUI (web framework) displayed in a native window via py
 | Render script permissions | Write temp scripts to `%TEMP%`, not project directory |
 | Denoiser mismatch | Use normalization dicts in config.py |
 | Version mismatch | Update ALL THREE version locations |
+| Hardware damage risk | Never modify GPU settings, always use read-only monitoring |
 
 ### Debugging Tips
 
@@ -295,60 +520,12 @@ The UI is built with NiceGUI (web framework) displayed in a native window via py
 - **Vantage:** Check if pywinauto can find the window — run standalone test script first
 - **All engines:** Check `wain_render_log.txt` for error details
 
----
+### File Format Standards
 
-## Network Rendering (Future — Phase 2+)
-
-### Planned Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│         MAIN WORKSTATION (Server + Worker)   │
-│         Wain UI + SQLite job database        │
-│         http://your-pc:8080                  │
-└────────────────┬────────────────────────────┘
-                 │
-      ┌──────────┼──────────┐
-      ▼          ▼          ▼
-  ┌────────┐ ┌────────┐ ┌────────┐
-  │Worker 2│ │Worker 3│ │Worker 4│  ... (5+ nodes)
-  │headless│ │headless│ │headless│
-  └────────┘ └────────┘ └────────┘
-```
-
-### Key Design Decisions
-
-- Single user, same engines on all machines
-- Shared SQLite database (REST API approach, not file-based)
-- Workers poll server for available jobs
-- Atomic job claiming to prevent double-assignment
-- Heartbeat system (30-second intervals, 2-minute stale timeout)
-- Scene files accessed via UNC network paths (`\\server\projects\`)
-- NiceGUI already web-based — expose on `0.0.0.0:8080` for network access
-
-### Implementation Phases
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 1 | Server mode + REST API + SQLite | Planned |
-| Phase 2 | Worker mode + job claiming | Planned |
-| Phase 3 | Frame splitting + engine routing | Planned |
-| Phase 4 | Windows service + auto-reconnection | Planned |
-| Phase 5 | Job dependencies + notifications | Planned |
-
----
-
-## Market Context
-
-Wain targets indie 3D artists, visualization studios, architectural firms, game asset creators, and product visualization companies. Pricing strategy:
-
-| Tier | Price | Target |
-|------|-------|--------|
-| Indie | $59-79 | Freelancers |
-| Studio | $149-199 | Small studios (2-10 seats) |
-| Enterprise | $499+ | Large teams |
-
-Competitive advantages over Deadline: modern UI, simpler setup, lightweight, engine-aware, indie pricing.
+- Config file: `wain_config.json`
+- Output formats vary by engine (PNG, JPEG, EXR, TIFF, TGA)
+- Temp scripts go to `%TEMP%` directory to avoid permission issues
+- Progress tracking uses JSON files in `%TEMP%`
 
 ---
 
@@ -382,7 +559,7 @@ nicegui, PyQt6, PyQt6-WebEngine, qtpy, Pillow, pywebview, pywinauto
 
 ## Iteration History
 
-This project has been developed iteratively across multiple chat sessions (ITT01 → ITT04-Native and beyond). Key milestones:
+Key milestones from iterative development across multiple chat sessions:
 
 - **v1.0** — Monolithic single-file render manager
 - **v1.1** — Modular architecture refactor (package structure)
@@ -392,6 +569,6 @@ This project has been developed iteratively across multiple chat sessions (ITT01
 - **v2.9** — Vantage UI automation integration
 - **v2.14** — Marmoset subprocess flag fix (CREATE_NO_WINDOW → SW_HIDE)
 - **v2.15** — Vantage progress tracking fixes (high water mark, frame vs percentage)
-- **v2.15.64** — Current version
+- **v2.15.64** — Current version + competitive research + feature roadmap
 
 **Always search past project context before making changes to maintain continuity.**

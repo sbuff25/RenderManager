@@ -362,6 +362,10 @@ def skip_existing_handler(scene, depsgraph):
                 
                 env = os.environ.copy()
                 env['PYTHONIOENCODING'] = 'utf-8'
+                # Remove Wain's Qt/Chromium vars so they don't interfere
+                for key in ['QTWEBENGINE_CHROMIUM_FLAGS', 'QT_QUICK_BACKEND',
+                            'QTWEBENGINE_DISABLE_SANDBOX', 'QT_API', 'PYWEBVIEW_GUI']:
+                    env.pop(key, None)
                 
                 self.current_process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 

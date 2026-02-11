@@ -7,7 +7,7 @@ Entry point for running as a package: python -m wain
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.15.65 - Comprehensive audit, bug fixes, and optimizations
+v2.18.0 - Network stability: token auth, auto-reconnect, connection status UI
 
 https://github.com/sbuff25/RenderManager
 """
@@ -27,8 +27,12 @@ import sys
 import threading
 
 # ============================================================================
-# QtWebEngine configuration
+# QtWebEngine GPU configuration
+# Disable GPU hardware acceleration in QtWebEngine to prevent conflicts
+# with render engines (Vantage, Toolbag) that need full GPU access.
+# UI smoothness is achieved via CSS/JS optimizations instead.
 # ============================================================================
+os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing'
 os.environ['QTWEBENGINE_DISABLE_SANDBOX'] = '1'
 
 # Check if native mode is available
@@ -43,7 +47,7 @@ try:
     import webview
     
     HAS_NATIVE_MODE = True
-    print("Native mode: PyQt6 + WebEngine + qtpy available")
+    print("Native mode: PyQt6 + WebEngine + qtpy available (GPU reserved for render engines)")
 except ImportError as e:
     print(f"Native mode unavailable ({e}) - will use browser mode")
 
@@ -84,6 +88,10 @@ def parse_args():
     parser.add_argument(
         '--path-map', type=str, default=None,
         help='Path remapping for worker mode. Comma-separated (e.g., F:=Z:,E:=E:)',
+    )
+    parser.add_argument(
+        '--token', type=str, default=None,
+        help='API token for worker authentication (shown when server starts)',
     )
     parser.add_argument(
         '--debug', action='store_true',
@@ -247,54 +255,94 @@ def _configure_native_window():
 
 
 # ============================================================================
-# MODE: APP (unified standalone + network)
+# MODE: STANDALONE (existing behavior, no changes)
 # ============================================================================
-def run_app(args):
-    """Run Wain — unified mode with optional network support."""
-    from wain.config import DATABASE_FILE, NETWORK_DEFAULT_PORT
+def run_standalone():
+    """Run Wain in standalone mode — existing single-machine behavior."""
+    mode = "Desktop (Native)" if HAS_NATIVE_MODE else "Browser"
+    print(f"Starting Wain ({mode} Mode)...")
+    print(f"Python: {sys.version}")
+
+    if HAS_NATIVE_MODE:
+        print("Using NiceGUI with PyQt6/pywebview backend")
+    else:
+        print("Running in browser mode")
+        print("Open http://localhost:8080 if browser doesn't open automatically")
+
+    _assets_dir, favicon_path = _setup_assets()
+
+    if HAS_NATIVE_MODE:
+        _configure_native_window()
+        print("Starting UI (native mode)...")
+        ui.run(
+            title='Wain',
+            favicon=favicon_path,
+            dark=True,
+            reload=False,
+            native=True,
+            window_size=(1200, 850),
+            fullscreen=False,
+            reconnect_timeout=0,
+            show=True,
+        )
+    else:
+        print("Starting UI (browser mode)...")
+        ui.run(
+            title='Wain',
+            favicon=favicon_path,
+            dark=True,
+            reload=False,
+            native=False,
+            port=8080,
+            show=True,
+        )
+
+
+# ============================================================================
+# MODE: SERVER (UI + REST API + SQLite + local rendering)
+# ============================================================================
+def run_server(args):
+    """Run Wain in network server mode with REST API."""
+    from wain.config import DATABASE_FILE, NETWORK_DEFAULT_PORT, AUTH_TOKEN_FILE
+    from wain.network.auth import load_or_create_token
     from wain.network.database import JobDatabase
     from wain.network.server import register_api_routes
 
     port = args.port or NETWORK_DEFAULT_PORT
 
-    mode = "Desktop (Native)" if HAS_NATIVE_MODE else "Browser"
-    print(f"Starting Wain ({mode})...")
+    print(f"Starting Wain Server (Network Mode)...")
     print(f"Python: {sys.version}")
+    print(f"API will be available at http://0.0.0.0:{port}/api/")
 
-    # Always create database (lightweight — just creates file + tables if needed)
+    # Initialize database
     db = JobDatabase(DATABASE_FILE)
     print(f"[Wain] Database: {os.path.abspath(DATABASE_FILE)}")
 
-    # Determine if network mode should be on:
-    # --network flag takes priority, then saved preference from config
-    network_on = args.network or getattr(render_app, '_config_network_mode', False)
+    # Load or generate API authentication token
+    api_token = load_or_create_token(AUTH_TOKEN_FILE)
+    print(f"[Wain] API Token: {api_token}")
+    print(f"[Wain] Workers must use: --token {api_token}")
 
-    if network_on:
-        # Import existing jobs from JSON if database is empty
-        existing = db.get_all_jobs()
-        if not existing:
-            from wain.config import CONFIG_FILE
-            if os.path.isfile(CONFIG_FILE):
-                count = db.import_from_json(CONFIG_FILE)
-                if count > 0:
-                    print(f"[Wain] Imported {count} job(s) from {CONFIG_FILE}")
-        render_app.enable_network_mode(db)
+    # Import existing jobs from JSON if database is empty
+    existing = db.get_all_jobs()
+    if not existing:
+        from wain.config import CONFIG_FILE
+        if os.path.isfile(CONFIG_FILE):
+            count = db.import_from_json(CONFIG_FILE)
+            if count > 0:
+                print(f"[Wain] Imported {count} job(s) from {CONFIG_FILE}")
 
-    # Store db reference so the settings toggle can enable network mode later
-    render_app._db_instance = db
+    # Enable network mode on the render app
+    render_app.enable_network_mode(db)
 
-    # Always register API routes (guarded by network_mode check inside)
-    register_api_routes(app, db, render_app)
-
-    # Bind to 0.0.0.0 only when explicitly requested via --network flag
-    host = '0.0.0.0' if args.network else 'localhost'
+    # Register REST API routes (with auth token)
+    register_api_routes(app, db, render_app, api_token=api_token)
 
     _assets_dir, favicon_path = _setup_assets()
 
-    net_label = "Network" if network_on else "Standalone"
     if HAS_NATIVE_MODE:
         _configure_native_window()
-        print(f"Starting UI (native, {net_label}, port {port})...")
+        print(f"Starting UI (native + network mode, port {port})...")
         ui.run(
             title='Wain',
             favicon=favicon_path,
@@ -306,10 +354,10 @@ def run_app(args):
             reconnect_timeout=0,
             show=True,
             port=port,
-            host=host,
+            host='0.0.0.0',
         )
     else:
-        print(f"Starting UI (browser, {net_label}, port {port})...")
+        print(f"Starting UI (browser + network mode, port {port})...")
         ui.run(
             title='Wain',
             favicon=favicon_path,
@@ -317,7 +365,7 @@ def run_app(args):
             reload=False,
             native=False,
             port=port,
-            host=host,
+            host='0.0.0.0',
             show=True,
         )
 
@@ -350,6 +398,7 @@ def run_worker(args):
         server_url=args.server,
         worker_id=args.worker_id,
         path_maps=path_maps or None,
+        api_token=args.token,
     )
     client.run()
 
@@ -363,8 +412,10 @@ def run():
 
     if args.worker:
         run_worker(args)
+    elif args.network:
+        run_server(args)
     else:
-        run_app(args)
+        run_standalone()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

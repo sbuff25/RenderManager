@@ -307,13 +307,20 @@ main()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0
 
+            # Clean environment: remove Wain's Qt/Chromium vars
+            clean_env = os.environ.copy()
+            for key in ['QTWEBENGINE_CHROMIUM_FLAGS', 'QT_QUICK_BACKEND',
+                        'QTWEBENGINE_DISABLE_SANDBOX', 'QT_API', 'PYWEBVIEW_GUI']:
+                clean_env.pop(key, None)
+
             result = subprocess.run(
                 [toolbag_exe, '-hide', probe_script_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 startupinfo=startupinfo,
                 creationflags=0,
-                timeout=30
+                timeout=30,
+                env=clean_env
             )
 
             print(f"[Marmoset] Probe exit code: {result.returncode}")
@@ -413,12 +420,20 @@ main()
                     self._log(f"Command: {' '.join(cmd)}")
                     self._log(f"Starting Toolbag...")
 
+                    # Clean environment: remove Wain's Qt/Chromium vars
+                    # so they don't interfere with Toolbag's own GPU usage
+                    clean_env = os.environ.copy()
+                    for key in ['QTWEBENGINE_CHROMIUM_FLAGS', 'QT_QUICK_BACKEND',
+                                'QTWEBENGINE_DISABLE_SANDBOX', 'QT_API', 'PYWEBVIEW_GUI']:
+                        clean_env.pop(key, None)
+
                     self.current_process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         startupinfo=startupinfo,
-                        creationflags=creation_flags
+                        creationflags=creation_flags,
+                        env=clean_env
                     )
 
                     self._log(f"Started Toolbag PID: {self.current_process.pid}")
@@ -549,7 +564,14 @@ main()
                         self._cleanup()
                         return
 
+                    # Read final progress and update job before completing
                     final_status = self._read_progress_file()
+                    if final_status:
+                        if final_status.get("total_passes"):
+                            job.total_passes = final_status["total_passes"]
+                        if final_status.get("pass_num"):
+                            job.current_pass_num = final_status["pass_num"]
+
                     if final_status and final_status.get("status") == "complete":
                         on_complete()
                     elif final_status and final_status.get("status") == "error":
@@ -650,7 +672,7 @@ def _progress_writer():
                     json.dump(state, f)
             except Exception:
                 pass
-        time.sleep(0.5)
+        time.sleep(0.2)
 
 _writer_thread = threading.Thread(target=_progress_writer, daemon=True)
 _writer_thread.start()

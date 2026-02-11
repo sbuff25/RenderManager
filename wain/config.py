@@ -12,7 +12,7 @@ ASSET_VERSION = "v11"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.17.0"
+APP_VERSION = "2.18.0"
 CONFIG_FILE = "wain_config.json"
 
 # Required Python version
@@ -116,6 +116,14 @@ WORKER_STALE_TIMEOUT = 120          # seconds before worker is considered dead
 WORKER_POLL_INTERVAL = 5            # seconds between job polling
 PROGRESS_REPORT_INTERVAL = 2        # minimum seconds between progress API calls
 DATABASE_FILE = "wain_jobs.db"
+
+# Authentication
+AUTH_TOKEN_FILE = "wain_auth_token.txt"  # File storing the server API token
+
+# Worker reconnection
+WORKER_RECONNECT_MAX_RETRIES = 0        # 0 = infinite retries
+WORKER_RECONNECT_BASE_DELAY = 2         # seconds (doubles each attempt, caps at 60s)
+WORKER_RECONNECT_MAX_DELAY = 60         # maximum backoff delay in seconds
 
 # Blender denoiser options - maps display name to internal Blender value
 BLENDER_DENOISERS = {

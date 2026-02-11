@@ -315,11 +315,11 @@ class RenderApp:
                     except Exception: pass
         
         if self.current_job is None:
+            # In network mode, workers handle all rendering — server is coordinator only
+            if self.network_mode:
+                return
             for job in self.jobs:
                 if job.status == "queued":
-                    # In network mode, only render jobs targeted to local or any
-                    if self.network_mode and job.target_worker and job.target_worker != "local":
-                        continue
                     self.start_render(job)
                     break
     
@@ -334,7 +334,7 @@ class RenderApp:
         self.current_job = job
         job.status = "rendering"
         self.render_start_time = datetime.now()
-        
+
         start_frame = job.frame_start
         if job.is_animation and job.current_frame > 0:
             start_frame = job.current_frame + 1

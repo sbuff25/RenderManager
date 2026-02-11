@@ -816,6 +816,60 @@ def _render_with_render_object(render_obj, pass_names, total_passes):
     except Exception as e:
         log(f"WARNING: Could not fully configure RenderObject output: {{e}}")
 
+    # Configure camera on the RenderObject so renderImages() uses the right one
+    if CAMERA_NAME:
+        try:
+            cam_obj = mset.findObject(CAMERA_NAME)
+            if cam_obj and hasattr(render_obj, 'cameras'):
+                ro_cameras = list(render_obj.cameras)
+                log(f"RenderObject has {{len(ro_cameras)}} camera(s):")
+                for idx, rc in enumerate(ro_cameras):
+                    rc_name = getattr(rc.camera, 'name', '?') if hasattr(rc, 'camera') else '?'
+                    rc_en = getattr(rc, 'enabled', '?')
+                    log(f"  [{{idx}}] name='{{rc_name}}' enabled={{rc_en}}")
+
+                matched = False
+                for rc in ro_cameras:
+                    try:
+                        rc_cam_name = getattr(rc.camera, 'name', '')
+                        if rc_cam_name == CAMERA_NAME:
+                            rc.enabled = True
+                            matched = True
+                            log(f"Enabled RenderObject camera: {{rc_cam_name}}")
+                        else:
+                            rc.enabled = False
+                    except Exception:
+                        pass
+                if not matched:
+                    log(f"Camera '{{CAMERA_NAME}}' not found in RenderObject cameras")
+                    # Try to create a new camera entry — class may be RenderCamera or RenderCameraOptions
+                    added = False
+                    for cls_name in ('RenderCamera', 'RenderCameraOptions'):
+                        cls = getattr(mset, cls_name, None)
+                        if cls:
+                            try:
+                                new_rc = cls()
+                                new_rc.camera = cam_obj
+                                new_rc.enabled = True
+                                ro_cameras.append(new_rc)
+                                render_obj.cameras = ro_cameras
+                                log(f"Added camera via mset.{{cls_name}}()")
+                                added = True
+                                break
+                            except Exception as e2:
+                                log(f"mset.{{cls_name}}() failed: {{e2}}")
+                    if not added:
+                        log("WARNING: Could not add camera — rendering with default")
+                        for rc in ro_cameras:
+                            try:
+                                rc.enabled = True
+                            except Exception:
+                                pass
+            elif cam_obj:
+                log("RenderObject has no 'cameras' attribute — relying on mset.setCamera()")
+        except Exception as e:
+            log(f"WARNING: Could not configure RenderObject camera: {{e}}")
+
     # Read existing passes from the RenderObject
     existing_names = set()
     existing_list = list(render_obj.renderPasses)

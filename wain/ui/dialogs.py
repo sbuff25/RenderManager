@@ -555,6 +555,18 @@ async def show_edit_job_dialog(job):
                     value=form['output_format'], label='Format'
                 ).bind_value(form, 'output_format').classes('w-28')
 
+            # Camera dropdown — start with current value, probe scene in background
+            current_cam = form['camera'] or 'Scene Default'
+            camera_options = [current_cam] if current_cam != 'Scene Default' else ['Scene Default']
+
+            def _on_camera_change(e):
+                form['camera'] = e.value
+
+            edit_camera_select = ui.select(
+                camera_options, value=current_cam, label='Camera',
+                on_change=_on_camera_change,
+            ).classes('w-full')
+
             with ui.row().classes('w-full items-center gap-2'):
                 ui.number('Width', value=form['res_width'], min=1).bind_value(form, 'res_width').classes('w-24')
                 ui.label('x').classes('text-gray-400')
@@ -704,8 +716,21 @@ async def show_edit_job_dialog(job):
                     else:
                         job.engine_settings = {'use_custom_settings': False}
 
+                job.camera = form.get('camera', '')
+
                 render_app.save_config()
+                if render_app.network_mode and render_app.db:
+                    render_app.db.update_job(job.id,
+                        name=job.name, file_path=job.file_path,
+                        output_folder=job.output_folder, output_name=job.output_name,
+                        output_format=job.output_format,
+                        res_width=job.res_width, res_height=job.res_height,
+                        is_animation=job.is_animation,
+                        frame_start=job.frame_start, frame_end=job.frame_end,
+                        camera=job.camera, overwrite_existing=job.overwrite_existing,
+                        engine_settings=job.engine_settings)
                 render_app.log(f"Updated: {job.name}")
+                ui.notify('Job updated', type='positive')
                 if render_app.queue_container:
                     render_app.queue_container.refresh()
                 dialog.close()
@@ -727,7 +752,15 @@ async def show_edit_job_dialog(job):
                 job.total_passes = 0
                 job.pass_total_frames = 0
                 job.status_message = ""
+                job.assigned_to = None
                 render_app.save_config()
+                if render_app.network_mode and render_app.db:
+                    render_app.db.update_job(job.id,
+                        status='queued', progress=0,
+                        current_frame=0, rendering_frame=0,
+                        error_message='', accumulated_seconds=0,
+                        elapsed_time='', assigned_to=None)
+                ui.notify('Job resubmitted', type='positive')
                 if render_app.queue_container:
                     render_app.queue_container.refresh()
                 if render_app.stats_container:
@@ -739,6 +772,29 @@ async def show_edit_job_dialog(job):
                 ui.button('Save', on_click=save_changes).style(f'background-color: {accent_color} !important;')
     
     dialog.open()
+
+    # Probe scene cameras in background after dialog is fully built
+    async def _probe_cameras():
+        engine = render_app.engine_registry.get(job.engine_type)
+        if not engine or not form['file_path']:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            info = await loop.run_in_executor(
+                None, lambda: engine.get_scene_info(form['file_path']))
+        except Exception:
+            return
+        cameras = info.get('cameras', [])
+        if cameras:
+            edit_camera_select.options = cameras
+            if form['camera'] in cameras:
+                edit_camera_select.value = form['camera']
+            else:
+                edit_camera_select.value = cameras[0]
+                form['camera'] = cameras[0]
+            edit_camera_select.update()
+
+    asyncio.create_task(_probe_cameras())
 
 
 async def show_settings_dialog():

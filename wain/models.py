@@ -145,27 +145,6 @@ class RenderJob:
 
     @property
     def samples_display(self) -> str:
-        if self.engine_type == "marmoset":
-            if self.current_pass_num > 0 and self.total_passes > 0:
-                completed_passes = self.current_pass_num - 1
-                pct = min(int((completed_passes / self.total_passes) * 100), 99)
-                return f"Frame {pct}%"
-            return ""
-        
-        if self.engine_type == "vantage":
-            if self.current_sample > 0 and self.total_samples > 0:
-                pct = min(int((self.current_sample / self.total_samples) * 100), 99)
-                return f"Frame {pct}%"
-            return ""
-        
-        if self.current_sample > 0 and self.total_samples > 0:
-            if self.total_tiles > 1:
-                total_work = self.total_tiles * self.total_samples
-                completed_work = (self.current_tile * self.total_samples) + self.current_sample
-                pct = min(int((completed_work / total_work) * 100), 99)
-            else:
-                pct = min(int((self.current_sample / self.total_samples) * 100), 99)
-            return f"Frame {pct}%"
         return ""
     
     @property

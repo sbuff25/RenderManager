@@ -772,9 +772,8 @@ def main():
             log("Found RenderObject — using renderImages() pipeline")
             _render_with_render_object(render_obj, pass_names, total_passes)
         else:
-            log("WARNING: No RenderObject found — falling back to renderCamera()")
-            log("Note: Geometry passes (Wireframe, Depth, etc.) may not render correctly")
-            _render_with_camera(pass_names, total_passes)
+            log("ERROR: No RenderObject found in scene — cannot render passes")
+            update_progress("error", 0, 0, 0, "No RenderObject found in scene")
 
     except Exception as e:
         log(f"FATAL ERROR: {{e}}")
@@ -789,15 +788,15 @@ def main():
 
 
 def _render_with_render_object(render_obj, pass_names, total_passes):
-    """Hybrid render: renderImages() for scene passes, renderCamera() fallback.
+    """Render passes using RenderObject.renderImages().
 
-    renderImages() correctly handles ALL pass types that are already
-    configured in the scene's RenderObject (including geometry passes
-    like Wireframe that renderCamera cannot handle).
+    Key discovery: appending RenderPassOptions to renderPasses doesn't
+    integrate them into the pipeline. Full list ASSIGNMENT does:
+        render_obj.renderPasses = [existing + new]  # works
+        render_obj.renderPasses.append(new)          # silently ignored
 
-    For passes NOT already in the scene, renderCamera(viewportPass=...)
-    is used as a fallback (works for lighting/shading passes like AO,
-    Lighting Direct/Indirect, etc.).
+    Also: renderCamera(viewportPass=...) throws "Failed to render image"
+    in -hide mode, so renderImages() is the only reliable method.
     """
     # Create temp directory for renderImages() output
     render_dir = os.path.join(OUTPUT_FOLDER, "_wain_temp")
@@ -817,31 +816,44 @@ def _render_with_render_object(render_obj, pass_names, total_passes):
     except Exception as e:
         log(f"WARNING: Could not fully configure RenderObject output: {{e}}")
 
-    # Build a lookup of passes already in the scene's RenderObject
-    scene_passes = {{}}
+    # Read existing passes from the RenderObject
+    existing_names = set()
+    existing_list = list(render_obj.renderPasses)
+    for rp in existing_list:
+        name = getattr(rp, 'renderPass', '')
+        if name:
+            existing_names.add(name)
+            rp.enabled = False  # Disable all initially
+
+    log(f"Scene has {{len(existing_names)}} pass(es): {{sorted(existing_names)}}")
+
+    # Add missing passes to the list, then ASSIGN the whole list at once
+    # (append doesn't work — only full assignment integrates new passes)
+    added = []
+    for p_name in pass_names:
+        if p_name not in existing_names:
+            try:
+                rpo = mset.RenderPassOptions()
+                rpo.renderPass = p_name
+                rpo.enabled = False
+                existing_list.append(rpo)
+                existing_names.add(p_name)
+                added.append(p_name)
+            except Exception as e:
+                log(f"  Error creating pass '{{p_name}}': {{e}}")
+
+    if added:
+        log(f"Adding {{len(added)}} new pass(es): {{added}}")
+
+    # Full list assignment — this is what makes new passes work
     try:
-        for rp in render_obj.renderPasses:
-            name = getattr(rp, 'renderPass', '')
-            if name:
-                scene_passes[name] = rp
-                rp.enabled = False  # Disable all initially
+        render_obj.renderPasses = existing_list
+        final_names = [getattr(rp, 'renderPass', '') for rp in render_obj.renderPasses]
+        log(f"Assigned renderPasses list ({{len(final_names)}}): {{final_names}}")
     except Exception as e:
-        log(f"Error reading existing passes: {{e}}")
+        log(f"WARNING: List assignment failed: {{e}}")
 
-    log(f"Scene has {{len(scene_passes)}} pass(es): {{sorted(scene_passes.keys())}}")
-
-    # Classify each requested pass
-    ri_passes = []  # Passes to render via renderImages() (exist in scene)
-    rc_passes = []  # Passes to render via renderCamera() (not in scene)
-    for i, p_name in enumerate(pass_names):
-        if p_name in scene_passes:
-            ri_passes.append(i)
-            log(f"  {{p_name}} -> renderImages() (in scene)")
-        else:
-            rc_passes.append(i)
-            log(f"  {{p_name}} -> renderCamera() fallback (not in scene)")
-
-    # === Render each pass ===
+    # === Render each pass one at a time ===
     render_start = time.time()
     success_count = 0
 
@@ -857,6 +869,13 @@ def _render_with_render_object(render_obj, pass_names, total_passes):
             target_name = f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}"
         dst_path = os.path.join(OUTPUT_FOLDER, target_name)
 
+        # Enable only the current pass
+        for rp in render_obj.renderPasses:
+            try:
+                rp.enabled = (getattr(rp, 'renderPass', '') == pass_name)
+            except Exception:
+                pass
+
         # Update progress
         update_progress(
             "rendering",
@@ -867,153 +886,48 @@ def _render_with_render_object(render_obj, pass_names, total_passes):
             pass_num=i + 1,
             total_passes=total_passes,
         )
+        log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}}")
 
-        rendered = False
+        # Record files before rendering
+        try:
+            pre_files = set(os.listdir(render_dir))
+        except Exception:
+            pre_files = set()
 
-        if i in ri_passes:
-            # --- renderImages() path (pass exists in scene) ---
-            log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}} [renderImages]")
+        try:
+            render_obj.renderImages()
+        except Exception as e:
+            log(f"  renderImages() error: {{e}}")
+            continue
 
-            # Enable only this pass
-            for rp in render_obj.renderPasses:
-                try:
-                    rp.enabled = (getattr(rp, 'renderPass', '') == pass_name)
-                except Exception:
-                    pass
+        # Find new file(s)
+        try:
+            post_files = set(os.listdir(render_dir))
+        except Exception:
+            post_files = set()
 
-            # Record files before
+        new_files = sorted(post_files - pre_files)
+
+        if new_files:
+            src_path = os.path.join(render_dir, new_files[0])
             try:
-                pre_files = set(os.listdir(render_dir))
-            except Exception:
-                pre_files = set()
-
-            try:
-                render_obj.renderImages()
+                shutil.move(src_path, dst_path)
+                size = os.path.getsize(dst_path)
+                log(f"  OK: {{target_name}} ({{size:,}} bytes) [from {{new_files[0]}}]")
+                success_count += 1
             except Exception as e:
-                log(f"  renderImages() error: {{e}}")
+                log(f"  Error moving file: {{e}}")
 
-            # Find new file(s)
-            try:
-                post_files = set(os.listdir(render_dir))
-            except Exception:
-                post_files = set()
-
-            new_files = sorted(post_files - pre_files)
-
-            if new_files:
-                src_path = os.path.join(render_dir, new_files[0])
-                try:
-                    shutil.move(src_path, dst_path)
-                    size = os.path.getsize(dst_path)
-                    log(f"  OK: {{target_name}} ({{size:,}} bytes) [from {{new_files[0]}}]")
-                    success_count += 1
-                    rendered = True
-                except Exception as e:
-                    log(f"  Error moving file: {{e}}")
-
-                if len(new_files) > 1:
-                    log(f"  Note: {{len(new_files)}} extra files: {{new_files[1:]}}")
-
-        if not rendered:
-            # --- renderCamera() fallback (pass not in scene, or renderImages failed) ---
-            if i in ri_passes:
-                log(f"  renderImages() produced no output, trying renderCamera()...")
-            else:
-                log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}} [renderCamera]")
-
-            viewport_pass = "" if pass_name == "Full Quality" else pass_name
-
-            try:
-                mset.renderCamera(
-                    path=dst_path,
-                    width=WIDTH,
-                    height=HEIGHT,
-                    sampling=SAMPLES,
-                    transparency=TRANSPARENCY,
-                    camera=CAMERA_NAME if CAMERA_NAME else "",
-                    viewportPass=viewport_pass,
-                )
-
-                if os.path.exists(dst_path):
-                    size = os.path.getsize(dst_path)
-                    log(f"  OK: {{target_name}} ({{size:,}} bytes) [renderCamera]")
-                    success_count += 1
-                else:
-                    log(f"  FAILED: No output for '{{display_name}}' (neither method worked)")
-            except Exception as e:
-                log(f"  renderCamera() error: {{e}}")
+            if len(new_files) > 1:
+                log(f"  Note: extra files: {{new_files[1:]}}")
+        else:
+            log(f"  WARNING: No output file for '{{display_name}}'")
 
     # Clean up temp directory
     try:
         shutil.rmtree(render_dir, ignore_errors=True)
     except Exception:
         pass
-
-    render_time = time.time() - render_start
-    log("")
-    log("=" * 50)
-    log(f"Render complete: {{success_count}}/{{total_passes}} passes in {{render_time:.1f}}s")
-    log("=" * 50)
-
-    if success_count > 0:
-        update_progress("complete", 100, total_passes, total_passes,
-                      pass_name="", pass_num=total_passes, total_passes=total_passes)
-    else:
-        update_progress("error", 0, 0, total_passes,
-                      error="No output files created")
-
-
-def _render_with_camera(pass_names, total_passes):
-    """Fallback: render using renderCamera(viewportPass=...).
-
-    Note: Geometry passes (Wireframe, Depth, Normals, Position) may not
-    produce output with this approach — they require the RenderObject pipeline.
-    """
-    render_start = time.time()
-    success_count = 0
-
-    for i, pass_info in enumerate(PASSES):
-        pass_id = pass_info["id"]
-        pass_name = pass_names[i]
-        display_name = "Beauty" if pass_name == "Full Quality" else pass_name
-
-        if total_passes == 1 and pass_id == "beauty":
-            output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}.{{EXT}}")
-        else:
-            output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}")
-
-        update_progress(
-            "rendering",
-            progress=int((i / total_passes) * 100),
-            current=i,
-            total=total_passes,
-            pass_name=display_name,
-            pass_num=i + 1,
-            total_passes=total_passes,
-        )
-        log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}} -> {{os.path.basename(output_path)}}")
-
-        viewport_pass = "" if pass_name == "Full Quality" else pass_name
-
-        try:
-            mset.renderCamera(
-                path=output_path,
-                width=WIDTH,
-                height=HEIGHT,
-                sampling=SAMPLES,
-                transparency=TRANSPARENCY,
-                camera=CAMERA_NAME if CAMERA_NAME else "",
-                viewportPass=viewport_pass,
-            )
-
-            if os.path.exists(output_path):
-                size = os.path.getsize(output_path)
-                log(f"  Output: {{os.path.basename(output_path)}} ({{size:,}} bytes)")
-                success_count += 1
-            else:
-                log(f"  WARNING: Output file not created for '{{display_name}}'")
-        except Exception as e:
-            log(f"  ERROR rendering '{{display_name}}': {{e}}")
 
     render_time = time.time() - render_start
     log("")

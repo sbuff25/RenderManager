@@ -5,5 +5,5 @@ echo Pulling latest code...
 git pull origin LocalNetworkSuport
 echo.
 echo Starting Wain Worker...
-python -m wain --worker --server 192.168.4.47:8080
+python -m wain --worker --server 192.168.4.47:8080 --token eu161kNOeEngldXmZ_qdXlzpBIYiKyq_ujHsac0g77k
 pause

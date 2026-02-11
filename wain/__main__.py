@@ -337,6 +337,7 @@ def run_server(args):
 
     # Register REST API routes (with auth token)
     register_api_routes(app, db, render_app, api_token=api_token)
+    render_app._api_routes_registered = True
 
     _assets_dir, favicon_path = _setup_assets()
 
@@ -407,12 +408,18 @@ def run_worker(args):
 # ENTRY POINT
 # ============================================================================
 def run():
-    """Main entry point — dispatches to the appropriate mode."""
+    """Main entry point — dispatches to the appropriate mode.
+
+    If the user previously enabled network mode via the settings toggle,
+    the preference is persisted in wain_config.json.  On next launch we
+    honour that preference and start in server mode automatically — no
+    need for the ``--network`` flag.
+    """
     args = parse_args()
 
     if args.worker:
         run_worker(args)
-    elif args.network:
+    elif args.network or getattr(render_app, '_config_network_mode', False):
         run_server(args)
     else:
         run_standalone()

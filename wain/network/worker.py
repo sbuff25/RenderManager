@@ -66,7 +66,7 @@ class WorkerClient:
         self.api_token = api_token or ""
 
         self.engine_registry = EngineRegistry()
-        self.supported_engines = ["blender"]  # Phase 1: Blender only
+        self.supported_engines = ["blender", "marmoset"]
         self.capabilities = self._build_capabilities()
 
         self.running = True
@@ -525,23 +525,27 @@ class WorkerClient:
             self._log(f"[Worker] Job '{job.name or job.id}' paused by server — finishing current frame")
             self._soft_cancel = True
 
-        # If soft cancel is active, wait for current frame to save then stop
-        if self._soft_cancel and msg and "Saved:" in msg:
-            self._log(f"[Worker] Frame saved, stopping render (paused at frame {job.current_frame})")
-            self._flush_log_buffer()
-            # Report final frame position so resume works correctly
-            self._api_call("PUT", f"/api/jobs/{job.id}/progress", {
-                "worker_id": self.worker_id,
-                "current_frame": job.current_frame,
-                "rendering_frame": job.rendering_frame,
-                "status": "paused",
-                "status_message": f"Paused at frame {job.current_frame}",
-            })
-            if self._current_engine:
-                self._current_engine.cancel_render()
-            self._render_result["status"] = "cancelled"
-            self._render_done.set()
-            return
+        # If soft cancel is active, stop the render gracefully
+        if self._soft_cancel:
+            # Blender: wait for current frame to save before stopping
+            # Marmoset: no intermediate save point, cancel immediately
+            can_stop = (job.engine_type != "blender") or (msg and "Saved:" in msg)
+            if can_stop:
+                self._log(f"[Worker] Stopping render (paused at frame {job.current_frame})")
+                self._flush_log_buffer()
+                # Report final position so resume works correctly
+                self._api_call("PUT", f"/api/jobs/{job.id}/progress", {
+                    "worker_id": self.worker_id,
+                    "current_frame": job.current_frame,
+                    "rendering_frame": job.rendering_frame,
+                    "status": "paused",
+                    "status_message": f"Paused at frame {job.current_frame}",
+                })
+                if self._current_engine:
+                    self._current_engine.cancel_render()
+                self._render_result["status"] = "cancelled"
+                self._render_done.set()
+                return
 
         # Throttle API calls
         if now - self._last_progress_report < PROGRESS_REPORT_INTERVAL:
@@ -569,6 +573,9 @@ class WorkerClient:
             "total_samples": job.total_samples,
             "current_tile": job.current_tile,
             "total_tiles": job.total_tiles,
+            "current_pass": job.current_pass,
+            "current_pass_num": job.current_pass_num,
+            "total_passes": job.total_passes,
         })
 
     def _check_cancellation(self, job_id: str) -> bool:
@@ -652,6 +659,16 @@ class WorkerClient:
                 versions = blender.scan_installed_versions()
                 if versions:
                     caps["blender_versions"] = list(versions.keys())
+            except Exception:
+                pass
+
+        # Detect installed Marmoset versions
+        marmoset = self.engine_registry.get("marmoset")
+        if marmoset:
+            try:
+                versions = marmoset.scan_installed_versions()
+                if versions:
+                    caps["marmoset_versions"] = list(versions.keys())
             except Exception:
                 pass
 

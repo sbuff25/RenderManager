@@ -270,8 +270,12 @@ def main_page():
             render_app.log_container = log_display
             log_display()
     
-    # Workers panel (network mode only)
-    if render_app.network_mode:
+    # Workers panel (refreshable — shows/hides based on network mode)
+    @ui.refreshable
+    def network_panel():
+        if not render_app.network_mode:
+            return
+
         with ui.column().classes('w-full gap-2 mt-4'):
             @ui.refreshable
             def workers_section():
@@ -342,11 +346,19 @@ def main_page():
             render_app.workers_container = workers_section
             workers_section()
 
-        # Refresh workers list every 5 seconds
-        ui.timer(5.0, workers_section.refresh)
-        # Sync jobs from database every 2 seconds
-        ui.timer(2.0, render_app.sync_from_db)
+    render_app.network_panel = network_panel
+    network_panel()
 
+    # Periodic timers — callbacks are safe when network mode is off
+    def _periodic_workers_refresh():
+        if render_app.network_mode and render_app.workers_container:
+            try:
+                render_app.workers_container.refresh()
+            except Exception:
+                pass
+
+    ui.timer(5.0, _periodic_workers_refresh)
+    ui.timer(2.0, render_app.sync_from_db)
     ui.timer(0.25, render_app.process_queue)
 
     render_app.log(f"Wain v{APP_VERSION} started")

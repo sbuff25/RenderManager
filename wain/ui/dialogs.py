@@ -793,14 +793,25 @@ async def show_settings_dialog():
                 def toggle_network(e):
                     if e.value:
                         db = getattr(render_app, '_db_instance', None) or render_app.db
-                        if db:
-                            render_app.enable_network_mode(db, migrate_jobs=True)
-                        else:
+                        if not db:
                             from wain.config import DATABASE_FILE
                             from wain.network.database import JobDatabase
                             db = JobDatabase(DATABASE_FILE)
                             render_app._db_instance = db
-                            render_app.enable_network_mode(db, migrate_jobs=True)
+                        render_app.enable_network_mode(db, migrate_jobs=True)
+
+                        # Register API routes so local workers can connect immediately
+                        if not getattr(render_app, '_api_routes_registered', False):
+                            from nicegui import app as nicegui_app
+                            from wain.config import AUTH_TOKEN_FILE
+                            from wain.network.auth import load_or_create_token
+                            from wain.network.server import register_api_routes
+
+                            api_token = load_or_create_token(AUTH_TOKEN_FILE)
+                            register_api_routes(nicegui_app, db, render_app, api_token=api_token)
+                            render_app._api_routes_registered = True
+                            render_app.log(f"API token: {api_token}")
+                            render_app.log("Workers use: --token <token>")
                     else:
                         render_app.disable_network_mode()
 
@@ -812,10 +823,15 @@ async def show_settings_dialog():
                     if render_app.stats_container:
                         render_app.stats_container.refresh()
                     network_status_label.refresh()
-                    ui.notify(
-                        'Network mode enabled' if e.value else 'Network mode disabled',
-                        type='positive',
-                    )
+
+                    if e.value:
+                        ui.notify(
+                            'Network mode enabled — restart Wain for workers to connect',
+                            type='positive',
+                            timeout=5000,
+                        )
+                    else:
+                        ui.notify('Network mode disabled', type='positive')
 
                 ui.switch(
                     'Enable Network Mode',

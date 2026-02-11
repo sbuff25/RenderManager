@@ -629,9 +629,11 @@ main()
         # Serialize pass data for the script
         passes_json = json.dumps(render_pass_data)
 
+        render_type = job.get_setting("render_type", "still")
+
         return f'''# Wain Marmoset Multi-Pass Render Script
 # Auto-generated - do not edit
-# Uses RenderObject.renderImages() for reliable multi-pass output.
+# Uses per-pass renderCamera() for accurate progress tracking.
 # See: https://www.marmoset.co/python/reference5.html
 import mset
 import json
@@ -639,7 +641,6 @@ import os
 import sys
 import time
 import threading
-import glob as globmod
 
 SCENE_PATH = r"{scene_path}"
 OUTPUT_FOLDER = r"{output_folder}"
@@ -653,67 +654,16 @@ SAMPLES = {samples}
 TRANSPARENCY = {str(use_transparency)}
 CAMERA_NAME = "{camera_name}"
 PASSES = {passes_json}
+RENDER_TYPE = "{render_type}"
 
-# --- Threaded progress writer with file-watching ---
+# --- Threaded progress writer ---
 _progress_lock = threading.Lock()
 _progress_state = {{}}
 _writer_running = True
-_watch_folder = ""
-_watch_prefix = ""
-_watch_pass_names = []
-_watch_total = 0
-_watch_baseline_files = set()
 
 def _progress_writer():
-    """Write progress JSON and watch output folder for new pass files."""
-    last_detected = 0
+    """Write progress JSON to disk periodically."""
     while _writer_running:
-        # Watch for new output files during renderImages()
-        if _watch_folder and _watch_pass_names:
-            try:
-                current_files = set(os.listdir(_watch_folder))
-                new_files = current_files - _watch_baseline_files
-                # Count new files that match our output prefix
-                new_output_count = 0
-                latest_file = ""
-                for f in sorted(new_files):
-                    if f.startswith(os.path.basename(_watch_prefix)):
-                        new_output_count += 1
-                        latest_file = f
-                if new_output_count > last_detected:
-                    last_detected = new_output_count
-                    completed_pct = int((new_output_count / max(_watch_total, 1)) * 100)
-                    # Try to identify which pass just finished
-                    detected_pass = ""
-                    for pname in _watch_pass_names:
-                        clean = pname.replace(" ", "_").replace("(", "").replace(")", "")
-                        if clean in latest_file or pname in latest_file:
-                            detected_pass = pname
-                            break
-                    # Report the NEXT pass being rendered (completed+1)
-                    # so the monitoring loop's interpolation fills smoothly
-                    next_pass_idx = min(new_output_count, _watch_total - 1)
-                    next_pass_name = _watch_pass_names[next_pass_idx] if next_pass_idx < len(_watch_pass_names) else ""
-                    rendering_pass_num = new_output_count + 1
-                    if rendering_pass_num > _watch_total:
-                        # All done, let the main thread handle completion
-                        rendering_pass_num = _watch_total
-                        next_pass_name = detected_pass or "Finishing..."
-                        completed_pct = 99
-                    with _progress_lock:
-                        _progress_state.update({{
-                            "status": "rendering",
-                            "progress": min(completed_pct, 99),
-                            "current": new_output_count,
-                            "total": _watch_total,
-                            "pass_name": next_pass_name,
-                            "pass_num": rendering_pass_num,
-                            "total_passes": _watch_total,
-                            "timestamp": time.time(),
-                        }})
-            except Exception:
-                pass
-
         with _progress_lock:
             state = _progress_state.copy()
         if state:
@@ -783,24 +733,6 @@ def main():
 
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-        # === Strategy: Use RenderObject.renderImages() ===
-        # renderCamera(viewportPass=...) only works for a few passes.
-        # RenderObject.renderImages() reliably renders ALL configured passes.
-
-        # Find the RenderObject
-        render_obj = None
-        for obj in mset.getAllObjects():
-            if type(obj).__name__ == 'RenderObject':
-                render_obj = obj
-                break
-
-        if not render_obj:
-            log("ERROR: No RenderObject found in scene")
-            update_progress("error", 0, 0, 0, "No RenderObject found")
-            _writer_running = False
-            mset.quit()
-            return
-
         # Build pass name list (use "Full Quality" for beauty)
         pass_names = []
         for p in PASSES:
@@ -809,109 +741,63 @@ def main():
             else:
                 pass_names.append(p["pass"])
 
-        # Configure render passes on the RenderObject:
-        # Replace existing passes with ONLY the ones we want
-        new_passes = []
-        for name in pass_names:
-            rp = mset.RenderPassOptions()
-            rp.renderPass = name
-            rp.enabled = True
-            new_passes.append(rp)
-        render_obj.renderPasses = new_passes
-        log(f"Configured {{len(new_passes)}} render passes: {{pass_names}}")
-
-        # Configure output settings on the RenderObject
-        img_opts = render_obj.images
-        # Set output path to our folder + prefix
-        # renderImages() appends pass name to this path
-        img_opts.outputPath = os.path.join(OUTPUT_FOLDER, OUTPUT_NAME)
-        img_opts.format = FMT
-        img_opts.width = WIDTH
-        img_opts.height = HEIGHT
-        img_opts.samples = SAMPLES
-        img_opts.transparency = TRANSPARENCY
-        img_opts.overwrite = True
-
-        log(f"Output path: {{img_opts.outputPath}}")
-        log(f"Format: {{img_opts.format}}, Size: {{img_opts.width}}x{{img_opts.height}}")
-
-        # Set up file-watching before the blocking render call
-        # This lets the progress writer detect new pass files as they appear
-        global _watch_folder, _watch_prefix, _watch_pass_names, _watch_total, _watch_baseline_files
-        _watch_folder = OUTPUT_FOLDER
-        _watch_prefix = os.path.join(OUTPUT_FOLDER, OUTPUT_NAME)
-        _watch_pass_names = pass_names
-        _watch_total = total_passes
-        try:
-            _watch_baseline_files = set(os.listdir(OUTPUT_FOLDER))
-        except Exception:
-            _watch_baseline_files = set()
-
-        update_progress("rendering", 0, 0, total_passes,
-                      pass_name=pass_names[0] if pass_names else "Rendering",
-                      pass_num=1, total_passes=total_passes)
-
-        # Render all configured passes (blocking call)
-        log("Starting renderImages()...")
+        # === Render each pass individually with renderCamera() ===
+        # This gives accurate per-pass progress updates.
+        # viewportPass uses Title Case names; empty string = beauty (Full Quality).
+        log(f"Rendering {{total_passes}} passes with renderCamera()")
         render_start = time.time()
-        render_obj.renderImages()
-        render_time = time.time() - render_start
-        log(f"renderImages() completed in {{render_time:.1f}}s")
-
-        # Stop file-watching
-        _watch_folder = ""
-        _watch_pass_names = []
-
-        # Check what files were created
-        # renderImages() typically creates files like: {{outputPath}}_{{PassName}}.{{ext}}
-        output_prefix = os.path.join(OUTPUT_FOLDER, OUTPUT_NAME)
-        all_files = globmod.glob(output_prefix + "*")
-        log(f"Output files found: {{len(all_files)}}")
-        for f in sorted(all_files):
-            size = os.path.getsize(f)
-            log(f"  {{os.path.basename(f)}} ({{size:,}} bytes)")
-
-        # Rename files to our naming convention: prefix + pass_id + .ext
         success_count = 0
+
         for i, pass_info in enumerate(PASSES):
             pass_id = pass_info["id"]
-            pass_name_api = pass_names[i]
+            pass_name = pass_names[i]
+            display_name = "Beauty" if pass_name == "Full Quality" else pass_name
 
-            # Look for the file that matches this pass
-            # renderImages() may use various naming patterns
-            found_file = None
-            for f in all_files:
-                basename = os.path.basename(f)
-                # Check if pass name appears in filename
-                if pass_name_api.replace(" ", "_") in basename or pass_name_api.replace(" ", "") in basename or pass_name_api in basename:
-                    found_file = f
-                    break
-
-            if found_file:
-                # Rename to our convention
-                if total_passes == 1 and pass_id == "beauty":
-                    target = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}.{{EXT}}")
-                else:
-                    target = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}")
-
-                if found_file != target:
-                    try:
-                        if os.path.exists(target):
-                            os.unlink(target)
-                        os.rename(found_file, target)
-                        log(f"Renamed: {{os.path.basename(found_file)}} -> {{os.path.basename(target)}}")
-                    except Exception as e:
-                        log(f"Rename failed: {{e}}")
-                        target = found_file
-
-                success_count += 1
-                log(f"Pass '{{pass_name_api}}': {{os.path.basename(target)}}")
+            # Build output path directly (no post-render renaming needed)
+            if total_passes == 1 and pass_id == "beauty":
+                output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}.{{EXT}}")
             else:
-                log(f"WARNING: No output file found for pass '{{pass_name_api}}'")
+                output_path = os.path.join(OUTPUT_FOLDER, f"{{OUTPUT_NAME}}{{pass_id}}.{{EXT}}")
 
+            # Update progress before the blocking renderCamera() call
+            update_progress(
+                "rendering",
+                progress=int((i / total_passes) * 100),
+                current=i,
+                total=total_passes,
+                pass_name=display_name,
+                pass_num=i + 1,
+                total_passes=total_passes,
+            )
+            log(f"Pass {{i+1}}/{{total_passes}}: {{display_name}} -> {{os.path.basename(output_path)}}")
+
+            # viewportPass: empty string = Full Quality (beauty)
+            viewport_pass = "" if pass_name == "Full Quality" else pass_name
+
+            try:
+                mset.renderCamera(
+                    path=output_path,
+                    width=WIDTH,
+                    height=HEIGHT,
+                    sampling=SAMPLES,
+                    transparency=TRANSPARENCY,
+                    camera=CAMERA_NAME if CAMERA_NAME else "",
+                    viewportPass=viewport_pass,
+                )
+
+                if os.path.exists(output_path):
+                    size = os.path.getsize(output_path)
+                    log(f"  Output: {{os.path.basename(output_path)}} ({{size:,}} bytes)")
+                    success_count += 1
+                else:
+                    log(f"  WARNING: Output file not created for pass '{{display_name}}'")
+            except Exception as e:
+                log(f"  ERROR rendering pass '{{display_name}}': {{e}}")
+
+        render_time = time.time() - render_start
         log("")
         log("=" * 50)
-        log(f"Render complete: {{success_count}}/{{total_passes}} passes")
+        log(f"Render complete: {{success_count}}/{{total_passes}} passes in {{render_time:.1f}}s")
         log("=" * 50)
 
         if success_count > 0:
@@ -919,7 +805,7 @@ def main():
                           pass_name="", pass_num=total_passes, total_passes=total_passes)
         else:
             update_progress("error", 0, 0, total_passes,
-                          error="No output files found after renderImages()")
+                          error="No output files created")
 
     except Exception as e:
         log(f"FATAL ERROR: {{e}}")

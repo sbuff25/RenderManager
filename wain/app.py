@@ -53,14 +53,33 @@ class RenderApp:
         self.network_mode = False
         self.load_config()
 
-    def enable_network_mode(self, db):
+    def enable_network_mode(self, db, migrate_jobs=False):
         """Switch to database-backed network mode."""
         self.db = db
         self.network_mode = True
-        # Reload jobs from database instead of JSON
-        self.jobs.clear()
-        self.jobs.extend(db.get_all_jobs())
-        self.log(f"Network mode enabled ({len(self.jobs)} jobs loaded from database)")
+        if migrate_jobs and self.jobs:
+            # Migrate current in-memory jobs to database (UI toggle path)
+            migrated = 0
+            for job in self.jobs:
+                try:
+                    if not db.get_job(job.id):
+                        db.add_job(job)
+                        migrated += 1
+                except Exception:
+                    pass
+            self.log(f"Network mode enabled (migrated {migrated} jobs to database)")
+        else:
+            # Fresh load from database (startup path)
+            self.jobs.clear()
+            self.jobs.extend(db.get_all_jobs())
+            self.log(f"Network mode enabled ({len(self.jobs)} jobs loaded from database)")
+        self.save_config()
+
+    def disable_network_mode(self):
+        """Switch back to standalone JSON-only mode."""
+        self.network_mode = False
+        self.log("Network mode disabled")
+        self.save_config()
     
     def log(self, message: str):
         safe_message = sanitize_to_ascii(message)
@@ -207,6 +226,11 @@ class RenderApp:
                     local_job.accumulated_seconds = db_job.accumulated_seconds
                     local_job.current_sample = db_job.current_sample
                     local_job.total_samples = db_job.total_samples
+                    local_job.current_pass = db_job.current_pass
+                    local_job.current_pass_num = db_job.current_pass_num
+                    local_job.total_passes = db_job.total_passes
+                    local_job.pass_frame = db_job.pass_frame
+                    local_job.pass_total_frames = db_job.pass_total_frames
                     local_job.error_message = db_job.error_message
                     local_job.status_message = db_job.status_message
                     local_job.assigned_to = db_job.assigned_to
@@ -406,7 +430,7 @@ class RenderApp:
     
     def save_config(self):
         # In network mode, persist to JSON as backup but DB is primary
-        data = {"jobs": [{
+        data = {"network_mode": self.network_mode, "jobs": [{
             "id": j.id, "name": j.name, "engine_type": j.engine_type,
             "file_path": j.file_path, "output_folder": j.output_folder,
             "output_name": j.output_name, "output_format": j.output_format,
@@ -432,6 +456,8 @@ class RenderApp:
             try:
                 with open(self.CONFIG_FILE, 'r') as f:
                     data = json.load(f)
+                # Read saved network mode preference (used by __main__.py at startup)
+                self._config_network_mode = data.get("network_mode", False)
                 for jd in data.get("jobs", []):
                     self.jobs.append(RenderJob(
                         id=jd.get("id", str(uuid.uuid4())[:8]),

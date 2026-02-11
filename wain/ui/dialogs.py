@@ -770,8 +770,61 @@ async def show_settings_dialog():
                                 ui.label(p).classes('text-xs text-gray-500 truncate').style('max-width: 350px')
                     else:
                         ui.label('No installations detected').classes('text-sm text-gray-500')
-        
+
+            # Network Mode Section
+            ui.separator()
+            with ui.card().classes('w-full p-3'):
+                with ui.row().classes('items-center gap-2 mb-2'):
+                    ui.icon('lan').classes('text-xl').style('color: #22c55e;')
+                    ui.label('Network Mode').classes('font-bold')
+
+                ui.label(
+                    'Enable to share the render queue with network workers. '
+                    'Jobs will be stored in a SQLite database and a REST API will be available.'
+                ).classes('text-xs text-zinc-400 mb-2')
+
+                @ui.refreshable
+                def network_status_label():
+                    if render_app.network_mode:
+                        ui.label('Workers can connect to this machine on port 8080').classes('text-xs text-green-500')
+                    else:
+                        ui.label('Currently running in standalone mode (JSON-backed)').classes('text-xs text-zinc-500')
+
+                def toggle_network(e):
+                    if e.value:
+                        db = getattr(render_app, '_db_instance', None) or render_app.db
+                        if db:
+                            render_app.enable_network_mode(db, migrate_jobs=True)
+                        else:
+                            from wain.config import DATABASE_FILE
+                            from wain.network.database import JobDatabase
+                            db = JobDatabase(DATABASE_FILE)
+                            render_app._db_instance = db
+                            render_app.enable_network_mode(db, migrate_jobs=True)
+                    else:
+                        render_app.disable_network_mode()
+
+                    # Refresh the network panel in the main UI
+                    if hasattr(render_app, 'network_panel'):
+                        render_app.network_panel.refresh()
+                    if render_app.queue_container:
+                        render_app.queue_container.refresh()
+                    if render_app.stats_container:
+                        render_app.stats_container.refresh()
+                    network_status_label.refresh()
+                    ui.notify(
+                        'Network mode enabled' if e.value else 'Network mode disabled',
+                        type='positive',
+                    )
+
+                ui.switch(
+                    'Enable Network Mode',
+                    value=render_app.network_mode,
+                    on_change=toggle_network,
+                )
+                network_status_label()
+
         with ui.row().classes('w-full justify-end p-4 border-t border-zinc-700'):
             ui.button('Close', on_click=dialog.close).props('flat')
-    
+
     dialog.open()

@@ -24,6 +24,7 @@ if errorlevel 1 (
 REM Check command line arguments
 if "%1"=="--install" goto :install
 if "%1"=="--debug" goto :debug
+if "%1"=="--network" goto :network
 if "%1"=="--help" goto :help
 
 REM Check if all required packages are installed (including pywinauto for Vantage)
@@ -48,6 +49,20 @@ if errorlevel 1 (
     echo An error occurred. Press any key to exit...
     pause >nul
 )
+exit
+
+:network
+REM Network mode - server + REST API + SQLite, console stays open for logs
+echo.
+echo ========================================
+echo  Wain - Network Mode (Server)
+echo ========================================
+echo.
+python -m wain --network %2 %3 %4
+echo.
+echo ========================================
+echo Wain exited. Press any key to close...
+pause >nul
 exit
 
 :debug
@@ -87,10 +102,15 @@ echo  https://github.com/sbuff25/RenderManager
 echo ========================================
 echo.
 echo Usage:
-echo   Wain.bat            Launch Wain (installs deps if needed)
-echo   Wain.bat --debug    Run with console output for debugging
-echo   Wain.bat --install  Force reinstall dependencies
-echo   Wain.bat --help     Show this help message
+echo   Wain.bat              Launch Wain (installs deps if needed)
+echo   Wain.bat --network    Start in network mode (server + REST API)
+echo   Wain.bat --debug      Run with console output for debugging
+echo   Wain.bat --install    Force reinstall dependencies
+echo   Wain.bat --help       Show this help message
+echo.
+echo Network options:
+echo   Wain.bat --network              Use default port (8080)
+echo   Wain.bat --network --port 9090  Use custom port
 echo.
 echo Requirements:
 echo   - Python 3.10 or higher

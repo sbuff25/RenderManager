@@ -24,12 +24,24 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     _start_time = time.time()
 
+    def _require_network_mode() -> Optional[JSONResponse]:
+        """Return 503 if network mode is not active, None otherwise."""
+        if render_app and not render_app.network_mode:
+            return JSONResponse(
+                {"error": "Network mode is not enabled", "hint": "Enable in Settings"},
+                status_code=503,
+            )
+        return None
+
     # ====================================================================
     # Health Check
     # ====================================================================
 
     @nicegui_app.get("/api/status")
     async def api_status(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         jobs = db.get_all_jobs()
         queued = sum(1 for j in jobs if j.status == "queued")
         rendering = sum(1 for j in jobs if j.status in ("rendering", "claimed"))
@@ -53,6 +65,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.get("/api/jobs")
     async def api_list_jobs(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         status = request.query_params.get("status")
         engine_type = request.query_params.get("engine_type")
         limit = int(request.query_params.get("limit", 100))
@@ -65,6 +80,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.post("/api/jobs")
     async def api_create_job(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         try:
             body = await request.json()
         except Exception:
@@ -86,6 +104,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.get("/api/jobs/{job_id}")
     async def api_get_job(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         job = db.get_job(job_id)
         if job is None:
@@ -94,6 +115,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.post("/api/jobs/claim-next")
     async def api_claim_next_job(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         try:
             body = await request.json()
         except Exception:
@@ -121,6 +145,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.post("/api/jobs/{job_id}/claim")
     async def api_claim_job(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         try:
             body = await request.json()
@@ -144,6 +171,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.put("/api/jobs/{job_id}/progress")
     async def api_update_progress(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         try:
             body = await request.json()
@@ -181,6 +211,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.put("/api/jobs/{job_id}/complete")
     async def api_complete_job(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         try:
             body = await request.json()
@@ -204,6 +237,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.put("/api/jobs/{job_id}/error")
     async def api_fail_job(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         try:
             body = await request.json()
@@ -230,6 +266,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
     @nicegui_app.post("/api/jobs/{job_id}/cancel")
     async def api_cancel_job(request: Request) -> JSONResponse:
         """Server requests cancellation of a job being rendered by a worker."""
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         job = db.get_job(job_id)
         if job is None:
@@ -242,6 +281,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
     @nicegui_app.get("/api/jobs/{job_id}/status")
     async def api_job_status(request: Request) -> JSONResponse:
         """Worker polls this to check if its job was cancelled."""
+        guard = _require_network_mode()
+        if guard:
+            return guard
         job_id = request.path_params["job_id"]
         job = db.get_job(job_id)
         if job is None:
@@ -254,6 +296,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.post("/api/workers/heartbeat")
     async def api_worker_heartbeat(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         try:
             body = await request.json()
         except Exception:
@@ -281,6 +326,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
 
     @nicegui_app.get("/api/workers")
     async def api_list_workers(request: Request) -> JSONResponse:
+        guard = _require_network_mode()
+        if guard:
+            return guard
         workers = db.get_workers()
         return JSONResponse({"workers": workers})
 
@@ -291,6 +339,9 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
     @nicegui_app.post("/api/log")
     async def api_worker_log(request: Request) -> JSONResponse:
         """Receive batched log messages from a worker."""
+        guard = _require_network_mode()
+        if guard:
+            return guard
         try:
             body = await request.json()
         except Exception:
@@ -313,6 +364,8 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None):
         """Periodically release jobs from stale workers."""
         while True:
             await asyncio.sleep(60)
+            if not (render_app and render_app.network_mode):
+                continue
             try:
                 released = db.release_stale_claims(WORKER_STALE_TIMEOUT)
                 if released > 0:

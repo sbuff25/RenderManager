@@ -39,6 +39,7 @@ async def show_add_job_dialog():
         'is_animation': False, 'frame_start': 1, 'frame_end': 250,
         'res_width': 1920, 'res_height': 1080, 'base_res_width': 1920, 'base_res_height': 1080,
         'submit_paused': False, 'overwrite_existing': True,
+        'target_worker': '',  # "" = any, "local" = this machine, or worker_id
         # Marmoset-specific
         'render_type': 'still', 'samples': 256, 'render_passes': ['beauty'],
         # Blender-specific
@@ -412,9 +413,17 @@ async def show_add_job_dialog():
             engine_settings_section()
             
             ui.separator()
-            with ui.row().classes('w-full gap-4'):
+            with ui.row().classes('w-full gap-4 items-center'):
                 ui.checkbox('Overwrite Existing', value=True).props('dense').bind_value(form, 'overwrite_existing')
                 ui.checkbox('Submit as Paused').props('dense').bind_value(form, 'submit_paused')
+                if render_app.network_mode and render_app.db:
+                    ui.element('div').classes('flex-1')  # spacer
+                    worker_options = {'': 'Any Worker', 'local': 'Local (This Machine)'}
+                    workers = render_app.db.get_workers()
+                    for w in workers:
+                        if not w.get('is_stale'):
+                            worker_options[w['worker_id']] = w['worker_id']
+                    ui.select(worker_options, value='', label='Render On').props('dense outlined').classes('w-48').bind_value(form, 'target_worker')
         
         with ui.row().classes('w-full justify-end gap-2 p-4 border-t border-zinc-700'):
             ui.button('Cancel', on_click=dialog.close).props('flat')
@@ -469,6 +478,7 @@ async def show_add_job_dialog():
                     overwrite_existing=form.get('overwrite_existing', True),
                     status='paused' if form['submit_paused'] else 'queued',
                     engine_settings=engine_settings,
+                    target_worker=form.get('target_worker', ''),
                 )
                 
                 render_app.add_job(job)

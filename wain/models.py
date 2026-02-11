@@ -5,10 +5,12 @@ Wain Data Models
 Core data structures for render jobs and application settings.
 """
 
+import json
 import os
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 
 
 @dataclass
@@ -50,7 +52,97 @@ class RenderJob:
     total_passes: int = 1
     pass_frame: int = 0
     pass_total_frames: int = 0
-    
+
+    # Network rendering fields
+    assigned_to: Optional[str] = None       # worker_id that claimed this job
+    claimed_at: Optional[str] = None        # ISO timestamp when claimed
+    target_worker: str = ""                 # "" = any, "local" = server only, or worker_id
+    priority: int = 0                       # higher = rendered first
+    created_at: Optional[str] = None        # ISO timestamp
+    updated_at: Optional[str] = None        # ISO timestamp
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dict for API/database use."""
+        return {
+            "id": self.id, "name": self.name, "engine_type": self.engine_type,
+            "file_path": self.file_path, "output_folder": self.output_folder,
+            "output_name": self.output_name, "output_format": self.output_format,
+            "status": self.status, "progress": self.progress,
+            "is_animation": self.is_animation, "frame_start": self.frame_start,
+            "frame_end": self.frame_end, "current_frame": self.current_frame,
+            "rendering_frame": self.rendering_frame, "original_start": self.original_start,
+            "res_width": self.res_width, "res_height": self.res_height,
+            "camera": self.camera, "overwrite_existing": self.overwrite_existing,
+            "engine_settings": self.engine_settings,
+            "start_time": self.start_time, "end_time": self.end_time,
+            "elapsed_time": self.elapsed_time, "accumulated_seconds": self.accumulated_seconds,
+            "error_message": self.error_message, "status_message": self.status_message,
+            "current_sample": self.current_sample, "total_samples": self.total_samples,
+            "current_tile": self.current_tile, "total_tiles": self.total_tiles,
+            "current_pass": self.current_pass, "current_pass_num": self.current_pass_num,
+            "total_passes": self.total_passes, "pass_frame": self.pass_frame,
+            "pass_total_frames": self.pass_total_frames,
+            "assigned_to": self.assigned_to, "claimed_at": self.claimed_at,
+            "target_worker": self.target_worker,
+            "priority": self.priority, "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RenderJob":
+        """Deserialize from API/database dict."""
+        # Parse engine_settings from JSON string if needed
+        es = data.get("engine_settings", {})
+        if isinstance(es, str):
+            try:
+                es = json.loads(es)
+            except (json.JSONDecodeError, TypeError):
+                es = {}
+
+        return cls(
+            id=data.get("id", str(uuid.uuid4())[:8]),
+            name=data.get("name", ""),
+            engine_type=data.get("engine_type", "blender"),
+            file_path=data.get("file_path", ""),
+            output_folder=data.get("output_folder", ""),
+            output_name=data.get("output_name", "render_"),
+            output_format=data.get("output_format", "PNG"),
+            status=data.get("status", "queued"),
+            progress=int(data.get("progress", 0)),
+            is_animation=bool(data.get("is_animation", False)),
+            frame_start=int(data.get("frame_start", 1)),
+            frame_end=int(data.get("frame_end", 250)),
+            current_frame=int(data.get("current_frame", 0)),
+            rendering_frame=int(data.get("rendering_frame", 0)),
+            original_start=int(data.get("original_start", 0)),
+            res_width=int(data.get("res_width", 1920)),
+            res_height=int(data.get("res_height", 1080)),
+            camera=data.get("camera", "Scene Default"),
+            overwrite_existing=bool(data.get("overwrite_existing", True)),
+            engine_settings=es,
+            start_time=data.get("start_time"),
+            end_time=data.get("end_time"),
+            elapsed_time=data.get("elapsed_time", ""),
+            accumulated_seconds=int(data.get("accumulated_seconds", 0)),
+            error_message=data.get("error_message", ""),
+            status_message=data.get("status_message", ""),
+            current_sample=int(data.get("current_sample", 0)),
+            total_samples=int(data.get("total_samples", 0)),
+            current_tile=int(data.get("current_tile", 0)),
+            total_tiles=int(data.get("total_tiles", 1)),
+            current_pass=data.get("current_pass", ""),
+            current_pass_num=int(data.get("current_pass_num", 0)),
+            total_passes=int(data.get("total_passes", 1)),
+            pass_frame=int(data.get("pass_frame", 0)),
+            pass_total_frames=int(data.get("pass_total_frames", 0)),
+            assigned_to=data.get("assigned_to"),
+            claimed_at=data.get("claimed_at"),
+            target_worker=data.get("target_worker", ""),
+            priority=int(data.get("priority", 0)),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
+
     @property
     def samples_display(self) -> str:
         if self.engine_type == "marmoset":

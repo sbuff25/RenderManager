@@ -7,7 +7,19 @@
       "WebFetch(domain:www.marmoset.co)",
       "WebFetch(domain:docs.marmoset.co)",
       "Bash(\"C:\\\\Program Files\\\\Marmoset\\\\Toolbag 5\\\\toolbag.exe\" -hide \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\debug_marmoset_api.py\")",
-      "Bash(\"C:\\\\Program Files\\\\Marmoset\\\\Toolbag 5\\\\toolbag.exe\" -hide \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\debug_viewport_passes.py\")"
+      "Bash(\"C:\\\\Program Files\\\\Marmoset\\\\Toolbag 5\\\\toolbag.exe\" -hide \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\debug_viewport_passes.py\")",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git remote set-url origin https://sbuff25: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@github.com/sbuff25/RenderManager.git)",
+      "Bash(git remote set-url:*)",
+      "Bash(git rm:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "Bash(explorer \"F:\\\\Work\\\\unFoldAssets\\\\ArchwayFillerProps\\\\Ref\\\\Test\")",
+      "Bash(git -C \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\" add .gitignore WorkerStart.bat wain/__main__.py wain/app.py wain/engines/blender.py wain/network/server.py wain/network/worker.py wain/ui/main.py)",
+      "Bash(git -C \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\" push origin LocalNetworkSuport)",
+      "Bash(git -C \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\" status --short)"
     ]
   }
 }

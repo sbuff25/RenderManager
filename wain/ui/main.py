@@ -114,12 +114,14 @@ def main_page():
                 
                 if (fill) fill.dataset.target = progress;
                 if (label) label.textContent = progress + '%';
-                if (info && elapsed) {
+                if (info) {
                     var baseText = info.textContent;
                     if (renderProgress) baseText = baseText.replace(renderProgress.textContent, '').trim();
-                    if (baseText.includes('Time:')) baseText = baseText.replace(/Time: [0-9:]+/, 'Time: ' + elapsed);
-                    else baseText = baseText + ' | Time: ' + elapsed;
-                    
+                    if (elapsed) {
+                        if (baseText.includes('Time:')) baseText = baseText.replace(/Time: [0-9:]+/, 'Time: ' + elapsed);
+                        else baseText = baseText + ' | Time: ' + elapsed;
+                    }
+
                     var progressParts = [];
                     if (passDisplay && passDisplay.length > 0) progressParts.push(passDisplay);
                     if (framesDisplay && framesDisplay.length > 0 && framesDisplay.includes('/')) {
@@ -268,10 +270,58 @@ def main_page():
             render_app.log_container = log_display
             log_display()
     
+    # Workers panel (network mode only)
+    if render_app.network_mode:
+        with ui.row().classes('w-full items-center justify-between mt-4'):
+            ui.label('Workers').classes('text-xl font-bold')
+
+            @ui.refreshable
+            def workers_section():
+                workers = render_app.db.get_workers() if render_app.db else []
+                active = [w for w in workers if not w.get("is_stale")]
+                ui.label(f'{len(active)} active').classes('text-gray-400')
+
+                if not workers:
+                    with ui.card().classes('w-full'):
+                        with ui.column().classes('w-full items-center py-4'):
+                            ui.icon('devices').classes('text-4xl text-gray-600')
+                            ui.label('No workers connected').classes('text-gray-400 mt-2')
+                            ui.label('Start a worker with: python -m wain --worker --server <this-ip>:8080').classes('text-gray-500 text-sm')
+                else:
+                    for w in workers:
+                        with ui.card().classes('w-full'):
+                            with ui.row().classes('w-full items-center gap-3 px-4 py-2'):
+                                is_stale = w.get("is_stale", False)
+                                w_status = w.get("status", "offline")
+                                if is_stale:
+                                    icon_color = '#ef4444'
+                                elif w_status == "rendering":
+                                    icon_color = '#22c55e'
+                                else:
+                                    icon_color = '#a1a1aa'
+                                ui.icon('computer').style(f'color: {icon_color}; font-size: 24px;')
+                                with ui.column().classes('gap-0 flex-1'):
+                                    ui.label(w.get("worker_id", "Unknown")).classes('font-bold text-white')
+                                    ui.label(f'{w.get("hostname", "")} ({w.get("ip_address", "")})').classes('text-sm text-gray-400')
+                                status_text = "STALE" if is_stale else w_status.upper()
+                                ui.label(status_text).classes('text-sm text-gray-400')
+                                if w.get("current_job_id"):
+                                    ui.label(f'Job: {w["current_job_id"]}').classes('text-xs text-gray-500')
+
+            render_app.workers_container = workers_section
+            workers_section()
+
+        # Refresh workers list every 5 seconds
+        ui.timer(5.0, workers_section.refresh)
+        # Sync jobs from database every 2 seconds
+        ui.timer(2.0, render_app.sync_from_db)
+
     ui.timer(0.25, render_app.process_queue)
-    
+
     render_app.log(f"Wain v{APP_VERSION} started")
-    
+    if render_app.network_mode:
+        render_app.log("Network mode enabled — REST API active")
+
     for engine in render_app.engine_registry.get_all():
         if engine.is_available:
             render_app.log(f"Found: {engine.version_display}")

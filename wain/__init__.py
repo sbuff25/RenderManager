@@ -8,10 +8,10 @@ Supports Blender, Marmoset Toolbag, and Chaos Vantage with pause/resume capabili
 Built with NiceGUI + pywebview (Qt backend) for native desktop window.
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.16.0 - Marmoset multi-pass rendering and camera detection
+v2.17.0 - Network rendering support (Phase 1 — Blender)
 """
 
-__version__ = "2.16.0"
+__version__ = "2.17.0"
 __author__ = "Spencer"
 __app_name__ = "Wain"
 

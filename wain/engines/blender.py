@@ -220,7 +220,7 @@ print("INFO_END")
         
         fmt = self.OUTPUT_FORMATS.get(job.output_format, "PNG")
         
-        # Stage 1 — Resolve relative paths to absolute and reload missing images
+        # Stage 1 — Resolve relative paths to absolute and force-reload images
         path_resolve_code = '''
 import os as _os
 
@@ -245,27 +245,41 @@ for _col_name, _col in _collections:
             _block.filepath = _abs
             _resolved += 1
     if _resolved:
-        print(f"[Wain] Resolved {{_col_name}}: {{_resolved}} path(s) made absolute")
+        print(f"[Wain] Resolved " + _col_name + ": " + str(_resolved) + " path(s) made absolute")
         _resolved_total += _resolved
 if _resolved_total == 0:
     print("[Wain] All asset paths already absolute")
 
-# Reload images that exist on disk but have no pixel data loaded
-# (--factory-startup can prevent images from being read into memory)
+# Force-reload ALL external images from disk
+# --factory-startup may leave images with has_data=True but pink/invalid pixels
 _reloaded = 0
+_missing = []
 for _img in bpy.data.images:
     if not _img.filepath or _img.source not in ('FILE', 'SEQUENCE'):
         continue
     if hasattr(_img, "packed_file") and _img.packed_file:
         continue
-    if not _img.has_data and _os.path.exists(bpy.path.abspath(_img.filepath)):
+    _abs_path = bpy.path.abspath(_img.filepath)
+    if _os.path.exists(_abs_path):
         try:
             _img.reload()
             _reloaded += 1
-        except Exception:
-            pass
+        except Exception as _e:
+            print("[Wain] WARNING: Failed to reload " + _img.name + ": " + str(_e))
+    else:
+        _missing.append(_img.filepath)
 if _reloaded:
-    print(f"[Wain] Reloaded {{_reloaded}} image(s) from disk")
+    print("[Wain] Reloaded " + str(_reloaded) + " image(s) from disk")
+if _missing:
+    for _mp in _missing:
+        print("[Wain] WARNING: Image file not found: " + _mp)
+
+# Dump all image paths for diagnostics
+for _img in bpy.data.images:
+    if _img.filepath:
+        _abs_path = bpy.path.abspath(_img.filepath)
+        _exists = "OK" if _os.path.exists(_abs_path) else "MISSING"
+        print("[Wain] Image: " + _img.name + " -> " + _abs_path + " [" + _exists + "]")
 '''
 
         # Stage 2 — Drive letter remapping for network renders
@@ -288,12 +302,35 @@ for _from, _to in _path_maps:
                 _block.filepath = _to + _block.filepath[len(_from):]
                 _remapped += 1
 if _remapped > 0:
-    print(f"[Wain] Remapped {{_remapped}} file path(s) across {{len(_path_maps)}} drive mapping(s)")
+    print("[Wain] Remapped " + str(_remapped) + " file path(s) across " + str(len(_path_maps)) + " drive mapping(s)")
+
+# Reload ALL external images after path remapping
+_reloaded_post = 0
+_missing_post = []
+for _img in bpy.data.images:
+    if not _img.filepath or _img.source not in ('FILE', 'SEQUENCE'):
+        continue
+    if hasattr(_img, "packed_file") and _img.packed_file:
+        continue
+    _abs_path = bpy.path.abspath(_img.filepath)
+    if _os.path.exists(_abs_path):
+        try:
+            _img.reload()
+            _reloaded_post += 1
+        except Exception:
+            pass
+    else:
+        _missing_post.append(_img.filepath)
+if _reloaded_post:
+    print("[Wain] Reloaded " + str(_reloaded_post) + " image(s) after path remapping")
+if _missing_post:
+    for _mp in _missing_post:
+        print("[Wain] WARNING: Image not found after remapping: " + _mp)
 '''
 
         base_script = f'''import bpy
 
-# Enable GPU compute device (factory-startup resets to CPU)
+# Ensure GPU compute device is enabled
 if bpy.context.scene.render.engine == 'CYCLES':
     try:
         prefs = bpy.context.preferences.addons['cycles'].preferences
@@ -322,7 +359,33 @@ bpy.context.scene.render.resolution_x = {job.res_width}
 bpy.context.scene.render.resolution_y = {job.res_height}
 bpy.context.scene.render.resolution_percentage = 100
 print(f"[Wain] Resolution set to {{bpy.context.scene.render.resolution_x}}x{{bpy.context.scene.render.resolution_y}}")
-{path_resolve_code}{path_remap_code}'''
+{path_resolve_code}{path_remap_code}
+# --- World / HDRI diagnostics ---
+_world = bpy.context.scene.world
+if _world:
+    print("[Wain] World: " + _world.name)
+    if _world.use_nodes and _world.node_tree:
+        for _node in _world.node_tree.nodes:
+            if _node.type == 'TEX_ENVIRONMENT':
+                if _node.image:
+                    _hdri_path = bpy.path.abspath(_node.image.filepath)
+                    _hdri_ok = "OK" if _os.path.exists(_hdri_path) else "MISSING"
+                    print("[Wain] World HDRI: " + _node.image.name + " -> " + _hdri_path + " [" + _hdri_ok + "]")
+                    if _os.path.exists(_hdri_path):
+                        try:
+                            _node.image.reload()
+                            print("[Wain] World HDRI reloaded")
+                        except Exception as _e:
+                            print("[Wain] WARNING: HDRI reload failed: " + str(_e))
+                    else:
+                        print("[Wain] WARNING: HDRI file not found on disk!")
+                else:
+                    print("[Wain] WARNING: Environment Texture node has no image")
+    else:
+        print("[Wain] World has no node tree (solid color background)")
+else:
+    print("[Wain] WARNING: No World shader assigned to scene")
+'''
         
         if job.is_animation and not job.overwrite_existing:
             ext_map = {"PNG": "png", "JPEG": "jpg", "OPEN_EXR": "exr", "TIFF": "tiff"}
@@ -346,7 +409,7 @@ def skip_existing_handler(scene, depsgraph):
             f.write(script)
         
         output_path = os.path.join(job.output_folder, job.output_name)
-        cmd = [blender_exe, "-b", "--factory-startup", job.file_path, "--python", self.temp_script_path, "-o", output_path, "-F", fmt, "-x", "1"]
+        cmd = [blender_exe, "-b", job.file_path, "--python", self.temp_script_path, "-o", output_path, "-F", fmt, "-x", "1"]
         
         if job.is_animation:
             cmd.extend(["-s", str(start_frame), "-e", str(job.frame_end), "-a"])

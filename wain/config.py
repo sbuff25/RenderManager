@@ -61,6 +61,7 @@ ENGINE_ICONS = {
 
 # Status display configuration
 STATUS_CONFIG = {
+    "preparing": {"color": "blue", "icon": "hourglass_top", "bg": "blue-900"},
     "rendering": {"color": "blue", "icon": "play_circle", "bg": "blue-900"},
     "queued": {"color": "yellow", "icon": "schedule", "bg": "yellow-900"},
     "paused": {"color": "orange", "icon": "pause_circle", "bg": "orange-900"},

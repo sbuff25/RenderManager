@@ -75,12 +75,14 @@ def create_job_card(job):
             
             if job.status == "rendering":
                 ui.button(icon='pause', on_click=lambda j=job: render_app.handle_action('pause', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
+            elif job.status == "preparing":
+                pass  # No play/pause/retry — only delete (below)
             elif job.status in ["queued", "paused"]:
                 ui.button(icon='play_arrow', on_click=lambda j=job: render_app.handle_action('start', j)).props('flat round dense').classes('job-action-btn text-zinc-400')
             elif job.status in ["failed", "completed"]:
                 ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Resubmit')
-            
-            if job.status != "rendering":
+
+            if job.status not in ("rendering", "preparing"):
                 ui.button(icon='edit', on_click=lambda j=job: show_edit_job_dialog(j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Edit')
             
             if job.output_folder:
@@ -128,7 +130,7 @@ def create_job_card(job):
         ''', sanitize=False)
         
         # Status message - shows current activity for rendering jobs
-        if job.status_message and job.status in ["rendering", "queued"]:
+        if job.status_message and job.status in ["rendering", "queued", "preparing"]:
             ui.html(f'''
                 <div id="job-status-msg-{job.id}" class="job-status-message">
                     {job.status_message}

@@ -5,6 +5,7 @@ Wain Application
 Main application state and render queue management.
 """
 
+import asyncio
 import os
 import sys
 import json
@@ -90,6 +91,12 @@ class RenderApp:
         self._log_needs_update = True
     
     def add_job(self, job):
+        # Auto-pack Blender scenes for network rendering
+        needs_packing = (self.network_mode and self.db
+                         and job.engine_type == "blender")
+        if needs_packing:
+            job.status = "preparing"
+
         if self.network_mode and self.db:
             self.db.add_job(job)
         self.jobs.insert(0, job)
@@ -98,6 +105,9 @@ class RenderApp:
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
         if self.job_count_container: self.job_count_container.refresh()
+
+        if needs_packing:
+            asyncio.ensure_future(self._pack_blend_file(job))
     
     def handle_action(self, action: str, job):
         import threading
@@ -127,7 +137,11 @@ class RenderApp:
                                    status_message="Cancelled by server")
             job.status = "paused"
         elif action == "retry":
-            job.status = "queued"
+            # Clean up any previous packed file and restore original path
+            self._cleanup_packed_file(job)
+            job.engine_settings.pop("packed_file_path", None)
+            job.engine_settings.pop("original_file_path", None)
+
             job.assigned_to = None
             job.current_frame = 0
             job.rendering_frame = 0
@@ -146,7 +160,15 @@ class RenderApp:
                 job.progress = int(((job.original_start - 1) / job.frame_end) * 100)
             else:
                 job.progress = 0
+
+            # Re-trigger packing for Blender+network, otherwise just queue
+            if self.network_mode and self.db and job.engine_type == "blender":
+                job.status = "preparing"
+            else:
+                job.status = "queued"
         elif action == "delete":
+            # Clean up any packed file before removing
+            self._cleanup_packed_file(job)
             # Handle engine cleanup
             engine = self.engine_registry.get(job.engine_type)
             if self.current_job and self.current_job.id == job.id:
@@ -187,7 +209,11 @@ class RenderApp:
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
         if self.job_count_container: self.job_count_container.refresh()
-    
+
+        # Trigger async packing for retry in network mode
+        if action == "retry" and self.network_mode and self.db and job.engine_type == "blender":
+            asyncio.ensure_future(self._pack_blend_file(job))
+
     def sync_from_db(self):
         """Sync job state from database (network mode only).
 
@@ -236,6 +262,9 @@ class RenderApp:
                     local_job.assigned_to = db_job.assigned_to
                     if old_status != db_job.status:
                         needs_refresh = True
+                        # Clean up packed file when remote job finishes
+                        if db_job.status in ("completed", "failed"):
+                            self._cleanup_packed_file(local_job)
                     # Push progress to UI for remote jobs
                     if db_job.status == "rendering":
                         self._progress_updates.append((
@@ -405,6 +434,7 @@ class RenderApp:
             job.status = "completed"
             job.progress = 100
             self.current_job = None
+            self._cleanup_packed_file(job)
             self.log(f"Complete: {job.name}")
             if self.network_mode and self.db:
                 self.db.update_job(job.id, status="completed", progress=100,
@@ -417,6 +447,7 @@ class RenderApp:
             job.status = "failed"
             job.error_message = err
             self.current_job = None
+            self._cleanup_packed_file(job)
             self.log(f"Failed: {job.name} - {err}")
             if self.network_mode and self.db:
                 self.db.update_job(job.id, status="failed", error_message=err,
@@ -428,13 +459,96 @@ class RenderApp:
         self._render_finished = False
         engine.start_render(job, start_frame, on_progress, on_complete, on_error, self.log)
     
+    def _cleanup_packed_file(self, job):
+        """Delete the temporary packed .blend file if one exists for this job."""
+        packed_path = job.engine_settings.get("packed_file_path")
+        if packed_path and os.path.isfile(packed_path):
+            try:
+                os.remove(packed_path)
+                self.log(f"Cleaned up packed file: {os.path.basename(packed_path)}")
+            except Exception as e:
+                self.log(f"Warning: Could not delete packed file: {e}")
+        # Restore original file_path if it was swapped
+        original = job.engine_settings.get("original_file_path")
+        if original:
+            job.file_path = original
+
+    async def _pack_blend_file(self, job):
+        """Pack a Blender scene file in the background, then queue the job."""
+        from wain.engines.blender import BlenderEngine
+
+        engine = self.engine_registry.get("blender")
+        if not engine or not isinstance(engine, BlenderEngine):
+            job.status = "failed"
+            job.error_message = "Blender engine not available for packing"
+            self.log(f"Failed to pack: {job.name} — engine not available")
+            if self.network_mode and self.db:
+                self.db.update_job(job.id, status="failed",
+                                   error_message=job.error_message)
+            self._ui_needs_update = True
+            self._render_finished = True
+            return
+
+        packed_path = BlenderEngine.get_packed_path(job.file_path, job.id)
+        job.engine_settings["packed_file_path"] = packed_path
+
+        self.log(f"Packing: {job.name}...")
+        job.status_message = "Packing external assets..."
+        if self.network_mode and self.db:
+            self.db.update_job(job.id, status="preparing",
+                               status_message=job.status_message,
+                               engine_settings=job.engine_settings)
+
+        loop = asyncio.get_event_loop()
+        try:
+            success = await loop.run_in_executor(
+                None, engine.create_packed_copy, job.file_path, packed_path, self.log
+            )
+        except Exception as e:
+            success = False
+            self.log(f"Packing exception: {e}")
+
+        # Check if the job was deleted while we were packing
+        if job not in self.jobs:
+            # Job was removed — clean up packed file if it was created
+            if os.path.isfile(packed_path):
+                try:
+                    os.remove(packed_path)
+                except Exception:
+                    pass
+            return
+
+        if success:
+            job.engine_settings["original_file_path"] = job.file_path
+            job.file_path = packed_path
+            job.status = "queued"
+            job.status_message = ""
+            self.log(f"Packed: {job.name} — ready for network rendering")
+            if self.network_mode and self.db:
+                self.db.update_job(job.id, status="queued", file_path=packed_path,
+                                   status_message="",
+                                   engine_settings=job.engine_settings)
+        else:
+            job.status = "failed"
+            job.error_message = "Failed to pack scene — check Blender installation"
+            job.status_message = ""
+            self.log(f"Failed to pack: {job.name}")
+            if self.network_mode and self.db:
+                self.db.update_job(job.id, status="failed",
+                                   error_message=job.error_message,
+                                   status_message="")
+
+        self.save_config()
+        self._ui_needs_update = True
+        self._render_finished = True
+
     def save_config(self):
         # In network mode, persist to JSON as backup but DB is primary
         data = {"network_mode": self.network_mode, "jobs": [{
             "id": j.id, "name": j.name, "engine_type": j.engine_type,
             "file_path": j.file_path, "output_folder": j.output_folder,
             "output_name": j.output_name, "output_format": j.output_format,
-            "status": j.status if j.status != "rendering" else "paused",
+            "status": j.status if j.status not in ("rendering", "preparing") else "paused",
             "progress": j.progress, "is_animation": j.is_animation,
             "frame_start": j.frame_start, "frame_end": j.frame_end,
             "current_frame": j.current_frame, "rendering_frame": j.rendering_frame,

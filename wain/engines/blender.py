@@ -493,6 +493,124 @@ def skip_existing_handler(scene, depsgraph):
         self.temp_script_path = None
         self.current_process = None
     
+    @staticmethod
+    def get_packed_path(original_path: str, job_id: str) -> str:
+        """Compute the deterministic packed file path for a network render job."""
+        directory = os.path.dirname(original_path)
+        stem = os.path.splitext(os.path.basename(original_path))[0]
+        return os.path.join(directory, f"{stem}_wain_packed_{job_id}.blend")
+
+    def create_packed_copy(self, blend_path: str, packed_path: str, on_log=None) -> bool:
+        """Create a packed copy of a .blend file with all external resources embedded.
+
+        Runs Blender in background mode to pack all external data (textures,
+        HDRIs, fonts, sounds) into the file, then saves to packed_path.
+        The original file is never modified.
+
+        Returns True on success, False on failure.
+        """
+        blender_exe = self.get_best_blender_for_file(blend_path)
+        if not blender_exe:
+            if on_log:
+                on_log("[Wain] No Blender found for packing")
+            return False
+
+        def _log(msg):
+            print(msg)
+            if on_log:
+                on_log(msg)
+
+        packed_escaped = packed_path.replace('\\', '\\\\')
+        script = f'''import bpy
+import sys
+import os
+
+PACKED_PATH = r"{packed_escaped}"
+
+print("[Wain] PACK_START")
+try:
+    # Pack all external resources into the blend file
+    bpy.ops.file.pack_all()
+
+    packed_count = sum(1 for img in bpy.data.images if img.packed_file)
+    total_count = sum(1 for img in bpy.data.images if img.filepath)
+    print("[Wain] Packed " + str(packed_count) + "/" + str(total_count) + " image(s)")
+
+    # Save as a new file — copy=True means Blender does NOT change its
+    # internal "current file" reference, so the original is never touched.
+    bpy.ops.wm.save_as_mainfile(filepath=PACKED_PATH, copy=True)
+    print("[Wain] Saved packed copy: " + PACKED_PATH)
+    print("[Wain] PACK_OK")
+except Exception as e:
+    print("[Wain] PACK_ERROR: " + str(e))
+    sys.exit(1)
+'''
+
+        script_path = os.path.join(tempfile.gettempdir(), f"_wain_pack_{os.getpid()}.py")
+        try:
+            with open(script_path, 'w') as f:
+                f.write(script)
+
+            _log(f"[Wain] Packing: {os.path.basename(blend_path)} -> {os.path.basename(packed_path)}")
+
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            env = os.environ.copy()
+            for key in ['QTWEBENGINE_CHROMIUM_FLAGS', 'QT_QUICK_BACKEND',
+                        'QTWEBENGINE_DISABLE_SANDBOX', 'QT_API', 'PYWEBVIEW_GUI']:
+                env.pop(key, None)
+
+            result = subprocess.run(
+                [blender_exe, "-b", blend_path, "--python", script_path],
+                capture_output=True, timeout=300, startupinfo=startupinfo, env=env,
+            )
+
+            stdout = result.stdout.decode('utf-8', errors='replace')
+
+            # Log relevant lines
+            for line in stdout.split('\n'):
+                line = line.strip()
+                if line.startswith('[Wain]'):
+                    _log(line)
+
+            if "PACK_OK" in stdout and os.path.exists(packed_path):
+                size_mb = os.path.getsize(packed_path) / (1024 * 1024)
+                _log(f"[Wain] Pack complete: {size_mb:.1f} MB")
+                return True
+            else:
+                _log("[Wain] Pack failed — PACK_OK not found in output")
+                # Clean up partial file
+                if os.path.exists(packed_path):
+                    try:
+                        os.remove(packed_path)
+                    except Exception:
+                        pass
+                return False
+
+        except subprocess.TimeoutExpired:
+            _log("[Wain] Pack timed out after 300s")
+            if os.path.exists(packed_path):
+                try:
+                    os.remove(packed_path)
+                except Exception:
+                    pass
+            return False
+        except Exception as e:
+            _log(f"[Wain] Pack error: {e}")
+            if os.path.exists(packed_path):
+                try:
+                    os.remove(packed_path)
+                except Exception:
+                    pass
+            return False
+        finally:
+            if os.path.exists(script_path):
+                try:
+                    os.unlink(script_path)
+                except Exception:
+                    pass
+
     def open_file_in_app(self, file_path: str, version: str = None):
         blender_exe = self.get_best_blender_for_file(file_path)
         if blender_exe:

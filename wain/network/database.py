@@ -128,10 +128,24 @@ class JobDatabase:
                   AND assigned_to IS NOT NULL
             """)
             released = cursor.rowcount
+
+            # Fail any jobs stuck in "preparing" (packing was interrupted)
+            cursor2 = conn.execute("""
+                UPDATE jobs
+                SET status = 'failed',
+                    error_message = 'Packing interrupted by server restart — please retry',
+                    status_message = '',
+                    updated_at = datetime('now')
+                WHERE status = 'preparing'
+            """)
+            interrupted = cursor2.rowcount
+
             conn.commit()
 
         if released > 0:
             print(f"[Wain] Server restart: re-queued {released} in-flight job(s)")
+        if interrupted > 0:
+            print(f"[Wain] Server restart: failed {interrupted} job(s) stuck in preparing")
 
     # ========================================================================
     # Job CRUD

@@ -297,6 +297,85 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None,
         db.update_job(job_id, status="paused", status_message="Cancelled by server")
         return JSONResponse({"ok": True, "status": "paused"})
 
+    @nicegui_app.post("/api/jobs/{job_id}/pause")
+    async def api_pause_job(request: Request) -> JSONResponse:
+        """Pause a queued or rendering job."""
+        err = _check_auth(request)
+        if err:
+            return err
+        job_id = request.path_params["job_id"]
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+        if job.status not in ("queued", "rendering", "claimed"):
+            return JSONResponse(
+                {"error": f"Cannot pause job with status '{job.status}'"},
+                status_code=409,
+            )
+        db.update_job(job_id, status="paused",
+                      status_message="Paused from Wain Mobile")
+        if render_app:
+            # Sync to desktop app so engine gets stopped
+            for j in render_app.jobs:
+                if j.id == job_id:
+                    render_app.handle_action("pause", j)
+                    break
+        return JSONResponse({"ok": True, "status": "paused"})
+
+    @nicegui_app.post("/api/jobs/{job_id}/resume")
+    async def api_resume_job(request: Request) -> JSONResponse:
+        """Resume a paused job by re-queuing it."""
+        err = _check_auth(request)
+        if err:
+            return err
+        job_id = request.path_params["job_id"]
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+        if job.status != "paused":
+            return JSONResponse(
+                {"error": f"Cannot resume job with status '{job.status}'"},
+                status_code=409,
+            )
+        db.update_job(job_id, status="queued", assigned_to=None,
+                      status_message="Resumed from Wain Mobile")
+        if render_app:
+            for j in render_app.jobs:
+                if j.id == job_id:
+                    render_app.handle_action("start", j)
+                    break
+        return JSONResponse({"ok": True, "status": "queued"})
+
+    @nicegui_app.post("/api/jobs/{job_id}/requeue")
+    async def api_requeue_job(request: Request) -> JSONResponse:
+        """Requeue a failed or completed job — resets all progress."""
+        err = _check_auth(request)
+        if err:
+            return err
+        job_id = request.path_params["job_id"]
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+        if job.status not in ("failed", "completed", "paused"):
+            return JSONResponse(
+                {"error": f"Cannot requeue job with status '{job.status}'"},
+                status_code=409,
+            )
+        db.update_job(
+            job_id, status="queued", progress=0, assigned_to=None,
+            current_frame=0, rendering_frame=0, error_message="",
+            accumulated_seconds=0, elapsed_time="", current_sample=0,
+            total_samples=0, current_pass="", current_pass_num=0,
+            pass_frame=0, total_passes=0, pass_total_frames=0,
+            status_message="Requeued from Wain Mobile",
+        )
+        if render_app:
+            for j in render_app.jobs:
+                if j.id == job_id:
+                    render_app.handle_action("retry", j)
+                    break
+        return JSONResponse({"ok": True, "status": "queued"})
+
     @nicegui_app.get("/api/jobs/{job_id}/status")
     async def api_job_status(request: Request) -> JSONResponse:
         """Worker polls this to check if its job was cancelled."""

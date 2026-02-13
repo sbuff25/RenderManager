@@ -1,11 +1,19 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+} from 'react-native';
 import { Colors, engineColor, statusColor } from '../theme/colors';
 import { ProgressBar } from './ProgressBar';
 import type { RenderJob } from '../api/types';
 
+export type JobAction = 'pause' | 'resume' | 'requeue';
+
 interface Props {
   job: RenderJob;
+  onAction?: (action: JobAction, job: RenderJob) => void;
 }
 
 function framesDisplay(job: RenderJob): string {
@@ -30,7 +38,38 @@ function samplesDisplay(job: RenderJob): string {
   return '';
 }
 
-export function JobCard({ job }: Props) {
+/** Returns the available actions for a job based on its current status. */
+function actionsForStatus(status: string): JobAction[] {
+  switch (status.toLowerCase()) {
+    case 'rendering':
+    case 'claimed':
+      return ['pause'];
+    case 'queued':
+      return ['pause'];
+    case 'paused':
+      return ['resume', 'requeue'];
+    case 'failed':
+      return ['requeue'];
+    case 'completed':
+      return ['requeue'];
+    default:
+      return [];
+  }
+}
+
+const ACTION_LABELS: Record<JobAction, string> = {
+  pause: 'Pause',
+  resume: 'Resume',
+  requeue: 'Requeue',
+};
+
+const ACTION_COLORS: Record<JobAction, string> = {
+  pause: Colors.paused,
+  resume: Colors.positive,
+  requeue: Colors.queued,
+};
+
+export function JobCard({ job, onAction }: Props) {
   const eColor = engineColor(job.engine_type);
   const sColor = statusColor(job.status);
   const frames = framesDisplay(job);
@@ -38,6 +77,7 @@ export function JobCard({ job }: Props) {
   const fileName = job.file_path
     ? job.file_path.split(/[\\/]/).pop() || ''
     : '';
+  const actions = onAction ? actionsForStatus(job.status) : [];
 
   return (
     <View style={[styles.card, { borderLeftColor: eColor }]}>
@@ -100,6 +140,27 @@ export function JobCard({ job }: Props) {
         <Text style={styles.error} numberOfLines={2}>
           {job.error_message}
         </Text>
+      ) : null}
+
+      {/* Action buttons */}
+      {actions.length > 0 ? (
+        <View style={styles.actionsRow}>
+          {actions.map((action) => {
+            const color = ACTION_COLORS[action];
+            return (
+              <TouchableOpacity
+                key={action}
+                style={[styles.actionBtn, { backgroundColor: color + '1A' }]}
+                activeOpacity={0.7}
+                onPress={() => onAction?.(action, job)}
+              >
+                <Text style={[styles.actionText, { color }]}>
+                  {ACTION_LABELS[action]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       ) : null}
     </View>
   );
@@ -189,5 +250,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.negative,
     marginTop: 4,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    justifyContent: 'flex-end',
+  },
+  actionBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  actionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });

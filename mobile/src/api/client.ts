@@ -84,6 +84,21 @@ export class WainApiClient {
   async cancelJob(jobId: string): Promise<void> {
     await this.request('POST', `/api/jobs/${jobId}/cancel`);
   }
+
+  /** Pause a queued or rendering job */
+  async pauseJob(jobId: string): Promise<void> {
+    await this.request('POST', `/api/jobs/${jobId}/pause`);
+  }
+
+  /** Resume a paused job (re-queues it) */
+  async resumeJob(jobId: string): Promise<void> {
+    await this.request('POST', `/api/jobs/${jobId}/resume`);
+  }
+
+  /** Requeue a failed/completed job — resets all progress */
+  async requeueJob(jobId: string): Promise<void> {
+    await this.request('POST', `/api/jobs/${jobId}/requeue`);
+  }
 }
 
 /** Singleton instance — configured from Settings screen */

@@ -2,6 +2,7 @@ import React, { useCallback, useContext } from 'react';
 import {
   View,
   Text,
+  Alert,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -14,6 +15,7 @@ import { StatCard } from '../components/StatCard';
 import { JobCard } from '../components/JobCard';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 import { SettingsContext } from '../SettingsContext';
+import type { JobAction } from '../components/JobCard';
 import type { RenderJob, ServerStatus, JobsResponse } from '../api/types';
 
 interface DashboardData {
@@ -22,6 +24,21 @@ interface DashboardData {
 }
 
 const POLL_INTERVAL = 3000; // 3 seconds
+
+const ACTION_CONFIRM: Record<JobAction, { title: string; msg: (name: string) => string }> = {
+  pause: {
+    title: 'Pause Job',
+    msg: (name) => `Pause "${name}"? A rendering job will be stopped at the current frame.`,
+  },
+  resume: {
+    title: 'Resume Job',
+    msg: (name) => `Resume "${name}"? It will be re-queued for rendering.`,
+  },
+  requeue: {
+    title: 'Requeue Job',
+    msg: (name) => `Requeue "${name}"? All progress will be reset.`,
+  },
+};
 
 export function DashboardScreen() {
   const { settings } = useContext(SettingsContext);
@@ -50,6 +67,34 @@ export function DashboardScreen() {
   const queued = jobs.filter((j) => j.status === 'queued').length;
   const completed = jobs.filter((j) => j.status === 'completed').length;
   const failed = jobs.filter((j) => j.status === 'failed').length;
+
+  const executeAction = useCallback(async (action: JobAction, job: RenderJob) => {
+    try {
+      switch (action) {
+        case 'pause':
+          await apiClient.pauseJob(job.id);
+          break;
+        case 'resume':
+          await apiClient.resumeJob(job.id);
+          break;
+        case 'requeue':
+          await apiClient.requeueJob(job.id);
+          break;
+      }
+      refresh();
+    } catch (err: any) {
+      Alert.alert('Action Failed', err?.message || 'Could not perform action.');
+    }
+  }, [refresh]);
+
+  const handleAction = useCallback((action: JobAction, job: RenderJob) => {
+    const confirm = ACTION_CONFIRM[action];
+    const name = job.name || job.id;
+    Alert.alert(confirm.title, confirm.msg(name), [
+      { text: 'Cancel', style: 'cancel' },
+      { text: confirm.title, onPress: () => executeAction(action, job) },
+    ]);
+  }, [executeAction]);
 
   const renderHeader = () => (
     <View>
@@ -95,7 +140,9 @@ export function DashboardScreen() {
       <FlatList
         data={jobs}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <JobCard job={item} />}
+        renderItem={({ item }) => (
+          <JobCard job={item} onAction={handleAction} />
+        )}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmpty}
         contentContainerStyle={styles.list}

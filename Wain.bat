@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+pushd "%~dp0" || (echo ERROR: Cannot access "%~dp0" & pause & exit /b 1)
 
 REM ========================================
 REM  Wain - Render Queue Manager Launcher

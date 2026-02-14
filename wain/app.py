@@ -344,11 +344,8 @@ class RenderApp:
                     except Exception: pass
         
         if self.current_job is None:
-            # In network mode, workers handle all rendering — server is coordinator only
-            if self.network_mode:
-                return
             for job in self.jobs:
-                if job.status == "queued":
+                if job.status == "queued" and not job.assigned_to:
                     self.start_render(job)
                     break
     
@@ -363,6 +360,12 @@ class RenderApp:
         self.current_job = job
         job.status = "rendering"
         self.render_start_time = datetime.now()
+
+        # Mark as rendering in DB so workers don't claim it
+        if self.network_mode and self.db:
+            self.db.update_job(job.id, status="rendering",
+                               assigned_to="server",
+                               start_time=datetime.now().isoformat())
 
         start_frame = job.frame_start
         if job.is_animation and job.current_frame > 0:

@@ -45,7 +45,9 @@
       "Bash(image\" in -hide mode, so renderImages\\(\\) is the only reliable method.\n\nVerified all pass types \\(Wireframe, Depth, Normals, etc.\\) render correctly\nwith this approach via direct Toolbag testing.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(cmd /c:*)",
       "Bash(del \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\_test_passes.py\" \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\_test_minimal.py\" \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\_test_minimal2.py\")",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)"
     ]
   }
 }

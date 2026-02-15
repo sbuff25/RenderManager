@@ -61,6 +61,11 @@ class RenderJob:
     created_at: Optional[str] = None        # ISO timestamp
     updated_at: Optional[str] = None        # ISO timestamp
 
+    # Distributed rendering fields
+    parent_job_id: Optional[str] = None     # If set, this is a chunk of a parent job
+    is_distributed: bool = False            # True on the parent job only
+    chunk_count: int = 0                    # Number of chunks (parent only)
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict for API/database use."""
         return {
@@ -86,6 +91,9 @@ class RenderJob:
             "target_worker": self.target_worker,
             "priority": self.priority, "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "parent_job_id": self.parent_job_id,
+            "is_distributed": self.is_distributed,
+            "chunk_count": self.chunk_count,
         }
 
     @classmethod
@@ -141,6 +149,9 @@ class RenderJob:
             priority=int(data.get("priority", 0)),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
+            parent_job_id=data.get("parent_job_id"),
+            is_distributed=bool(data.get("is_distributed", False)),
+            chunk_count=int(data.get("chunk_count", 0)),
         )
 
     @property

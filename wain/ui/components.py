@@ -63,6 +63,9 @@ def create_job_card(job):
                 ui.label(job.name or "Untitled").classes('font-bold')
                 ui.label(job.file_name).classes('text-sm text-gray-400')
             
+            if job.is_distributed:
+                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style('background-color: rgba(34,197,94,0.15); color: #22c55e;'):
+                    ui.label(f'{job.chunk_count} CHUNKS')
             if job.status == "rendering":
                 with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style(f'background-color: rgba(255,255,255,0.1); color: {engine_color};'):
                     ui.label(job.status.upper())
@@ -75,14 +78,12 @@ def create_job_card(job):
             
             if job.status == "rendering":
                 ui.button(icon='pause', on_click=lambda j=job: render_app.handle_action('pause', j)).props('flat round dense').classes(f'job-action-btn-engine job-action-btn-engine-{job.engine_type}')
-            elif job.status == "preparing":
-                pass  # No play/pause/retry — only delete (below)
             elif job.status in ["queued", "paused"]:
                 ui.button(icon='play_arrow', on_click=lambda j=job: render_app.handle_action('start', j)).props('flat round dense').classes('job-action-btn text-zinc-400')
             elif job.status in ["failed", "completed"]:
                 ui.button(icon='refresh', on_click=lambda j=job: render_app.handle_action('retry', j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Resubmit')
 
-            if job.status not in ("rendering", "preparing"):
+            if job.status != "rendering":
                 ui.button(icon='edit', on_click=lambda j=job: show_edit_job_dialog(j)).props('flat round dense').classes('job-action-btn text-zinc-400').tooltip('Edit')
             
             if job.output_folder:
@@ -109,6 +110,8 @@ def create_job_card(job):
         
         engine_name = engine.name if engine else job.engine_type
         info_parts = [engine_name, job.resolution_display]
+        if job.assigned_to:
+            info_parts.append(f"Worker: {job.assigned_to}")
         if job.elapsed_time:
             info_parts.append(f"Time: {job.elapsed_time}")
         
@@ -130,7 +133,7 @@ def create_job_card(job):
         ''', sanitize=False)
         
         # Status message - shows current activity for rendering jobs
-        if job.status_message and job.status in ["rendering", "queued", "preparing"]:
+        if job.status_message and job.status in ["rendering", "queued"]:
             ui.html(f'''
                 <div id="job-status-msg-{job.id}" class="job-status-message">
                     {job.status_message}

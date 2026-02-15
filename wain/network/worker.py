@@ -632,9 +632,12 @@ class WorkerClient:
         """Remap a file path using the configured path mappings."""
         if not self.path_maps or not path:
             return path
+        # Normalize to backslashes for consistent comparison
+        norm_path = path.replace('/', '\\')
         for from_prefix, to_prefix in self.path_maps:
-            if path.upper().startswith(from_prefix.upper()):
-                return to_prefix + path[len(from_prefix):]
+            norm_from = from_prefix.replace('/', '\\')
+            if norm_path.upper().startswith(norm_from.upper()):
+                return to_prefix + norm_path[len(norm_from):]
         return path
 
     def _get_local_ip(self) -> str:

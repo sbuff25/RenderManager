@@ -39,6 +39,7 @@ async def show_add_job_dialog():
         'is_animation': False, 'frame_start': 1, 'frame_end': 250,
         'res_width': 1920, 'res_height': 1080, 'base_res_width': 1920, 'base_res_height': 1080,
         'submit_paused': False, 'overwrite_existing': True,
+        'distribute': False,  # Split animation across multiple workers
         'target_worker': '',  # "" = any, "local" = this machine, or worker_id
         # Marmoset-specific
         'render_type': 'still', 'samples': 256, 'render_passes': ['beauty'],
@@ -417,6 +418,7 @@ async def show_add_job_dialog():
                 ui.checkbox('Overwrite Existing', value=True).props('dense').bind_value(form, 'overwrite_existing')
                 ui.checkbox('Submit as Paused').props('dense').bind_value(form, 'submit_paused')
                 if render_app.network_mode and render_app.db:
+                    ui.checkbox('Distribute').props('dense').bind_value(form, 'distribute').tooltip('Split animation frames across all available workers')
                     ui.element('div').classes('flex-1')  # spacer
                     worker_options = {'': 'Any Worker', 'local': 'Local (This Machine)'}
                     workers = render_app.db.get_workers()
@@ -481,7 +483,16 @@ async def show_add_job_dialog():
                     target_worker=form.get('target_worker', ''),
                 )
                 
-                render_app.add_job(job)
+                # Distribute: split animation across workers
+                if (form['distribute'] and form['is_animation']
+                        and render_app.network_mode and render_app.db):
+                    workers = render_app.db.get_workers()
+                    active_workers = [w for w in workers if not w.get('is_stale')]
+                    worker_count = len(active_workers) + 1  # +1 for server
+                    job.status = 'queued'
+                    render_app.add_distributed_job(job, worker_count=worker_count)
+                else:
+                    render_app.add_job(job)
                 dialog.close()
             
             initial_accent = ENGINE_COLORS.get(form['engine_type'], "#ea7600")

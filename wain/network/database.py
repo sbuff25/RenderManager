@@ -80,7 +80,10 @@ class JobDatabase:
                 target_worker     TEXT NOT NULL DEFAULT '',
                 priority          INTEGER NOT NULL DEFAULT 0,
                 created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+                updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                parent_job_id     TEXT DEFAULT NULL,
+                is_distributed    INTEGER NOT NULL DEFAULT 0,
+                chunk_count       INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS workers (
@@ -100,6 +103,21 @@ class JobDatabase:
             CREATE INDEX IF NOT EXISTS idx_workers_heartbeat
                 ON workers(last_heartbeat);
         """)
+        conn.commit()
+
+        # Migration: add distributed rendering columns if missing
+        try:
+            conn.execute("SELECT parent_job_id FROM jobs LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE jobs ADD COLUMN parent_job_id TEXT DEFAULT NULL")
+            conn.execute("ALTER TABLE jobs ADD COLUMN is_distributed INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE jobs ADD COLUMN chunk_count INTEGER NOT NULL DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_parent ON jobs(parent_job_id)")
+            conn.commit()
+            print("[Wain] Database migrated: added distributed rendering columns")
+
+        # Ensure index exists (safe for both new and migrated DBs)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_parent ON jobs(parent_job_id)")
         conn.commit()
 
         # On server startup, mark all workers as offline (they will
@@ -129,23 +147,10 @@ class JobDatabase:
             """)
             released = cursor.rowcount
 
-            # Fail any jobs stuck in "preparing" (packing was interrupted)
-            cursor2 = conn.execute("""
-                UPDATE jobs
-                SET status = 'failed',
-                    error_message = 'Packing interrupted by server restart — please retry',
-                    status_message = '',
-                    updated_at = datetime('now')
-                WHERE status = 'preparing'
-            """)
-            interrupted = cursor2.rowcount
-
             conn.commit()
 
         if released > 0:
             print(f"[Wain] Server restart: re-queued {released} in-flight job(s)")
-        if interrupted > 0:
-            print(f"[Wain] Server restart: failed {interrupted} job(s) stuck in preparing")
 
     # ========================================================================
     # Job CRUD
@@ -163,6 +168,7 @@ class JobDatabase:
         d["engine_settings"] = json.dumps(d.get("engine_settings", {}))
         d["is_animation"] = int(d["is_animation"])
         d["overwrite_existing"] = int(d["overwrite_existing"])
+        d["is_distributed"] = int(d.get("is_distributed", False))
 
         cols = ", ".join(d.keys())
         placeholders = ", ".join(f":{k}" for k in d.keys())
@@ -210,6 +216,15 @@ class JobDatabase:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT * FROM jobs ORDER BY created_at DESC"
+        ).fetchall()
+        return [self._row_to_job(row) for row in rows]
+
+    def get_chunks(self, parent_job_id: str) -> List[RenderJob]:
+        """Get all chunk jobs for a distributed parent."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE parent_job_id = ? ORDER BY frame_start ASC",
+            (parent_job_id,)
         ).fetchall()
         return [self._row_to_job(row) for row in rows]
 
@@ -279,6 +294,7 @@ class JobDatabase:
                     WHERE status = 'queued'
                       AND engine_type IN ({placeholders})
                       AND (target_worker = '' OR target_worker = ?)
+                      AND is_distributed = 0
                     ORDER BY priority DESC, created_at ASC
                     LIMIT 1
                 )
@@ -524,4 +540,5 @@ class JobDatabase:
         # SQLite stores booleans as integers
         d["is_animation"] = bool(d.get("is_animation", 0))
         d["overwrite_existing"] = bool(d.get("overwrite_existing", 1))
+        d["is_distributed"] = bool(d.get("is_distributed", 0))
         return RenderJob.from_dict(d)

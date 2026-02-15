@@ -5,7 +5,6 @@ Wain Application
 Main application state and render queue management.
 """
 
-import asyncio
 import os
 import sys
 import json
@@ -91,12 +90,6 @@ class RenderApp:
         self._log_needs_update = True
     
     def add_job(self, job):
-        # Auto-pack Blender scenes for network rendering
-        needs_packing = (self.network_mode and self.db
-                         and job.engine_type == "blender")
-        if needs_packing:
-            job.status = "preparing"
-
         if self.network_mode and self.db:
             self.db.add_job(job)
         self.jobs.insert(0, job)
@@ -106,14 +99,115 @@ class RenderApp:
         if self.stats_container: self.stats_container.refresh()
         if self.job_count_container: self.job_count_container.refresh()
 
-        if needs_packing:
-            asyncio.ensure_future(self._pack_blend_file(job))
-    
+    def add_distributed_job(self, job, worker_count: int = 2):
+        """Split an animation job into small chunks for distributed rendering.
+
+        Creates many small chunks (~10 frames each) instead of N even splits.
+        Workers auto-claim chunks as they finish, providing natural load balancing
+        — faster machines simply complete more chunks.
+        """
+        from wain.models import RenderJob
+
+        total_frames = job.frame_end - job.frame_start + 1
+
+        # Chunk size: aim for ~3x more chunks than workers,
+        # but keep each chunk between 5 and 10 frames.
+        if total_frames <= 2:
+            chunk_size = 1
+        else:
+            chunk_size = max(5, min(10, total_frames // max(worker_count * 3, 1)))
+
+        # Build chunk frame ranges
+        chunk_ranges = []
+        frame = job.frame_start
+        while frame <= job.frame_end:
+            chunk_end = min(frame + chunk_size - 1, job.frame_end)
+            chunk_ranges.append((frame, chunk_end))
+            frame = chunk_end + 1
+
+        # Ensure at least 2 chunks (otherwise no point distributing)
+        if len(chunk_ranges) < 2 and total_frames >= 2:
+            mid = job.frame_start + total_frames // 2
+            chunk_ranges = [
+                (job.frame_start, mid),
+                (mid + 1, job.frame_end),
+            ]
+
+        chunk_count = len(chunk_ranges)
+
+        # Parent job — visible in UI, never claimed by a worker
+        job.is_distributed = True
+        job.chunk_count = chunk_count
+
+        if self.network_mode and self.db:
+            self.db.add_job(job)
+        self.jobs.insert(0, job)
+
+        # Create chunk jobs
+        for i, (chunk_start, chunk_end) in enumerate(chunk_ranges):
+            chunk = RenderJob(
+                name=f"{job.name} [chunk {i+1}/{chunk_count}]",
+                engine_type=job.engine_type,
+                file_path=job.file_path,
+                output_folder=job.output_folder,
+                output_name=job.output_name,
+                output_format=job.output_format,
+                camera=job.camera,
+                is_animation=True,
+                frame_start=chunk_start,
+                frame_end=chunk_end,
+                original_start=chunk_start,
+                res_width=job.res_width,
+                res_height=job.res_height,
+                overwrite_existing=job.overwrite_existing,
+                engine_settings=dict(job.engine_settings),
+                parent_job_id=job.id,
+                target_worker='',
+                priority=job.priority,
+                status='queued',
+            )
+
+            if self.network_mode and self.db:
+                self.db.add_job(chunk)
+
+        self.save_config()
+        self.log(f"Distributed: {job.name} ({chunk_count} chunks of ~{chunk_size}f, frames {job.frame_start}-{job.frame_end})")
+        if self.queue_container: self.queue_container.refresh()
+        if self.stats_container: self.stats_container.refresh()
+        if self.job_count_container: self.job_count_container.refresh()
+
     def handle_action(self, action: str, job):
         import threading
-        
+
         self.log(f"{action.capitalize()}: {job.name}")
-        
+
+        # Cascade actions to chunks for distributed jobs
+        if job.is_distributed and self.network_mode and self.db:
+            chunks = self.db.get_chunks(job.id)
+            for chunk in chunks:
+                if action == "pause" and chunk.status in ("queued", "rendering", "claimed"):
+                    # Only clear assigned_to on unstarted chunks.
+                    # Rendering/claimed chunks keep their worker so the
+                    # worker can report its final frame position on pause.
+                    clear_worker = chunk.status == "queued"
+                    self.db.update_job(chunk.id, status="paused",
+                                       status_message="Paused by server",
+                                       assigned_to=None if clear_worker else chunk.assigned_to)
+                elif action == "start" and chunk.status == "paused":
+                    self.db.update_job(chunk.id, status="queued",
+                                       assigned_to=None)
+                elif action == "retry":
+                    self.db.update_job(chunk.id,
+                        status="queued", progress=0, current_frame=0,
+                        rendering_frame=0, error_message="",
+                        accumulated_seconds=0, elapsed_time="",
+                        assigned_to=None, status_message="")
+                elif action == "delete":
+                    if chunk.assigned_to and chunk.status == "rendering":
+                        self.db.update_job(chunk.id, status="failed",
+                                           status_message="Deleted by server")
+                    self.db.delete_job(chunk.id)
+
         if action == "start":
             job.status = "queued"
             job.assigned_to = None  # Clear worker assignment so it can be reclaimed
@@ -137,11 +231,6 @@ class RenderApp:
                                    status_message="Cancelled by server")
             job.status = "paused"
         elif action == "retry":
-            # Clean up any previous packed file and restore original path
-            self._cleanup_packed_file(job)
-            job.engine_settings.pop("packed_file_path", None)
-            job.engine_settings.pop("original_file_path", None)
-
             job.assigned_to = None
             job.current_frame = 0
             job.rendering_frame = 0
@@ -160,15 +249,8 @@ class RenderApp:
                 job.progress = int(((job.original_start - 1) / job.frame_end) * 100)
             else:
                 job.progress = 0
-
-            # Re-trigger packing for Blender+network, otherwise just queue
-            if self.network_mode and self.db and job.engine_type == "blender":
-                job.status = "preparing"
-            else:
-                job.status = "queued"
+            job.status = "queued"
         elif action == "delete":
-            # Clean up any packed file before removing
-            self._cleanup_packed_file(job)
             # Handle engine cleanup
             engine = self.engine_registry.get(job.engine_type)
             if self.current_job and self.current_job.id == job.id:
@@ -210,10 +292,6 @@ class RenderApp:
         if self.stats_container: self.stats_container.refresh()
         if self.job_count_container: self.job_count_container.refresh()
 
-        # Trigger async packing for retry in network mode
-        if action == "retry" and self.network_mode and self.db and job.engine_type == "blender":
-            asyncio.ensure_future(self._pack_blend_file(job))
-
     def sync_from_db(self):
         """Sync job state from database (network mode only).
 
@@ -228,9 +306,9 @@ class RenderApp:
         local_ids = {j.id for j in self.jobs}
         needs_refresh = False
 
-        # Add new jobs submitted via API
+        # Add new jobs submitted via API (skip chunks — they're DB-only)
         for db_job in db_jobs:
-            if db_job.id not in local_ids:
+            if db_job.id not in local_ids and not db_job.parent_job_id:
                 self.jobs.insert(0, db_job)
                 needs_refresh = True
 
@@ -262,9 +340,6 @@ class RenderApp:
                     local_job.assigned_to = db_job.assigned_to
                     if old_status != db_job.status:
                         needs_refresh = True
-                        # Clean up packed file when remote job finishes
-                        if db_job.status in ("completed", "failed"):
-                            self._cleanup_packed_file(local_job)
                     # Push progress to UI for remote jobs
                     if db_job.status == "rendering":
                         self._progress_updates.append((
@@ -280,6 +355,86 @@ class RenderApp:
         self.jobs = [j for j in self.jobs if j.id in db_ids]
         if len(self.jobs) != before:
             needs_refresh = True
+
+        # Aggregate chunk progress into distributed parent jobs
+        for parent in self.jobs:
+            if not parent.is_distributed:
+                continue
+            chunks = self.db.get_chunks(parent.id)
+            if not chunks:
+                continue
+
+            total_frames = parent.frame_end - parent.frame_start + 1
+            completed_frames = 0
+            max_elapsed_secs = 0
+            any_rendering = False
+            any_failed = False
+            all_completed = True
+
+            for c in chunks:
+                chunk_total = c.frame_end - c.frame_start + 1
+                if c.status == "completed":
+                    completed_frames += chunk_total
+                elif c.status in ("rendering", "claimed"):
+                    any_rendering = True
+                    all_completed = False
+                    # Estimate completed frames from progress
+                    completed_frames += int(chunk_total * c.progress / 100) if c.progress > 0 else 0
+                elif c.status == "failed":
+                    any_failed = True
+                    all_completed = False
+                else:
+                    all_completed = False
+                max_elapsed_secs = max(max_elapsed_secs, c.accumulated_seconds)
+
+            # Derive parent status
+            old_status = parent.status
+            if all_completed:
+                parent.status = "completed"
+                parent.progress = 100
+            elif any_rendering:
+                parent.status = "rendering"
+                parent.progress = int((completed_frames / total_frames) * 100) if total_frames > 0 else 0
+            elif any_failed and not any_rendering:
+                parent.status = "failed"
+                parent.progress = int((completed_frames / total_frames) * 100) if total_frames > 0 else 0
+            elif parent.status == "queued":
+                parent.progress = 0
+
+            parent.current_frame = parent.frame_start + completed_frames - 1 if completed_frames > 0 else 0
+            h, rem = divmod(max_elapsed_secs, 3600)
+            m, s = divmod(rem, 60)
+            parent.elapsed_time = f"{h}:{m:02d}:{s:02d}" if max_elapsed_secs > 0 else ""
+
+            # Build status message showing chunk breakdown
+            rendering_workers = [c.assigned_to for c in chunks if c.status == "rendering" and c.assigned_to]
+            if rendering_workers:
+                parent.status_message = f"Rendering on {len(rendering_workers)} worker(s)"
+                parent.assigned_to = ", ".join(rendering_workers)
+            else:
+                done = sum(1 for c in chunks if c.status == "completed")
+                parent.status_message = f"{done}/{len(chunks)} chunks completed"
+                parent.assigned_to = None
+
+            if old_status != parent.status:
+                needs_refresh = True
+
+            # Update parent in DB
+            self.db.update_job(parent.id,
+                status=parent.status, progress=parent.progress,
+                current_frame=parent.current_frame,
+                elapsed_time=parent.elapsed_time,
+                status_message=parent.status_message,
+                assigned_to=parent.assigned_to or "")
+
+            # Push progress to UI
+            if parent.status == "rendering":
+                self._progress_updates.append((
+                    parent.id, parent.progress, parent.elapsed_time,
+                    parent.current_frame, parent.frames_display,
+                    parent.samples_display, parent.pass_display,
+                    parent.status_message,
+                ))
 
         if needs_refresh:
             if self.queue_container:
@@ -344,10 +499,17 @@ class RenderApp:
                     except Exception: pass
         
         if self.current_job is None:
+            # Try regular jobs first (skip distributed parents — they never render directly)
             for job in self.jobs:
-                if job.status == "queued" and not job.assigned_to:
+                if job.status == "queued" and not job.assigned_to and not job.is_distributed:
                     self.start_render(job)
                     break
+            # In network mode, also claim chunk jobs from DB for server rendering
+            if self.current_job is None and self.network_mode and self.db:
+                supported = list(self.engine_registry.engines.keys())
+                chunk = self.db.claim_next_job("server", supported)
+                if chunk and chunk.parent_job_id:
+                    self.start_render(chunk)
     
     def start_render(self, job):
         engine = self.engine_registry.get(job.engine_type)
@@ -437,7 +599,6 @@ class RenderApp:
             job.status = "completed"
             job.progress = 100
             self.current_job = None
-            self._cleanup_packed_file(job)
             self.log(f"Complete: {job.name}")
             if self.network_mode and self.db:
                 self.db.update_job(job.id, status="completed", progress=100,
@@ -450,7 +611,6 @@ class RenderApp:
             job.status = "failed"
             job.error_message = err
             self.current_job = None
-            self._cleanup_packed_file(job)
             self.log(f"Failed: {job.name} - {err}")
             if self.network_mode and self.db:
                 self.db.update_job(job.id, status="failed", error_message=err,
@@ -462,96 +622,13 @@ class RenderApp:
         self._render_finished = False
         engine.start_render(job, start_frame, on_progress, on_complete, on_error, self.log)
     
-    def _cleanup_packed_file(self, job):
-        """Delete the temporary packed .blend file if one exists for this job."""
-        packed_path = job.engine_settings.get("packed_file_path")
-        if packed_path and os.path.isfile(packed_path):
-            try:
-                os.remove(packed_path)
-                self.log(f"Cleaned up packed file: {os.path.basename(packed_path)}")
-            except Exception as e:
-                self.log(f"Warning: Could not delete packed file: {e}")
-        # Restore original file_path if it was swapped
-        original = job.engine_settings.get("original_file_path")
-        if original:
-            job.file_path = original
-
-    async def _pack_blend_file(self, job):
-        """Pack a Blender scene file in the background, then queue the job."""
-        from wain.engines.blender import BlenderEngine
-
-        engine = self.engine_registry.get("blender")
-        if not engine or not isinstance(engine, BlenderEngine):
-            job.status = "failed"
-            job.error_message = "Blender engine not available for packing"
-            self.log(f"Failed to pack: {job.name} — engine not available")
-            if self.network_mode and self.db:
-                self.db.update_job(job.id, status="failed",
-                                   error_message=job.error_message)
-            self._ui_needs_update = True
-            self._render_finished = True
-            return
-
-        packed_path = BlenderEngine.get_packed_path(job.file_path, job.id)
-        job.engine_settings["packed_file_path"] = packed_path
-
-        self.log(f"Packing: {job.name}...")
-        job.status_message = "Packing external assets..."
-        if self.network_mode and self.db:
-            self.db.update_job(job.id, status="preparing",
-                               status_message=job.status_message,
-                               engine_settings=job.engine_settings)
-
-        loop = asyncio.get_event_loop()
-        try:
-            success = await loop.run_in_executor(
-                None, engine.create_packed_copy, job.file_path, packed_path, self.log
-            )
-        except Exception as e:
-            success = False
-            self.log(f"Packing exception: {e}")
-
-        # Check if the job was deleted while we were packing
-        if job not in self.jobs:
-            # Job was removed — clean up packed file if it was created
-            if os.path.isfile(packed_path):
-                try:
-                    os.remove(packed_path)
-                except Exception:
-                    pass
-            return
-
-        if success:
-            job.engine_settings["original_file_path"] = job.file_path
-            job.file_path = packed_path
-            job.status = "queued"
-            job.status_message = ""
-            self.log(f"Packed: {job.name} — ready for network rendering")
-            if self.network_mode and self.db:
-                self.db.update_job(job.id, status="queued", file_path=packed_path,
-                                   status_message="",
-                                   engine_settings=job.engine_settings)
-        else:
-            job.status = "failed"
-            job.error_message = "Failed to pack scene — check Blender installation"
-            job.status_message = ""
-            self.log(f"Failed to pack: {job.name}")
-            if self.network_mode and self.db:
-                self.db.update_job(job.id, status="failed",
-                                   error_message=job.error_message,
-                                   status_message="")
-
-        self.save_config()
-        self._ui_needs_update = True
-        self._render_finished = True
-
     def save_config(self):
         # In network mode, persist to JSON as backup but DB is primary
         data = {"network_mode": self.network_mode, "jobs": [{
             "id": j.id, "name": j.name, "engine_type": j.engine_type,
             "file_path": j.file_path, "output_folder": j.output_folder,
             "output_name": j.output_name, "output_format": j.output_format,
-            "status": j.status if j.status not in ("rendering", "preparing") else "paused",
+            "status": j.status if j.status != "rendering" else "paused",
             "progress": j.progress, "is_animation": j.is_animation,
             "frame_start": j.frame_start, "frame_end": j.frame_end,
             "current_frame": j.current_frame, "rendering_frame": j.rendering_frame,

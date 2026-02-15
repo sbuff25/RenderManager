@@ -111,7 +111,7 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None,
             job = RenderJob.from_dict(body)
             job.status = "queued"
             # Route through render_app.add_job() when available so
-            # auto-packing and other lifecycle hooks trigger properly.
+            # lifecycle hooks (UI refresh, config save) trigger properly.
             if render_app:
                 render_app.add_job(job)
             else:

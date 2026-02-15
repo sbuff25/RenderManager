@@ -6,6 +6,7 @@ Main application state and render queue management.
 """
 
 import os
+import socket
 import sys
 import json
 import re
@@ -48,6 +49,8 @@ class RenderApp:
         self._render_finished = False
         self._log_needs_update = False
         self._progress_updates = []
+        self._chunk_cache = {}  # parent_job_id -> list of chunk RenderJob objects
+        self._expansion_states = {}  # job_id -> bool (chunk detail panel open/closed)
         # Network mode state
         self.db = None
         self.network_mode = False
@@ -319,6 +322,9 @@ class RenderApp:
                 # Don't overwrite local rendering state for locally-rendered jobs
                 if (self.current_job and self.current_job.id == local_job.id):
                     continue
+                # Skip distributed parents — their state is derived from chunk aggregation below
+                if local_job.is_distributed:
+                    continue
                 # Update from DB if the job is being rendered by a remote worker
                 if db_job.assigned_to and db_job.status in ("rendering", "claimed", "completed", "failed", "paused"):
                     old_status = local_job.status
@@ -363,12 +369,14 @@ class RenderApp:
             chunks = self.db.get_chunks(parent.id)
             if not chunks:
                 continue
+            self._chunk_cache[parent.id] = chunks
 
             total_frames = parent.frame_end - parent.frame_start + 1
             completed_frames = 0
             max_elapsed_secs = 0
             any_rendering = False
             any_failed = False
+            any_paused = False
             all_completed = True
 
             for c in chunks:
@@ -378,12 +386,14 @@ class RenderApp:
                 elif c.status in ("rendering", "claimed"):
                     any_rendering = True
                     all_completed = False
-                    # Estimate completed frames from progress
                     completed_frames += int(chunk_total * c.progress / 100) if c.progress > 0 else 0
                 elif c.status == "failed":
                     any_failed = True
                     all_completed = False
-                else:
+                elif c.status == "paused":
+                    any_paused = True
+                    all_completed = False
+                else:  # queued
                     all_completed = False
                 max_elapsed_secs = max(max_elapsed_secs, c.accumulated_seconds)
 
@@ -395,10 +405,14 @@ class RenderApp:
             elif any_rendering:
                 parent.status = "rendering"
                 parent.progress = int((completed_frames / total_frames) * 100) if total_frames > 0 else 0
-            elif any_failed and not any_rendering:
+            elif any_failed:
                 parent.status = "failed"
                 parent.progress = int((completed_frames / total_frames) * 100) if total_frames > 0 else 0
-            elif parent.status == "queued":
+            elif any_paused:
+                parent.status = "paused"
+                parent.progress = int((completed_frames / total_frames) * 100) if total_frames > 0 else 0
+            else:
+                parent.status = "queued"
                 parent.progress = 0
 
             parent.current_frame = parent.frame_start + completed_frames - 1 if completed_frames > 0 else 0
@@ -406,17 +420,32 @@ class RenderApp:
             m, s = divmod(rem, 60)
             parent.elapsed_time = f"{h}:{m:02d}:{s:02d}" if max_elapsed_secs > 0 else ""
 
-            # Build status message showing chunk breakdown
+            # Status message — always reflects current chunk state
             rendering_workers = [c.assigned_to for c in chunks if c.status == "rendering" and c.assigned_to]
+            done = sum(1 for c in chunks if c.status == "completed")
             if rendering_workers:
-                parent.status_message = f"Rendering on {len(rendering_workers)} worker(s)"
+                parent.status_message = f"Rendering on {len(rendering_workers)} worker(s) — {done}/{len(chunks)} chunks done"
                 parent.assigned_to = ", ".join(rendering_workers)
+            elif all_completed:
+                parent.status_message = ""
+                parent.assigned_to = None
             else:
-                done = sum(1 for c in chunks if c.status == "completed")
-                parent.status_message = f"{done}/{len(chunks)} chunks completed"
+                parent.status_message = f"{done}/{len(chunks)} chunks done"
                 parent.assigned_to = None
 
+            # For completed distributed jobs, ensure frame counter shows total
+            if all_completed:
+                parent.current_frame = parent.frame_end
+                parent.rendering_frame = 0
+
             if old_status != parent.status:
+                needs_refresh = True
+
+            # Refresh UI when any chunk's status changes (not on every progress tick)
+            chunk_state_key = tuple(c.status for c in chunks)
+            last_key = getattr(parent, '_last_chunk_states', None)
+            if last_key != chunk_state_key:
+                parent._last_chunk_states = chunk_state_key
                 needs_refresh = True
 
             # Update parent in DB
@@ -507,7 +536,7 @@ class RenderApp:
             # In network mode, also claim chunk jobs from DB for server rendering
             if self.current_job is None and self.network_mode and self.db:
                 supported = list(self.engine_registry.engines.keys())
-                chunk = self.db.claim_next_job("server", supported)
+                chunk = self.db.claim_next_job(socket.gethostname(), supported)
                 if chunk and chunk.parent_job_id:
                     self.start_render(chunk)
     
@@ -526,7 +555,7 @@ class RenderApp:
         # Mark as rendering in DB so workers don't claim it
         if self.network_mode and self.db:
             self.db.update_job(job.id, status="rendering",
-                               assigned_to="server",
+                               assigned_to=socket.gethostname(),
                                start_time=datetime.now().isoformat())
 
         start_frame = job.frame_start

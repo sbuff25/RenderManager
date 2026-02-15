@@ -2122,7 +2122,7 @@ class VantageEngine(RenderEngine):
                         self._log(log_msg)
                     
                     # Check completion - use highest frame seen
-                    if highest_frame_seen >= total_frames and total_frames > 1:
+                    if highest_frame_seen >= total_frames and total_frames >= 1:
                         self._log("All frames complete!")
                         self._debug_log(">>> RENDER COMPLETE: All frames finished")
                         self._end_debug_session()
@@ -2130,7 +2130,7 @@ class VantageEngine(RenderEngine):
                         self._close_vantage()
                         on_complete()
                         return
-                    
+
                     if highest_progress_seen >= 100:
                         self._log("Render complete!")
                         self._debug_log(">>> RENDER COMPLETE: 100% reached")

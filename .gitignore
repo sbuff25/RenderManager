@@ -25,6 +25,10 @@ vantage_debug_*.log
 logs/
 wain_jobs.db*
 
+# Internal dev notes
+_Improvments/
+_ErrorExampleScreenshots/
+
 # Environment
 .env
 venv/

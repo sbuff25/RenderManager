@@ -139,3 +139,52 @@ def create_job_card(job):
                     {job.status_message}
                 </div>
             ''', sanitize=False)
+
+        # Chunk detail panel for distributed jobs
+        if job.is_distributed and render_app.network_mode and render_app.db:
+            chunks = render_app._chunk_cache.get(job.id, [])
+            if chunks:
+                import socket
+                server_hostname = socket.gethostname()
+                done = sum(1 for c in chunks if c.status == "completed")
+                chunk_colors = {
+                    "completed": "#22c55e", "rendering": engine_color,
+                    "claimed": "#eab308", "failed": "#ef4444",
+                    "paused": "#a1a1aa", "queued": "#52525b",
+                }
+                # Split chunks into server vs worker groups
+                server_chunks = [c for c in chunks if c.assigned_to and c.assigned_to.lower() == server_hostname.lower()]
+                worker_chunks = [c for c in chunks if c.assigned_to and c.assigned_to.lower() != server_hostname.lower()]
+                unassigned_chunks = [c for c in chunks if not c.assigned_to]
+
+                def _render_chunk_row(c):
+                    color = chunk_colors.get(c.status, "#52525b")
+                    progress_text = f"{c.progress}%" if c.status in ("rendering", "claimed") else ""
+                    with ui.row().classes('w-full items-center gap-2 py-0.5').style('min-height: 24px;'):
+                        ui.label(f"{c.frame_start}-{c.frame_end}").classes('text-xs text-zinc-400').style('width: 60px;')
+                        with ui.element('div').classes('px-1.5 py-0.5 rounded text-xs font-bold').style(f'background-color: {color}22; color: {color}; min-width: 70px; text-align: center;'):
+                            ui.label(c.status.upper())
+                        if progress_text:
+                            ui.label(progress_text).classes('text-xs text-zinc-500')
+
+                is_open = render_app._expansion_states.get(job.id, False)
+                expansion = ui.expansion(f'Chunk Details ({done}/{len(chunks)} done)', value=is_open).classes('w-full mt-1').style('font-size: 0.75rem;')
+                expansion.on_value_change(lambda e, jid=job.id: render_app._expansion_states.update({jid: e.value}))
+                with expansion:
+                    if server_chunks:
+                        ui.label(f'Server ({server_hostname})').classes('text-xs font-bold text-zinc-300 mt-1')
+                        for c in server_chunks:
+                            _render_chunk_row(c)
+                    if worker_chunks:
+                        # Group by worker
+                        workers = {}
+                        for c in worker_chunks:
+                            workers.setdefault(c.assigned_to, []).append(c)
+                        for worker_name, wchunks in workers.items():
+                            ui.label(f'Worker ({worker_name})').classes('text-xs font-bold text-zinc-300 mt-1')
+                            for c in wchunks:
+                                _render_chunk_row(c)
+                    if unassigned_chunks:
+                        ui.label('Queued').classes('text-xs font-bold text-zinc-500 mt-1')
+                        for c in unassigned_chunks:
+                            _render_chunk_row(c)

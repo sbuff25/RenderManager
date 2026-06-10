@@ -31,7 +31,8 @@ def sanitize_to_ascii(message: str) -> str:
 
 
 class RenderApp:
-    CONFIG_FILE = "wain_config.json"
+    # Resolved via wain.config so frozen builds write to %APPDATA%\Wain (v2.20.0)
+    CONFIG_FILE = CONFIG_FILE
 
     def __init__(self):
         self.engine_registry = EngineRegistry()

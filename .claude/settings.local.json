@@ -47,7 +47,9 @@
       "Bash(del \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\_test_passes.py\" \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\_test_minimal.py\" \"F:\\\\Work\\\\UtilityDevelopment\\\\RenderManager\\\\_test_minimal2.py\")",
       "Bash(ping:*)",
       "Bash(git log:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(wmic process where \"name=''pythonw.exe''\" get ProcessId,CommandLine)",
+      "Bash(tasklist:*)"
     ]
   }
 }

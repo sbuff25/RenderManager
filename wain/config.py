@@ -6,14 +6,37 @@ Theme colors, engine configurations, and application constants.
 """
 
 import os
+import sys
 
 # Cache busting - increment to force browser asset refresh
-ASSET_VERSION = "v11"
+ASSET_VERSION = "v12"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.18.0"
-CONFIG_FILE = "wain_config.json"
+APP_VERSION = "2.20.0"
+
+
+# ============================================================================
+# Writable data location (v2.20.0)
+# Frozen .exe builds install into Program Files, which is read-only — all
+# user-writable files (config, job DB, auth token, logs) must live in
+# %APPDATA%\Wain. Running from source keeps the original cwd behavior.
+# ============================================================================
+def get_data_dir() -> str:
+    """Return the directory for user-writable data, creating it if needed."""
+    if getattr(sys, 'frozen', False):
+        base = os.environ.get('APPDATA') or os.path.expanduser('~')
+        data_dir = os.path.join(base, APP_NAME)
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+        except Exception:
+            data_dir = os.getcwd()
+        return data_dir
+    return os.getcwd()
+
+
+DATA_DIR = get_data_dir()
+CONFIG_FILE = os.path.join(DATA_DIR, "wain_config.json")
 
 # Required Python version
 MIN_PYTHON_VERSION = (3, 10)
@@ -116,10 +139,13 @@ WORKER_HEARTBEAT_INTERVAL = 30      # seconds between heartbeats
 WORKER_STALE_TIMEOUT = 120          # seconds before worker is considered dead
 WORKER_POLL_INTERVAL = 5            # seconds between job polling
 PROGRESS_REPORT_INTERVAL = 2        # minimum seconds between progress API calls
-DATABASE_FILE = "wain_jobs.db"
+DATABASE_FILE = os.path.join(DATA_DIR, "wain_jobs.db")
 
 # Authentication
-AUTH_TOKEN_FILE = "wain_auth_token.txt"  # File storing the server API token
+AUTH_TOKEN_FILE = os.path.join(DATA_DIR, "wain_auth_token.txt")  # Server API token
+
+# Render log (saved from the UI's Log panel)
+RENDER_LOG_FILE = os.path.join(DATA_DIR, "wain_render_log.txt")
 
 # Worker reconnection
 WORKER_RECONNECT_MAX_RETRIES = 0        # 0 = infinite retries

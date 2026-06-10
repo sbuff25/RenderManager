@@ -8,10 +8,11 @@ Supports Blender, Marmoset Toolbag, and Chaos Vantage with pause/resume capabili
 Built with NiceGUI + pywebview (Qt backend) for native desktop window.
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.18.0 - Network stability: token auth, auto-reconnect, connection status UI
+v2.20.0 - Installer phase: frozen-build support (PyInstaller + Inno Setup),
+          %APPDATA% data dir, worker first-run setup dialog
 """
 
-__version__ = "2.18.0"
+__version__ = "2.20.0"
 __author__ = "Spencer"
 __app_name__ = "Wain"
 

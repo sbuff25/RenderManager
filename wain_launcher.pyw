@@ -62,17 +62,15 @@ def create_splash():
     
     try:
         if LOGO_PATH and os.path.exists(LOGO_PATH):
-            from PIL import Image, ImageTk, ImageOps
-            img = Image.open(LOGO_PATH)
+            # v2.19.5: no color inversion — the wagon logo is dark-friendly as-is.
+            # Composite over the splash bg so transparent edges blend cleanly in tk.
+            from PIL import Image, ImageTk
+            img = Image.open(LOGO_PATH).convert('RGBA')
             img = img.resize((120, 120), Image.Resampling.LANCZOS)
-            if img.mode == 'RGBA':
-                r, g, b, a = img.split()
-                rgb = Image.merge('RGB', (r, g, b))
-                rgb = ImageOps.invert(rgb)
-                img = Image.merge('RGBA', (*rgb.split(), a))
-            elif img.mode == 'RGB':
-                img = ImageOps.invert(img)
-            photo = ImageTk.PhotoImage(img)
+            bg_rgb = tuple(int(BG_COLOR[i:i + 2], 16) for i in (1, 3, 5))
+            base = Image.new('RGBA', img.size, (*bg_rgb, 255))
+            base.alpha_composite(img)
+            photo = ImageTk.PhotoImage(base.convert('RGB'))
             logo_label = tk.Label(frame, image=photo, bg=BG_COLOR)
             logo_label.image = photo
             logo_label.pack(pady=(60, 30))
@@ -107,7 +105,7 @@ def create_splash():
                            fg=TEXT_SECONDARY, bg=BG_COLOR)
     status_label.pack(pady=(10, 0))
     
-    version_label = tk.Label(frame, text="v2.18.0", font=('Segoe UI', 9),
+    version_label = tk.Label(frame, text="v2.20.0", font=('Segoe UI', 9),
                             fg=TEXT_TERTIARY, bg=BG_COLOR)
     version_label.pack(side='bottom', pady=(0, 20))
     

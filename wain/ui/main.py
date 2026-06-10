@@ -23,6 +23,38 @@ def main_page():
         .responsive-container { width: 100%; max-width: 100%; padding: 1rem; overflow-x: hidden; }
         .stat-card { min-width: 150px; flex: 1 1 200px; }
         .job-card { width: 100%; }
+
+        /* v2.19.3 visual polish — surfaces
+           GPU compositing is on by default (see __main__.py), so shadows and
+           gradients are fine. If running with --software-ui, expect these to
+           cost CPU paint time. Avoid background-attachment:fixed regardless —
+           it forces full-page repaints on scroll even with GPU in QtWebEngine. */
+        /* html must be dark too — it's the layer that shows through during
+           GPU surface creation (white flash when menus/popups open) */
+        html { background: #121212; }
+        body.body--dark { background: linear-gradient(180deg, #161618 0%, #0e0e10 100%) !important; }
+        .q-card {
+            background: #1d1d1d !important;
+            border: 1px solid #27272a;
+            border-radius: 10px !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+        }
+        .q-header { border-bottom: 1px solid #27272a; }
+        .q-dialog__inner > .q-card {
+            border-radius: 12px !important;
+            border: 1px solid #303036;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6) !important;
+        }
+        .wain-wordmark { font-size: 18px; font-weight: 700; color: #ffffff; letter-spacing: 0.01em; }
+        .wain-version-chip {
+            background: #27272a; color: #71717a; font-size: 11px; font-weight: 500;
+            padding: 3px 8px; border-radius: 10px; line-height: 1;
+        }
+        .stat-icon-chip {
+            width: 42px; height: 42px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .log-expansion { border: 1px solid #27272a; border-radius: 10px; overflow: hidden; }
         
         /* Hide NiceGUI reconnection notification - we're a desktop app */
         .q-notification, .q-notifications, .nicegui-reconnecting, 
@@ -34,8 +66,13 @@ def main_page():
         
         .header-btn, .header-btn.q-btn { color: #a1a1aa !important; background-color: transparent !important; }
         .header-btn:hover, .header-btn.q-btn:hover { color: #ffffff !important; background-color: rgba(255, 255, 255, 0.1) !important; }
-        .header-btn-primary, .header-btn-primary.q-btn { background-color: #3f3f46 !important; color: #ffffff !important; }
-        .header-btn-primary:hover, .header-btn-primary.q-btn:hover { background-color: #52525b !important; }
+        .header-btn-primary, .header-btn-primary.q-btn {
+            background: linear-gradient(180deg, #4a4a52 0%, #3a3a40 100%) !important;
+            border: 1px solid #52525b !important;
+            border-radius: 6px !important;
+            color: #ffffff !important;
+        }
+        .header-btn-primary:hover, .header-btn-primary.q-btn:hover { background: linear-gradient(180deg, #56565e 0%, #46464c 100%) !important; }
         
         .job-action-btn:hover { color: #ffffff !important; background-color: rgba(255, 255, 255, 0.1) !important; }
         .job-action-btn-danger:hover { color: #f87171 !important; background-color: rgba(239, 68, 68, 0.15) !important; }
@@ -46,25 +83,43 @@ def main_page():
         .job-action-btn-engine-vantage { color: #77b22a !important; }
         .job-action-btn-engine-vantage:hover { color: #ffffff !important; background-color: rgba(119, 178, 42, 0.2) !important; }
         
-        img[src*="wain_logo"] { filter: invert(1); border-radius: 8px; }
+        /* New wagon logo is dark-friendly full art — no invert needed (v2.19.0) */
+        img[src*="wain_logo"] { border-radius: 8px; }
         
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #18181b; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #52525b; }
         
-        .custom-progress-container { width: 100%; display: flex; flex-direction: column; gap: 4px; min-height: 28px; }
-        .custom-progress-track { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.15); border-radius: 4px; overflow: hidden; position: relative; }
-        .custom-progress-fill { height: 100%; border-radius: 4px; position: relative; background: #71717a; will-change: width; }
+        .custom-progress-container { width: 100%; display: flex; flex-direction: column; gap: 4px; min-height: 30px; }
+        .custom-progress-track { width: 100%; height: 10px; background: rgba(255, 255, 255, 0.08); border-radius: 5px; overflow: hidden; position: relative; }
+        .custom-progress-fill { height: 100%; border-radius: 5px; position: relative; background: #71717a; will-change: width; transform: translateZ(0); }
         .custom-progress-label { text-align: center; font-size: 14px; color: #a1a1aa; }
-        
-        .custom-progress-rendering.custom-progress-engine-blender .custom-progress-fill { background: #ea7600; }
-        .custom-progress-rendering.custom-progress-engine-marmoset .custom-progress-fill { background: #ef0343; }
-        .custom-progress-rendering.custom-progress-engine-vantage .custom-progress-fill { background: #77b22a; }
-        .custom-progress-queued .custom-progress-fill { background: #52525b; }
-        .custom-progress-paused .custom-progress-fill { background: #a1a1aa; }
-        .custom-progress-completed .custom-progress-fill { background: #22c55e; }
-        .custom-progress-failed .custom-progress-fill { background: #ef4444; }
+
+        /* v2.19.3 — gradient fills with engine glows (GPU compositing handles
+           the animated-width + blur combination fine) */
+        .custom-progress-rendering.custom-progress-engine-blender .custom-progress-fill {
+            background: linear-gradient(90deg, #ea7600 0%, #f1a659 100%);
+            box-shadow: 0 0 6px rgba(234, 118, 0, 0.45);
+        }
+        .custom-progress-rendering.custom-progress-engine-marmoset .custom-progress-fill {
+            background: linear-gradient(90deg, #ef0343 0%, #f55b85 100%);
+            box-shadow: 0 0 6px rgba(239, 3, 67, 0.45);
+        }
+        .custom-progress-rendering.custom-progress-engine-vantage .custom-progress-fill {
+            background: linear-gradient(90deg, #77b22a 0%, #a6cd74 100%);
+            box-shadow: 0 0 6px rgba(119, 178, 42, 0.45);
+        }
+        .custom-progress-queued .custom-progress-fill { background: linear-gradient(90deg, #52525b 0%, #797981 100%); }
+        .custom-progress-paused .custom-progress-fill { background: linear-gradient(90deg, #a1a1aa 0%, #c2c2c8 100%); }
+        .custom-progress-completed .custom-progress-fill {
+            background: linear-gradient(90deg, #22c55e 0%, #6fd996 100%);
+            box-shadow: 0 0 6px rgba(34, 197, 94, 0.45);
+        }
+        .custom-progress-failed .custom-progress-fill {
+            background: linear-gradient(90deg, #ef4444 0%, #f58585 100%);
+            box-shadow: 0 0 6px rgba(239, 68, 68, 0.45);
+        }
         
         .custom-progress-rendering .custom-progress-fill::after {
             content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -154,9 +209,17 @@ def main_page():
                 }
             };
             
+            let frameToggle = false;
             function animateProgressBars() {
                 // Skip animation when a dialog is open to free up frame budget
                 if (document.querySelector('.q-dialog')) {
+                    requestAnimationFrame(animateProgressBars);
+                    return;
+                }
+                // v2.19.1 — run at half frame rate; style writes/paints are the
+                // expensive part, and 30fps is indistinguishable for progress bars
+                frameToggle = !frameToggle;
+                if (frameToggle) {
                     requestAnimationFrame(animateProgressBars);
                     return;
                 }
@@ -176,8 +239,8 @@ def main_page():
                     const diff = target - current;
                     
                     if (Math.abs(diff) > 0.1) {
-                        let step = diff * 0.06;
-                        if (Math.abs(step) < 0.15 && Math.abs(diff) > 0.15) step = diff > 0 ? 0.15 : -0.15;
+                        let step = diff * 0.12;  // doubled: loop runs at half rate (v2.19.1)
+                        if (Math.abs(step) < 0.3 && Math.abs(diff) > 0.3) step = diff > 0 ? 0.3 : -0.3;
                         progressState[id] = current + step;
                         fill.style.width = progressState[id] + '%';
                     }
@@ -189,12 +252,12 @@ def main_page():
     </script>''')
     
     with ui.header().classes('items-center justify-between px-4 md:px-6 py-3 bg-zinc-900'):
-        with ui.row().classes('items-center gap-4'):
+        with ui.row().classes('items-center gap-3'):
             wain_logo = AVAILABLE_LOGOS.get('wain')
             if wain_logo:
                 ui.image(f'/logos/{wain_logo}?{ASSET_VERSION}').classes('w-10 h-10 object-contain rounded-lg')
-            else:
-                ui.label('WAIN').classes('text-xl font-bold text-white')
+            ui.label('Wain').classes('wain-wordmark')
+            ui.label(f'v{APP_VERSION}').classes('wain-version-chip')
         
         with ui.row().classes('gap-2'):
             ui.button('Settings', icon='settings', on_click=show_settings_dialog).props('flat').classes('header-btn text-zinc-400')
@@ -224,10 +287,14 @@ def main_page():
         def queue_list():
             if not render_app.jobs:
                 with ui.card().classes('w-full'):
-                    with ui.column().classes('w-full items-center py-8'):
-                        ui.icon('inbox').classes('text-6xl text-gray-600')
-                        ui.label('No render jobs').classes('text-xl text-gray-400 mt-4')
-                        ui.label('Click "Add Job" to get started').classes('text-gray-500')
+                    with ui.column().classes('w-full items-center py-10'):
+                        wagon_logo = AVAILABLE_LOGOS.get('wain')
+                        if wagon_logo:
+                            ui.image(f'/logos/{wagon_logo}?{ASSET_VERSION}').classes('w-28 h-28 object-contain').style('opacity: 0.35;')
+                        else:
+                            ui.icon('inbox').classes('text-6xl text-gray-600')
+                        ui.label('The wagon is empty').classes('text-lg font-bold text-zinc-400 mt-3')
+                        ui.label('Click "Add Job" to load it up').classes('text-sm text-gray-500')
             else:
                 for job in render_app.jobs:
                     create_job_card(job)
@@ -240,8 +307,9 @@ def main_page():
                 ui.label('Render Log').classes('text-sm text-gray-400')
                 with ui.row().classes('gap-2'):
                     def save_log_to_file():
+                        from wain.config import RENDER_LOG_FILE
                         log_text = '\n'.join(render_app.log_messages[-500:])
-                        log_path = os.path.join(os.getcwd(), 'wain_render_log.txt')
+                        log_path = RENDER_LOG_FILE
                         try:
                             with open(log_path, 'w', encoding='utf-8') as f:
                                 f.write(log_text)

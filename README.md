@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.16.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.20.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,9 +34,19 @@
 
 ---
 
-## 🆕 What's New in v2.16.0
+## 🆕 What's New in v2.19
 
-### Marmoset Multi-Pass Rendering & Camera Detection
+### Visual Redesign & GPU-Accelerated UI
+
+- **New visual identity** — wagon logo, header brand group with version chip
+- **Engine accent bars** — job cards carry their engine's color on the left edge (Blender orange, Marmoset red, Vantage green)
+- **Gradient progress bars** — engine-colored gradients with subtle glows; status-colored when queued/paused/completed/failed
+- **Stat icon chips** — color-coded queue stats (rendering/queued/completed/failed)
+- **GPU compositing enabled by default** — smooth UI; pass `--software-ui` to fall back to CPU rendering
+- **Fixes** — no more white flash when opening menus, splash screen shows the logo in true colors
+- The UI is designed in a companion Figma file and iterated there first
+
+### Previous v2.16.0 — Marmoset Multi-Pass Rendering & Camera Detection
 
 - **26 Render Passes** — Select individual passes (Beauty, Normals, AO, Albedo, etc.) from categorized checkboxes
 - **Scene Probing** — Automatically detects cameras, passes, and settings from `.tbscene` files
@@ -110,7 +120,35 @@ HQ panel opened! (9.5s total)
 python -m wain              # Install & launch
 Wain.bat --debug            # Debug mode with console output
 Wain.bat --install          # Force reinstall dependencies
+Wain.bat --software-ui      # Disable GPU compositing for the UI window
 ```
+
+---
+
+## 📦 Building the Installer (.exe)
+
+Wain can be packaged as a standalone Windows app — no Python required on the
+target machine. Both local rendering and network rendering (server + worker)
+work from the installed build.
+
+```bash
+build_installer.bat
+```
+
+This produces:
+
+| Output | Use |
+|--------|-----|
+| `dist\installer\Wain-Setup-<version>.exe` | Installer (Start menu, uninstaller, optional firewall rule + worker shortcut) |
+| `dist\Wain-<version>-portable.zip` | Portable build — unzip on render nodes, no install needed |
+| `dist\Wain\` | Raw PyInstaller bundle for local testing |
+
+**Requirements:** Python 3.10+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer step (skipped if not installed).
+
+**Installed-build behavior:**
+- Settings, job database, auth token, and logs live in `%APPDATA%\Wain` (survives reinstalls)
+- Console output is captured to `%APPDATA%\Wain\wain_console.log`
+- **Worker setup:** launch the "Wain Worker" shortcut (or `Wain.exe --worker`) — a first-run dialog asks for the server address and API token and remembers them
 
 ---
 
@@ -167,8 +205,8 @@ Wain.bat --install          # Force reinstall dependencies
 
 ## ⚠️ Vantage Settings Note
 
-**Current Status (v2.16.0):**
-Wain does **NOT** modify `vantage.ini`. Your Vantage configuration is completely safe.
+**Current Status (v2.20.0):**
+Wain does **NOT** modify `vantage.ini` by default. Your Vantage configuration is completely safe.
 
 Wain uses whatever settings are already configured in Vantage's HQ Render panel.
 
@@ -212,12 +250,25 @@ Wain.bat --debug
 
 </details>
 
+<details>
+<summary><strong>UI feels slow or laggy</strong></summary>
+
+The UI uses GPU compositing by default. If you run with `--software-ui`
+(CPU rendering), some visual effects are more expensive — try the default
+GPU mode first.
+
+</details>
+
 ---
 
 ## 📜 Version History
 
 | Version | Highlights |
 |---------|------------|
+| **2.20.0** | Windows installer phase: PyInstaller + Inno Setup, %APPDATA% data dir, worker setup dialog |
+| **2.19.5** | Splash screen logo colors, white-flash fix, GPU UI default |
+| **2.19.0** | Visual redesign: accent bars, gradient progress, brand header, new logo |
+| **2.18.0** | Network stability: token auth, auto-reconnect |
 | **2.16.0** | Marmoset multi-pass rendering, camera detection |
 | **2.15.50** | UI readiness detection, no INI modification |
 | **2.15.48** | Large job progress tracking fix |
@@ -240,5 +291,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.16.0 — Multi-engine render queue manager</em>
+  <em>Wain v2.20.0 — Multi-engine render queue manager</em>
 </p>

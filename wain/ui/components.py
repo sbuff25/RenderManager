@@ -15,12 +15,23 @@ from wain.config import STATUS_CONFIG, ENGINE_COLORS, AVAILABLE_LOGOS, ENGINE_IC
 from wain.app import render_app
 
 
+# Status accent colors for stat card icon chips (v2.19.0)
+STAT_CHIP_COLORS = {
+    'blue': '#3b82f6',
+    'yellow': '#eab308',
+    'green': '#22c55e',
+    'red': '#ef4444',
+}
+
+
 def create_stat_card(title: str, status: str, icon: str, color: str):
     count = sum(1 for j in render_app.jobs if j.status == status)
+    chip_color = STAT_CHIP_COLORS.get(color, '#a1a1aa')
     with ui.row().classes('items-center gap-3'):
-        ui.icon(icon).classes('text-3xl text-zinc-400')
+        with ui.element('div').classes('stat-icon-chip').style(f'background-color: {chip_color}1f;'):
+            ui.icon(icon).classes('text-2xl').style(f'color: {chip_color};')
         with ui.column().classes('gap-0'):
-            ui.label(title).classes('text-sm text-gray-500')
+            ui.label(title).classes('text-xs text-zinc-500')
             ui.label(str(count)).classes('text-2xl font-bold text-white')
 
 
@@ -53,27 +64,44 @@ def create_job_card(job):
     engine_logo = AVAILABLE_LOGOS.get(job.engine_type)
     engine_icon = ENGINE_ICONS.get(job.engine_type, "help")
     
-    with ui.card().classes('w-full'):
+    # v2.19.0 — engine accent bar on left edge
+    with ui.card().classes('w-full').style(f'border-left: 3px solid {engine_color};'):
         with ui.row().classes('w-full items-center gap-3'):
             if engine_logo:
                 ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-8 h-8 object-contain')
             else:
                 ui.icon(engine_icon).classes('text-2xl').style(f'color: {engine_color}')
             with ui.column().classes('flex-grow gap-0'):
-                ui.label(job.name or "Untitled").classes('font-bold')
-                ui.label(job.file_name).classes('text-sm text-gray-400')
+                ui.label(job.name or "Untitled").classes('font-semibold text-[15px]')
+                ui.label(job.file_name).classes('text-xs text-zinc-500')
             
+            # v2.19.0 — badges get a thin matching border + letter spacing
+            _badge_classes = 'px-2.5 py-1 rounded-md text-xs font-bold'
+            _badge_spacing = 'letter-spacing: 0.6px;'
             if job.is_distributed:
-                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style('background-color: rgba(34,197,94,0.15); color: #22c55e;'):
+                with ui.element('div').classes(_badge_classes).style(
+                        f'background-color: rgba(34,197,94,0.15); color: #22c55e; '
+                        f'border: 1px solid rgba(34,197,94,0.25); {_badge_spacing}'):
                     ui.label(f'{job.chunk_count} CHUNKS')
             if job.status == "rendering":
-                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style(f'background-color: rgba(255,255,255,0.1); color: {engine_color};'):
+                _ec = engine_color.lstrip('#')
+                _r, _g, _b = int(_ec[0:2], 16), int(_ec[2:4], 16), int(_ec[4:6], 16)
+                with ui.element('div').classes(_badge_classes).style(
+                        f'background-color: rgba(255,255,255,0.1); color: {engine_color}; '
+                        f'border: 1px solid rgba({_r},{_g},{_b},0.25); {_badge_spacing}'):
                     ui.label(job.status.upper())
             elif job.status == "paused":
-                with ui.element('div').classes('px-2 py-1 rounded text-xs font-bold').style('background-color: rgba(161,161,170,0.15); color: #a1a1aa;'):
+                with ui.element('div').classes(_badge_classes).style(
+                        f'background-color: rgba(161,161,170,0.15); color: #a1a1aa; '
+                        f'border: 1px solid rgba(161,161,170,0.25); {_badge_spacing}'):
                     ui.label(job.status.upper())
             else:
-                with ui.element('div').classes(f'px-2 py-1 rounded bg-{config["bg"]} text-{config["color"]}-400 text-xs font-bold'):
+                _text_400 = {'blue': '96,165,250', 'yellow': '250,204,21', 'orange': '251,146,60',
+                             'green': '74,222,128', 'red': '248,113,113'}
+                _rgb = _text_400.get(config["color"], '161,161,170')
+                with ui.element('div').classes(
+                        f'{_badge_classes} bg-{config["bg"]} text-{config["color"]}-400').style(
+                        f'border: 1px solid rgba({_rgb},0.25); {_badge_spacing}'):
                     ui.label(job.status.upper())
             
             if job.status == "rendering":
@@ -127,7 +155,7 @@ def create_job_card(job):
         render_progress = " | ".join(progress_parts)
         
         ui.html(f'''
-            <div id="job-info-{job.id}" class="text-sm text-gray-500 mt-2">
+            <div id="job-info-{job.id}" class="text-xs text-gray-500 mt-2">
                 {" | ".join(info_parts)}<span id="job-render-progress-{job.id}">{(" | " + render_progress) if render_progress else ""}</span>
             </div>
         ''', sanitize=False)

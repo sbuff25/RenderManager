@@ -7,7 +7,8 @@ Entry point for running as a package: python -m wain
 Built with NiceGUI + pywebview (Qt backend) for native desktop window
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.18.0 - Network stability: token auth, auto-reconnect, connection status UI
+v2.19.5 - GPU-accelerated UI by default (--software-ui to opt out), dark
+          webview base color, visual redesign per companion Figma file
 
 https://github.com/sbuff25/RenderManager
 """
@@ -28,12 +29,35 @@ import threading
 
 # ============================================================================
 # QtWebEngine GPU configuration
-# Disable GPU hardware acceleration in QtWebEngine to prevent conflicts
-# with render engines (Vantage, Toolbag) that need full GPU access.
-# UI smoothness is achieved via CSS/JS optimizations instead.
+# v2.19.3: GPU compositing is ENABLED by default. The UI's compositing load is
+# negligible next to an actual render, and software rasterization made the
+# styled UI sluggish. Pass --software-ui to fall back to CPU rendering if you
+# ever see UI/driver conflicts with Vantage or Toolbag.
+# Checked via sys.argv because this must run before Qt imports, which happen
+# before argparse runs.
 # ============================================================================
-os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing'
+if '--software-ui' in sys.argv:
+    os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing'
+    print("Software UI mode: QtWebEngine hardware acceleration DISABLED")
 os.environ['QTWEBENGINE_DISABLE_SANDBOX'] = '1'
+
+# ============================================================================
+# Frozen build support (v2.20.0)
+# Windowed .exe builds have no console — capture stdout/stderr in a log file
+# in the writable data dir so worker mode and errors stay diagnosable.
+# ============================================================================
+if getattr(sys, 'frozen', False):
+    try:
+        from wain.config import DATA_DIR
+        _console_log = open(
+            os.path.join(DATA_DIR, 'wain_console.log'),
+            'a', buffering=1, encoding='utf-8', errors='replace',
+        )
+        sys.stdout = _console_log
+        sys.stderr = _console_log
+        print(f"--- Wain started: {__import__('datetime').datetime.now().isoformat()} ---")
+    except Exception:
+        pass
 
 # Check if native mode is available
 HAS_NATIVE_MODE = False
@@ -47,7 +71,7 @@ try:
     import webview
     
     HAS_NATIVE_MODE = True
-    print("Native mode: PyQt6 + WebEngine + qtpy available (GPU reserved for render engines)")
+    print("Native mode: PyQt6 + WebEngine + qtpy available")
 except ImportError as e:
     print(f"Native mode unavailable ({e}) - will use browser mode")
 
@@ -94,6 +118,11 @@ def parse_args():
         help='API token for worker authentication (shown when server starts)',
     )
     parser.add_argument(
+        '--software-ui', action='store_true',
+        help='Disable GPU compositing for the UI window (fallback if the UI '
+             'conflicts with render engines; default is GPU-accelerated)',
+    )
+    parser.add_argument(
         '--debug', action='store_true',
         help='Debug mode',
     )
@@ -114,6 +143,14 @@ def _setup_assets():
         os.path.join(cwd, 'assets'),
         os.path.join(package_dir, 'assets'),
     ]
+
+    # Frozen build: assets are bundled next to the executable (and in
+    # _MEIPASS for PyInstaller's internal layout) — check those first (v2.20.0)
+    if getattr(sys, 'frozen', False):
+        frozen_dirs = [os.path.join(os.path.dirname(sys.executable), 'assets')]
+        if hasattr(sys, '_MEIPASS'):
+            frozen_dirs.append(os.path.join(sys._MEIPASS, 'assets'))
+        possible_asset_dirs = frozen_dirs + possible_asset_dirs
 
     assets_dir = None
     for d in possible_asset_dirs:
@@ -166,6 +203,9 @@ def _configure_native_window():
     app.native.window_args['title'] = 'Wain'
     app.native.window_args['frameless'] = True
     app.native.window_args['easy_drag'] = False
+    # Dark base color for the webview surface — prevents white flashes when
+    # GPU compositor surfaces are created (e.g. opening menus/dialogs). v2.19.4
+    app.native.window_args['background_color'] = '#121212'
 
     class WindowAPI:
         def _get_hwnd(self):
@@ -376,10 +416,17 @@ def run_server(args):
 # ============================================================================
 def run_worker(args):
     """Run Wain in headless worker mode."""
-    if not args.server:
-        print("Error: --server is required in worker mode")
-        print("Usage: python -m wain --worker --server <ip:port>")
+    # Resolve server/token from CLI args, saved worker config, or an
+    # interactive first-run dialog (installed builds launch with no args).
+    from wain.network.worker_setup import get_worker_connection
+    server, token = get_worker_connection(args)
+    if not server:
+        print("Error: no server configured for worker mode")
+        print("Usage: python -m wain --worker --server <ip:port> [--token <token>]")
         sys.exit(1)
+    args.server = server
+    if token and not args.token:
+        args.token = token
 
     print(f"Starting Wain Worker...")
     print(f"Python: {sys.version}")
@@ -426,4 +473,8 @@ def run():
 
 
 if __name__ in {"__main__", "__mp_main__"}:
+    # freeze_support is required for frozen builds: NiceGUI's native window
+    # uses multiprocessing, which would otherwise respawn the whole app
+    import multiprocessing
+    multiprocessing.freeze_support()
     run()

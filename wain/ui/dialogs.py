@@ -18,6 +18,14 @@ from wain.app import render_app
 from wain.utils.file_dialogs import open_file_dialog_async, open_folder_dialog_async
 
 
+def _accent_btn_style(color: str) -> str:
+    """Accent button style with engine-colored glow (v2.19.0)."""
+    c = color.lstrip('#')
+    r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    return (f'background-color: {color} !important; border-radius: 6px; '
+            f'box-shadow: 0 2px 10px rgba({r},{g},{b},0.4);')
+
+
 def _normalize_denoiser_value(value: str) -> str:
     """Normalize denoiser value to match dropdown options."""
     if value is None:
@@ -110,7 +118,7 @@ async def show_add_job_dialog():
             format_select.update()
 
         if 'submit_btn' in accent_elements:
-            accent_elements['submit_btn'].style(f'background-color: {accent_color} !important;')
+            accent_elements['submit_btn'].style(_accent_btn_style(accent_color))
         if 'engine_settings' in accent_elements:
             accent_elements['engine_settings'].refresh()
     
@@ -496,7 +504,7 @@ async def show_add_job_dialog():
                 dialog.close()
             
             initial_accent = ENGINE_COLORS.get(form['engine_type'], "#ea7600")
-            submit_btn = ui.button('Submit Job', on_click=submit).style(f'background-color: {initial_accent} !important;')
+            submit_btn = ui.button('Submit Job', on_click=submit).style(_accent_btn_style(initial_accent))
             accent_elements['submit_btn'] = submit_btn
     
     dialog.open()
@@ -778,9 +786,9 @@ async def show_edit_job_dialog(job):
                     render_app.stats_container.refresh()
             
             if job.status in ['completed', 'failed']:
-                ui.button('Resubmit', icon='refresh', on_click=resubmit).style(f'background-color: {accent_color} !important;')
+                ui.button('Resubmit', icon='refresh', on_click=resubmit).style(_accent_btn_style(accent_color))
             else:
-                ui.button('Save', on_click=save_changes).style(f'background-color: {accent_color} !important;')
+                ui.button('Save', on_click=save_changes).style(_accent_btn_style(accent_color))
     
     dialog.open()
 

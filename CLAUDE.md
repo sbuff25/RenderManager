@@ -1,7 +1,7 @@
 # Wain — Multi-Engine Render Queue Manager
 
 > **Repository:** https://github.com/sbuff25/RenderManager
-> **Current Version:** v2.15.64 (check `config.py` for exact version)
+> **Current Version:** v2.20.0 (check `config.py` for exact version)
 > **Developer:** Spencer
 > **License:** MIT
 
@@ -542,7 +542,7 @@ Wain.bat --install      # Install dependencies
 ### Key Config Values (config.py)
 ```python
 APP_NAME = "Wain"
-APP_VERSION = "2.15.64"  # Check actual value
+APP_VERSION = "2.19.5"  # Check actual value
 ENGINE_COLORS = {
     "blender": "#ea7600",
     "marmoset": "#ef0343",
@@ -569,6 +569,14 @@ Key milestones from iterative development across multiple chat sessions:
 - **v2.9** — Vantage UI automation integration
 - **v2.14** — Marmoset subprocess flag fix (CREATE_NO_WINDOW → SW_HIDE)
 - **v2.15** — Vantage progress tracking fixes (high water mark, frame vs percentage)
-- **v2.15.64** — Current version + competitive research + feature roadmap
+- **v2.15.64** — Competitive research + feature roadmap
+- **v2.16** — Marmoset multi-pass rendering + camera detection
+- **v2.18** — Network stability: token auth, auto-reconnect, connection status UI
+- **v2.19.0** — Visual redesign from companion Figma file (engine accent bars, gradient progress bars, brand header, wagon logo)
+- **v2.19.3** — QtWebEngine GPU compositing enabled by default (`--software-ui` to opt out); software rendering was the root cause of UI sluggishness with richer styling
+- **v2.19.5** — White-flash fix (dark webview base color), splash logo shown in true colors
+- **v2.20.0** — Current version: Windows installer phase. PyInstaller bundle (`wain.spec`, entry `wain_app.py`) + Inno Setup installer (`installer.iss`) via `build_installer.bat`. Frozen builds: data in `%APPDATA%\Wain` (`wain/config.py get_data_dir()`), bootstrap skipped, stdout→`wain_console.log`, worker first-run setup dialog (`wain/network/worker_setup.py`), `multiprocessing.freeze_support()` required at entry
+
+**Design source:** The static UI is designed and iterated in a companion Figma file ("Wain UI") before being ported to code. Keep app CSS and the Figma file in sync when changing visuals.
 
 **Always search past project context before making changes to maintain continuity.**

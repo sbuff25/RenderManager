@@ -20,6 +20,11 @@ REQUIRED_PACKAGES = [
 
 
 def check_and_install_dependencies():
+    # Frozen .exe builds bundle all dependencies — pip is unavailable and
+    # nothing should be installed at runtime (v2.20.0)
+    if getattr(sys, 'frozen', False):
+        return
+
     missing_required = []
     missing_optional = []
     

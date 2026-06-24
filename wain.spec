@@ -33,12 +33,21 @@ hiddenimports = [
     'PIL.ImageTk',
 ]
 
-# nicegui bundles its web frontend as package data — collect everything
-for _pkg in ('nicegui',):
+# Collect packages whose compiled extensions / dynamic imports PyInstaller's
+# analysis misses (orjson.orjson, pydantic_core._pydantic_core, uvicorn's
+# dynamically-selected loops and protocols, socketio async drivers, and
+# nicegui's bundled web frontend)
+for _pkg in ('nicegui', 'orjson', 'pydantic', 'pydantic_core', 'fastapi',
+             'uvicorn', 'engineio', 'socketio'):
     _d, _b, _h = collect_all(_pkg)
     datas += _d
     binaries += _b
     hiddenimports += _h
+
+hiddenimports += [
+    'engineio.async_drivers.asgi',
+    'engineio.async_drivers.threading',
+]
 
 a = Analysis(
     ['wain_app.py'],

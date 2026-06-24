@@ -47,26 +47,40 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Build OUTSIDE the project folder ---
+REM The project folder may be watched by sync/indexing tools that hold file
+REM handles on dist\, which breaks PyInstaller's output cleanup. Building in
+REM %LOCALAPPDATA% avoids that entirely.
+set "BUILDROOT=%LOCALAPPDATA%\WainBuild"
+set "DISTDIR=%BUILDROOT%\dist"
+set "WORKDIR=%BUILDROOT%\build"
+echo  Output: %DISTDIR%
+echo.
+
 REM --- PyInstaller bundle ---
 echo [2/4] Building PyInstaller bundle (this takes a few minutes)...
-python -m PyInstaller wain.spec --noconfirm --clean
+REM Kill any running Wain instance — it locks files in the output directory
+taskkill /F /IM Wain.exe /T >nul 2>&1
+python -m PyInstaller wain.spec --noconfirm --clean --distpath "%DISTDIR%" --workpath "%WORKDIR%"
 if errorlevel 1 (
     echo [X] PyInstaller build failed
     exit /b 1
 )
-if not exist "dist\Wain\Wain.exe" (
-    echo [X] dist\Wain\Wain.exe not found after build
+if not exist "%DISTDIR%\Wain\Wain.exe" (
+    echo [X] %DISTDIR%\Wain\Wain.exe not found after build
     exit /b 1
 )
 
-REM --- Portable zip ---
+REM --- Portable zip (self-installing: includes portable_install.bat) ---
 echo [3/4] Creating portable zip...
-if exist "dist\Wain-%VERSION%-portable.zip" del "dist\Wain-%VERSION%-portable.zip"
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\Wain' -DestinationPath 'dist\Wain-%VERSION%-portable.zip' -Force"
+copy /y portable_install.bat "%DISTDIR%\Wain\" >nul
+copy /y portable_uninstall.bat "%DISTDIR%\Wain\" >nul
+if exist "%DISTDIR%\Wain-%VERSION%-portable.zip" del "%DISTDIR%\Wain-%VERSION%-portable.zip"
+powershell -NoProfile -Command "Compress-Archive -Path '%DISTDIR%\Wain' -DestinationPath '%DISTDIR%\Wain-%VERSION%-portable.zip' -Force"
 if errorlevel 1 (
     echo [!] Portable zip creation failed (continuing)
 ) else (
-    echo     dist\Wain-%VERSION%-portable.zip
+    echo     %DISTDIR%\Wain-%VERSION%-portable.zip
 )
 
 REM --- Inno Setup installer ---
@@ -77,27 +91,31 @@ if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Se
 where ISCC >nul 2>&1 && set "ISCC=ISCC"
 
 if "%ISCC%"=="" (
-    echo [!] Inno Setup 6 not found - skipping installer.
-    echo     Install from https://jrsoftware.org/isinfo.php then re-run,
-    echo     or build manually: ISCC /DMyAppVersion=%VERSION% installer.iss
+    echo [!] Inno Setup 6 not found - skipping the setup wizard exe.
+    echo     This is OPTIONAL: the portable zip is self-installing.
+    echo     ^(Unzip on the target machine and run portable_install.bat^)
+    echo     For the wizard: winget install -e --id JRSoftware.InnoSetup
 ) else (
-    "%ISCC%" /Q /DMyAppVersion=%VERSION% installer.iss
+    "%ISCC%" /Q /DMyAppVersion=%VERSION% /DBuildDir="%DISTDIR%" installer.iss
     if errorlevel 1 (
         echo [X] Installer build failed
         exit /b 1
     )
-    echo     dist\installer\Wain-Setup-%VERSION%.exe
+    echo     %DISTDIR%\installer\Wain-Setup-%VERSION%.exe
 )
 
 echo.
 echo ============================================
 echo  Build complete!
 echo ============================================
+echo  Outputs in: %DISTDIR%
+echo.
 echo  Test checklist:
-echo    1. dist\Wain\Wain.exe launches, UI loads, version chip shows %VERSION%
+echo    1. Wain.exe launches, UI loads, version chip shows %VERSION%
 echo    2. Add + render a Blender job (engine detection works frozen)
 echo    3. Settings - enable network mode - check API token in log
 echo    4. On another machine: portable zip - Wain.exe --worker (setup dialog)
 echo    5. Install via setup exe, repeat 1-3, then uninstall cleanly
 echo.
+start "" "%DISTDIR%"
 endlocal

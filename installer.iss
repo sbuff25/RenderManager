@@ -13,6 +13,10 @@
 #ifndef MyAppVersion
   #define MyAppVersion "2.20.0"
 #endif
+; Build output directory (passed by build_installer.bat as /DBuildDir=...)
+#ifndef BuildDir
+  #define BuildDir "dist"
+#endif
 
 #define MyAppName "Wain"
 #define MyAppPublisher "Spencer"
@@ -30,7 +34,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=
-OutputDir=dist\installer
+OutputDir={#BuildDir}\installer
 OutputBaseFilename=Wain-Setup-{#MyAppVersion}
 SetupIconFile=assets\wain_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -49,7 +53,7 @@ Name: "workershortcut"; Description: "Create a ""Wain Worker"" shortcut (render 
 Name: "firewall"; Description: "Add a Windows Firewall rule for network rendering (port 8080)"; GroupDescription: "Network rendering:"; Flags: unchecked
 
 [Files]
-Source: "dist\Wain\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildDir}\Wain\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "portable_install.bat,portable_uninstall.bat"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

@@ -675,4 +675,14 @@ class WorkerClient:
             except Exception:
                 pass
 
+        # Detect installed Unreal Engine versions (v2.21.0)
+        unreal = self.engine_registry.get("unreal")
+        if unreal:
+            try:
+                versions = unreal.scan_installed_versions()
+                if versions:
+                    caps["unreal_versions"] = list(versions.keys())
+            except Exception:
+                pass
+
         return caps

@@ -1,0 +1,447 @@
+"""
+Wain - Unreal Engine
+====================
+
+Render engine implementation for Unreal Engine (Movie Render Queue).
+v2.21.0 - Initial Unreal Engine support
+
+https://github.com/sbuff25/RenderManager
+
+Architecture: Headless out-of-process rendering via UnrealEditor-Cmd.exe.
+The Movie Render Queue (MRQ) is driven entirely from the command line:
+
+    UnrealEditor-Cmd.exe "<project>.uproject" <MapPath> -game
+        -LevelSequence="<SequencePath>" -MoviePipelineConfig="<PresetPath>"
+        -windowed -resx=1280 -resy=720 -log -stdout -unattended -RenderOffscreen
+
+Key design decisions:
+
+1. OUT-OF-PROCESS ONLY. Wain never talks to a running editor - it spawns a
+   fresh headless UnrealEditor-Cmd.exe per job. This sidesteps the well-known
+   in-editor MRQ teardown crash (D3D12 refcount ensure on completion) and
+   means a GPU device-hung frame kills the child process, not an editor.
+
+2. FILE-COUNT PROGRESS (primary). MRQ's stdout does not reliably announce
+   per-frame completion across UE versions, so Wain watches the output folder
+   (recursively) and counts image files created after render start. This is
+   the Royal Render philosophy: a frame is done when it's on disk. It also
+   works transparently over VPN/UNC paths where a worker renders remotely.
+   Stdout is still parsed for status/errors and streamed to the log (secondary).
+
+3. RESOLUTION / FORMAT / FRAME RANGE come from the MRQ preset asset, not from
+   Wain. The job's Output Folder must match the preset's Output Directory for
+   progress tracking to work. Frame start/end on the job are used only for
+   progress math (current/total), not to override the sequence.
+
+Known log markers (UE 5.x):
+    LogMovieRenderPipeline: MoviePipelineLinearExecutorBase starting N jobs.
+    LogMovieRenderPipeline: ... (per-shot / warm-up / export lines)
+    LogImageWriteQueue: ... (frame writes on some versions)
+"""
+
+import os
+import json
+import re
+import subprocess
+import threading
+import time
+from typing import Dict, Any, Optional, List
+
+from wain.engines.base import RenderEngine
+
+
+# Epic Games Launcher install manifest - the canonical list of UE installs
+LAUNCHER_INSTALLED_DAT = r"C:\ProgramData\Epic\UnrealEngineLauncher\LauncherInstalled.dat"
+
+# Image extensions MRQ can emit (used for output-folder frame counting)
+FRAME_EXTENSIONS = {".exr", ".png", ".jpg", ".jpeg", ".bmp"}
+
+# Stdout lines worth forwarding to the Wain log (UE output is extremely
+# chatty - thousands of shader-compile lines - so we filter hard)
+LOG_FORWARD_RE = re.compile(
+    r"(LogMovieRenderPipeline|LogMoviePipeline|LogImageWriteQueue"
+    r"|LogInit: Display: (Engine|Game) is initialized"
+    r"|LogShaderCompilers:.*\d+ shaders left"
+    r"|Fatal error|Assertion failed|GPU Crash|DEVICE_HUNG|DEVICE_REMOVED"
+    r"|Error:)",
+    re.IGNORECASE,
+)
+
+# Status-message extraction (shown on the job card, not just the log)
+STATUS_PATTERNS = [
+    (re.compile(r"LogShaderCompilers:.*?(\d+) shaders left"), "Compiling shaders ({0} left)"),
+    (re.compile(r"MoviePipelineLinearExecutorBase starting (\d+) job"), "Starting render job..."),
+    (re.compile(r"LogMovieRenderPipeline:.*Warm[- ]?[Uu]p"), "Warming up..."),
+    (re.compile(r"LogMovieRenderPipeline:.*[Ff]inaliz"), "Finalizing output..."),
+]
+
+
+class UnrealEngine(RenderEngine):
+    """Unreal Engine (Movie Render Queue) integration."""
+
+    name = "Unreal Engine"
+    engine_type = "unreal"
+    file_extensions = [".uproject"]
+    icon = "movie"
+    color = "#0d8de3"
+
+    # Fallback search roots when LauncherInstalled.dat is missing.
+    # Epic installs default to "<drive>:\Program Files\Epic Games\UE_X.Y" but
+    # users commonly relocate to "<drive>:\Epic Games\UE_X.Y".
+    SEARCH_DRIVE_SUFFIXES = [
+        r"Program Files\Epic Games",
+        r"Epic Games",
+    ]
+
+    # Output format is governed by the MRQ preset; "Preset" is the honest
+    # default. The rest are informational labels only.
+    OUTPUT_FORMATS = {"Preset": "PRESET", "EXR": "EXR", "PNG": "PNG", "JPEG": "JPG"}
+
+    # Cap for .uasset class-sniffing during probe (keeps probing fast on
+    # multi-thousand-asset projects; 64KB covers the import table region)
+    PROBE_MAX_ASSETS = 20000
+    PROBE_READ_BYTES = 65536
+
+    # Output-folder poll cadence while rendering
+    POLL_INTERVAL_SECONDS = 2.0
+
+    def __init__(self):
+        super().__init__()
+        self.scan_installed_versions()
+
+    # ------------------------------------------------------------------
+    # Version discovery
+    # ------------------------------------------------------------------
+
+    def scan_installed_versions(self):
+        self.installed_versions = {}
+
+        # 1) Canonical: Epic Launcher's install manifest
+        try:
+            if os.path.exists(LAUNCHER_INSTALLED_DAT):
+                with open(LAUNCHER_INSTALLED_DAT, "r", encoding="utf-8-sig") as f:
+                    data = json.load(f)
+                for entry in data.get("InstallationList", []):
+                    app = entry.get("AppName", "")
+                    loc = entry.get("InstallLocation", "")
+                    if not app.startswith("UE_") or not loc:
+                        continue
+                    exe = os.path.join(loc, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
+                    if os.path.exists(exe):
+                        self.installed_versions[app[3:]] = exe  # "UE_5.8" -> "5.8"
+        except Exception:
+            pass
+
+        # 2) Fallback: scan common folders on all fixed drives
+        try:
+            import string
+            for letter in string.ascii_uppercase:
+                for suffix in self.SEARCH_DRIVE_SUFFIXES:
+                    base = f"{letter}:\\{suffix}"
+                    if not os.path.isdir(base):
+                        continue
+                    for entry in os.listdir(base):
+                        if not entry.startswith("UE_"):
+                            continue
+                        exe = os.path.join(base, entry, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
+                        version = entry[3:]
+                        if version not in self.installed_versions and os.path.exists(exe):
+                            self.installed_versions[version] = exe
+        except Exception:
+            pass
+
+        return self.installed_versions
+
+    def add_custom_path(self, path: str) -> Optional[str]:
+        """Accept a path to UnrealEditor-Cmd.exe (or an engine root folder)."""
+        if os.path.isdir(path):
+            candidate = os.path.join(path, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
+            if os.path.exists(candidate):
+                path = candidate
+        if os.path.exists(path) and path.lower().endswith("unrealeditor-cmd.exe"):
+            # Derive version from the folder name if it matches UE_X.Y
+            version = "custom"
+            m = re.search(r"UE_(\d+\.\d+)", path)
+            if m:
+                version = m.group(1)
+            self.installed_versions[version] = path
+            return version
+        return None
+
+    def get_exe_for_project(self, uproject_path: str) -> Optional[str]:
+        """Pick the best UnrealEditor-Cmd.exe for a .uproject.
+
+        Uses the project's EngineAssociation (e.g. "5.8") when it matches an
+        installed version; otherwise falls back to the newest install.
+        """
+        if not self.installed_versions:
+            return None
+        assoc = ""
+        try:
+            with open(uproject_path, "r", encoding="utf-8-sig") as f:
+                assoc = str(json.load(f).get("EngineAssociation", ""))
+        except Exception:
+            pass
+        if assoc:
+            for version, exe in self.installed_versions.items():
+                if version == assoc or version.startswith(assoc):
+                    return exe
+        newest = sorted(self.installed_versions.keys(), reverse=True)[0]
+        return self.installed_versions[newest]
+
+    # ------------------------------------------------------------------
+    # Scene probing
+    # ------------------------------------------------------------------
+
+    def get_scene_info(self, file_path: str) -> Dict[str, Any]:
+        """Probe a .uproject without launching the engine.
+
+        Launching a headless editor to introspect assets costs minutes, so
+        instead we:
+          - parse the .uproject JSON for the engine version
+          - scan Content/ for .umap files (maps)
+          - sniff .uasset headers for LevelSequence / MoviePipelinePrimaryConfig
+            class imports (sequences and MRQ presets)
+        File paths are converted to UE soft object paths:
+          <Project>/Content/Foo/Bar.umap -> /Game/Foo/Bar
+        """
+        info: Dict[str, Any] = {
+            "cameras": [], "active_camera": "",
+            "resolution_x": 3840, "resolution_y": 2160,
+            "frame_start": 1, "frame_end": 1, "has_animation": True,
+            "engine_version": "", "maps": [], "sequences": [], "presets": [],
+        }
+        if not os.path.exists(file_path):
+            return info
+
+        try:
+            with open(file_path, "r", encoding="utf-8-sig") as f:
+                info["engine_version"] = str(json.load(f).get("EngineAssociation", ""))
+        except Exception:
+            pass
+
+        content_dir = os.path.join(os.path.dirname(file_path), "Content")
+        if not os.path.isdir(content_dir):
+            return info
+
+        def to_game_path(full: str) -> str:
+            rel = os.path.relpath(full, content_dir)
+            rel = os.path.splitext(rel)[0].replace("\\", "/")
+            return f"/Game/{rel}"
+
+        maps: List[str] = []
+        sequences: List[str] = []
+        presets: List[str] = []
+        scanned = 0
+
+        for root, dirs, files in os.walk(content_dir):
+            # Skip UE-internal folders that never hold user render assets
+            dirs[:] = [d for d in dirs if d not in ("__ExternalActors__", "__ExternalObjects__", "Developers")]
+            for fn in files:
+                ext = os.path.splitext(fn)[1].lower()
+                full = os.path.join(root, fn)
+                if ext == ".umap":
+                    maps.append(to_game_path(full))
+                elif ext == ".uasset":
+                    scanned += 1
+                    if scanned > self.PROBE_MAX_ASSETS:
+                        continue
+                    try:
+                        with open(full, "rb") as f:
+                            head = f.read(self.PROBE_READ_BYTES)
+                        if b"MoviePipelinePrimaryConfig" in head or b"MoviePipelineMasterConfig" in head:
+                            presets.append(to_game_path(full))
+                        elif b"LevelSequence" in head:
+                            sequences.append(to_game_path(full))
+                    except Exception:
+                        continue
+
+        info["maps"] = sorted(maps)
+        info["sequences"] = sorted(sequences)
+        info["presets"] = sorted(presets)
+        return info
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def get_output_formats(self) -> Dict[str, str]:
+        return self.OUTPUT_FORMATS
+
+    def get_default_settings(self) -> Dict[str, Any]:
+        return {"map_path": "", "sequence_path": "", "preset_path": "", "extra_args": ""}
+
+    def _snapshot_output(self, folder: str) -> set:
+        """Set of image files currently in the output folder (recursive)."""
+        found = set()
+        try:
+            for root, _dirs, files in os.walk(folder):
+                for fn in files:
+                    if os.path.splitext(fn)[1].lower() in FRAME_EXTENSIONS:
+                        found.add(os.path.join(root, fn))
+        except Exception:
+            pass
+        return found
+
+    def start_render(self, job, start_frame, on_progress, on_complete, on_error, on_log=None):
+        exe = self.get_exe_for_project(job.file_path)
+        if not exe:
+            on_error("No Unreal Engine installation found (looked for UnrealEditor-Cmd.exe)")
+            return
+        if not os.path.exists(job.file_path):
+            on_error(f"Project not found: {job.file_path}")
+            return
+
+        settings = job.engine_settings or {}
+        map_path = (settings.get("map_path") or "").strip()
+        sequence_path = (settings.get("sequence_path") or "").strip()
+        preset_path = (settings.get("preset_path") or "").strip()
+        if not map_path or not sequence_path or not preset_path:
+            on_error("Unreal jobs need a Map, Level Sequence, and MRQ Preset (see job settings)")
+            return
+
+        self.is_cancelling = False
+        os.makedirs(job.output_folder, exist_ok=True)
+
+        cmd = [
+            exe, job.file_path, map_path, "-game",
+            f"-LevelSequence={sequence_path}",
+            f"-MoviePipelineConfig={preset_path}",
+            "-windowed", "-resx=1280", "-resy=720",
+            "-log", "-stdout", "-FullStdOutLogOutput",
+            "-unattended", "-RenderOffscreen",
+            "-NoSplash", "-NoLoadingScreen",
+        ]
+        extra = (settings.get("extra_args") or "").strip()
+        if extra:
+            cmd.extend(extra.split())
+
+        if on_log:
+            on_log(f"[Unreal] Engine: {exe}")
+            on_log(f"[Unreal] Command: {' '.join(cmd)}")
+            on_log("[Unreal] Resolution/format/frame-range come from the MRQ preset; "
+                   "progress is tracked by files appearing in the output folder.")
+
+        # Frames present before we start don't count toward progress
+        preexisting = self._snapshot_output(job.output_folder)
+        total_frames = max(1, job.frame_end - job.frame_start + 1) if job.is_animation else 1
+
+        def render_thread():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                env = os.environ.copy()
+                env["PYTHONIOENCODING"] = "utf-8"
+                for key in ["QTWEBENGINE_CHROMIUM_FLAGS", "QT_QUICK_BACKEND",
+                            "QTWEBENGINE_DISABLE_SANDBOX", "QT_API", "PYWEBVIEW_GUI"]:
+                    env.pop(key, None)
+
+                self.current_process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    startupinfo=startupinfo, env=env,
+                )
+
+                seen_frames = 0
+                fatal_lines: List[str] = []
+                stop_polling = threading.Event()
+
+                def poll_output_folder():
+                    """Count delivered frames on disk - the primary progress signal."""
+                    nonlocal seen_frames
+                    while not stop_polling.wait(self.POLL_INTERVAL_SECONDS):
+                        if self.is_cancelling:
+                            return
+                        current = self._snapshot_output(job.output_folder) - preexisting
+                        n = len(current)
+                        if n > seen_frames:
+                            seen_frames = n
+                            msg = f"Frame {n}/{total_frames} written"
+                            if job.is_animation:
+                                # app.py convention: report the frame number,
+                                # then -1 to commit it as "saved"
+                                on_progress(job.frame_start + n - 1, msg)
+                                on_progress(-1, msg)
+                            else:
+                                on_progress(-1, msg)
+
+                poller = threading.Thread(target=poll_output_folder, daemon=True)
+                poller.start()
+
+                while True:
+                    if self.is_cancelling:
+                        break
+                    try:
+                        line_bytes = self.current_process.stdout.readline()
+                        if not line_bytes:
+                            break
+                        line = line_bytes.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        safe_line = "".join(c if 32 <= ord(c) < 127 else "?" for c in line)
+
+                        if re.search(r"Fatal error|Assertion failed|GPU Crash|DEVICE_HUNG|DEVICE_REMOVED", line, re.IGNORECASE):
+                            fatal_lines.append(safe_line)
+
+                        if on_log and LOG_FORWARD_RE.search(line):
+                            on_log(safe_line)
+
+                        # Surface friendly status text on the job card
+                        for pattern, template in STATUS_PATTERNS:
+                            m = pattern.search(line)
+                            if m:
+                                status = template.format(*m.groups()) if m.groups() else template
+                                on_progress(0, status)
+                                break
+                    except Exception:
+                        continue
+
+                return_code = self.current_process.wait()
+                stop_polling.set()
+
+                # Final frame count (poller may not have caught the last write)
+                final_frames = len(self._snapshot_output(job.output_folder) - preexisting)
+                self.current_process = None
+
+                if self.is_cancelling:
+                    return
+
+                if return_code == 0:
+                    if on_log:
+                        on_log(f"[Unreal] Finished - {final_frames} frame(s) written, exit code 0")
+                    on_complete()
+                elif final_frames >= total_frames and total_frames > 1:
+                    # All expected frames are on disk; a nonzero exit here is a
+                    # teardown quirk, not a failed render. Complete with a note.
+                    if on_log:
+                        on_log(f"[Unreal] WARNING: exit code {return_code} but all "
+                               f"{final_frames}/{total_frames} frames are on disk - treating as complete")
+                    on_complete()
+                else:
+                    detail = f"; {fatal_lines[-1]}" if fatal_lines else ""
+                    on_error(f"Unreal exited with code {return_code} "
+                             f"({final_frames}/{total_frames} frames written){detail}")
+
+            except Exception as e:
+                self.current_process = None
+                if not self.is_cancelling:
+                    on_error(str(e))
+
+        threading.Thread(target=render_thread, daemon=True).start()
+
+    def cancel_render(self):
+        self.is_cancelling = True
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+            except Exception:
+                pass
+            self.current_process = None
+
+    def open_file_in_app(self, file_path: str, version: str = None):
+        """Open the project in the full (GUI) editor."""
+        exe = self.get_exe_for_project(file_path)
+        if exe:
+            gui_exe = exe.replace("UnrealEditor-Cmd.exe", "UnrealEditor.exe")
+            if os.path.exists(gui_exe):
+                subprocess.Popen([gui_exe, file_path], creationflags=subprocess.DETACHED_PROCESS)

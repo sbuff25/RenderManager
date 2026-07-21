@@ -57,6 +57,10 @@ async def show_add_job_dialog():
         'vantage_use_custom': False,  # Toggle for custom settings
         'vantage_samples': 100,
         'vantage_denoiser': 'nvidia',  # nvidia, oidn, off
+        # Unreal-specific (v2.21.0) - soft object paths for MRQ
+        'unreal_map': '', 'unreal_sequence': '', 'unreal_preset': '',
+        'unreal_extra_args': '',
+        'unreal_maps': [], 'unreal_sequences': [], 'unreal_presets': [],
     }
     
     camera_select = None
@@ -77,6 +81,7 @@ async def show_add_job_dialog():
         'blender': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
         'marmoset': ['PNG', 'JPEG', 'TGA', 'PSD', 'PSD (16-bit)', 'EXR (16-bit)', 'EXR (32-bit)'],
         'vantage': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
+        'unreal': ['Preset', 'EXR', 'PNG', 'JPEG'],  # MRQ preset governs actual output
     }
     
     def get_current_scale():
@@ -230,12 +235,31 @@ async def show_add_job_dialog():
                             if info.get('animation_fps'):
                                 form['vantage_fps'] = info['animation_fps']
                         
+                        # Unreal-specific: probed asset candidates for MRQ (v2.21.0)
+                        if detected.engine_type == 'unreal':
+                            form['unreal_maps'] = info.get('maps', [])
+                            form['unreal_sequences'] = info.get('sequences', [])
+                            form['unreal_presets'] = info.get('presets', [])
+                            # Auto-select when there's exactly one candidate
+                            if len(form['unreal_maps']) == 1 and not form['unreal_map']:
+                                form['unreal_map'] = form['unreal_maps'][0]
+                            if len(form['unreal_sequences']) == 1 and not form['unreal_sequence']:
+                                form['unreal_sequence'] = form['unreal_sequences'][0]
+                            if len(form['unreal_presets']) == 1 and not form['unreal_preset']:
+                                form['unreal_preset'] = form['unreal_presets'][0]
+
                         # Update engine settings section
                         if 'engine_settings' in accent_elements:
                             accent_elements['engine_settings'].refresh()
-                        
+
                         # Status message
-                        if detected.engine_type == 'vantage':
+                        if detected.engine_type == 'unreal':
+                            ver = info.get('engine_version', '?')
+                            status_label.set_text(
+                                f"UE {ver}: {len(form['unreal_maps'])} maps, "
+                                f"{len(form['unreal_sequences'])} sequences, "
+                                f"{len(form['unreal_presets'])} MRQ presets found")
+                        elif detected.engine_type == 'vantage':
                             res_str = f"{info.get('resolution_x', '?')}x{info.get('resolution_y', '?')}"
                             samples = info.get('samples', '?')
                             frames = info.get('frame_end', 1)
@@ -417,7 +441,26 @@ async def show_add_job_dialog():
                                 for p in passes:
                                     is_checked = p['id'] in form['render_passes']
                                     ui.checkbox(p['name'], value=is_checked, on_change=_make_pass_toggle(p['id'])).props('dense').classes('text-xs')
-            
+
+                elif form['engine_type'] == 'unreal':
+                    ui.separator()
+                    ui.label('Movie Render Queue').classes('text-sm font-bold').style('color: #0d8de3;')
+                    ui.label('Asset paths in /Game/... form. Browse a .uproject above to auto-detect candidates.').classes('text-xs text-zinc-400')
+
+                    ui.input('Map', placeholder='/Game/Maps/MyLevel',
+                             autocomplete=form['unreal_maps']).bind_value(form, 'unreal_map').classes('w-full')
+                    ui.input('Level Sequence', placeholder='/Game/Cinematics/MySequence',
+                             autocomplete=form['unreal_sequences']).bind_value(form, 'unreal_sequence').classes('w-full')
+                    ui.input('MRQ Preset', placeholder='/Game/MyRenderPreset',
+                             autocomplete=form['unreal_presets']).bind_value(form, 'unreal_preset').classes('w-full')
+                    ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
+
+                    with ui.row().classes('w-full items-center gap-2 mt-1'):
+                        ui.icon('info').classes('text-zinc-400')
+                        ui.label('Resolution, format, and frame range come from the MRQ preset. '
+                                 'Set Output Folder to the preset\'s Output Directory so progress can be tracked, '
+                                 'and set the frame range above to match the sequence for accurate percentages.').classes('text-xs text-zinc-400')
+
             accent_elements['engine_settings'] = engine_settings_section
             engine_settings_section()
             
@@ -441,7 +484,13 @@ async def show_add_job_dialog():
             def submit():
                 if not form['file_path'] or not form['output_folder']:
                     return
-                
+
+                # Unreal jobs can't start without the three MRQ asset paths
+                if form['engine_type'] == 'unreal':
+                    if not (form['unreal_map'] and form['unreal_sequence'] and form['unreal_preset']):
+                        ui.notify('Unreal jobs need a Map, Level Sequence, and MRQ Preset', type='warning')
+                        return
+
                 engine_settings = {}
                 if form['engine_type'] == 'vantage':
                     if form['vantage_use_custom']:
@@ -470,7 +519,14 @@ async def show_add_job_dialog():
                         "render_passes": form.get('render_passes', ['beauty']),
                         "render_pass_data": render_pass_data,
                     }
-                
+                elif form['engine_type'] == 'unreal':
+                    engine_settings = {
+                        "map_path": form['unreal_map'].strip(),
+                        "sequence_path": form['unreal_sequence'].strip(),
+                        "preset_path": form['unreal_preset'].strip(),
+                        "extra_args": form['unreal_extra_args'].strip(),
+                    }
+
                 job = RenderJob(
                     name=form['name'] or "Untitled",
                     engine_type=form['engine_type'],
@@ -534,6 +590,11 @@ async def show_edit_job_dialog(job):
         'vantage_use_custom': job.engine_settings.get('use_custom_settings', False),
         'vantage_samples': job.engine_settings.get('samples', 100),
         'vantage_denoiser': job.engine_settings.get('denoiser', 'nvidia'),
+        # Unreal-specific (v2.21.0)
+        'unreal_map': job.engine_settings.get('map_path', ''),
+        'unreal_sequence': job.engine_settings.get('sequence_path', ''),
+        'unreal_preset': job.engine_settings.get('preset_path', ''),
+        'unreal_extra_args': job.engine_settings.get('extra_args', ''),
     }
     
     with ui.dialog().props('transition-show="jump-up" transition-hide="jump-down" transition-duration="150"') as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
@@ -566,6 +627,7 @@ async def show_edit_job_dialog(job):
                 'blender': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
                 'marmoset': ['PNG', 'JPEG', 'TGA', 'PSD', 'PSD (16-bit)', 'EXR (16-bit)', 'EXR (32-bit)'],
                 'vantage': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
+                'unreal': ['Preset', 'EXR', 'PNG', 'JPEG'],
             }
             with ui.row().classes('w-full gap-2'):
                 ui.input('Prefix', value=form['output_name']).bind_value(form, 'output_name').classes('flex-grow')
@@ -684,6 +746,18 @@ async def show_edit_job_dialog(job):
 
                 edit_engine_settings()
 
+            elif job.engine_type == 'unreal':
+                ui.separator()
+                ui.label('Movie Render Queue').classes('text-sm font-bold').style('color: #0d8de3;')
+                ui.input('Map', placeholder='/Game/Maps/MyLevel').bind_value(form, 'unreal_map').classes('w-full')
+                ui.input('Level Sequence', placeholder='/Game/Cinematics/MySequence').bind_value(form, 'unreal_sequence').classes('w-full')
+                ui.input('MRQ Preset', placeholder='/Game/MyRenderPreset').bind_value(form, 'unreal_preset').classes('w-full')
+                ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
+                with ui.row().classes('w-full items-center gap-2 mt-1'):
+                    ui.icon('info').classes('text-zinc-400')
+                    ui.label('Resolution, format, and frame range come from the MRQ preset. '
+                             'Output Folder must match the preset\'s Output Directory for progress tracking.').classes('text-xs text-zinc-400')
+
             # Status info
             ui.separator()
             status_text = f"Status: {job.status.upper()}"
@@ -734,6 +808,13 @@ async def show_edit_job_dialog(job):
                         }
                     else:
                         job.engine_settings = {'use_custom_settings': False}
+                elif job.engine_type == 'unreal':
+                    job.engine_settings = {
+                        'map_path': form['unreal_map'].strip(),
+                        'sequence_path': form['unreal_sequence'].strip(),
+                        'preset_path': form['unreal_preset'].strip(),
+                        'extra_args': form['unreal_extra_args'].strip(),
+                    }
 
                 job.camera = form.get('camera', '')
 

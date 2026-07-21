@@ -9,21 +9,21 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.20.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.21.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
 
 <p align="center">
-  <em>Queue, render, and manage your Blender, Marmoset Toolbag, and Chaos Vantage projects with ease.</em>
+  <em>Queue, render, and manage your Blender, Marmoset Toolbag, Chaos Vantage, and Unreal Engine projects with ease.</em>
 </p>
 
 ---
 
 ## ✨ Features
 
-- **Multi-Engine Support** — Blender, Marmoset Toolbag, and Chaos Vantage in one unified queue
+- **Multi-Engine Support** — Blender, Marmoset Toolbag, Chaos Vantage, and Unreal Engine in one unified queue
 - **Per-Job Settings** — Configure resolution, samples, and denoiser for each Vantage job
 - **Full Scene Probing** — Reads cameras, frame count, and settings from `.vantage` files
 - **Pause & Resume** — Stop and continue renders at any frame
@@ -34,7 +34,17 @@
 
 ---
 
-## 🆕 What's New in v2.19
+## 🆕 What's New in v2.21
+
+### Unreal Engine Support (Movie Render Queue)
+
+- **Headless MRQ rendering** — jobs run in a fresh `UnrealEditor-Cmd.exe` process, so a finished (or crashed) render never takes an editor down with it
+- **Project probing** — browse a `.uproject` and Wain auto-detects maps, Level Sequences, and MRQ presets for autocomplete
+- **Disk-based progress** — frames are counted as they land in the output folder, which works identically for local renders and remote workers over VPN/UNC paths
+- **Preset-driven** — resolution, format, and frame range come from your MRQ preset; Wain orchestrates and monitors
+- **Worker support** — network workers report installed UE versions and can claim Unreal jobs like any other engine
+
+### Previous v2.19 — Visual Redesign
 
 ### Visual Redesign & GPU-Accelerated UI
 
@@ -205,7 +215,7 @@ This produces:
 
 ## ⚠️ Vantage Settings Note
 
-**Current Status (v2.20.0):**
+**Current Status (v2.21.0):**
 Wain does **NOT** modify `vantage.ini` by default. Your Vantage configuration is completely safe.
 
 Wain uses whatever settings are already configured in Vantage's HQ Render panel.
@@ -266,6 +276,7 @@ GPU mode first.
 | Version | Highlights |
 |---------|------------|
 | **2.20.0** | Windows installer phase: PyInstaller + Inno Setup, %APPDATA% data dir, worker setup dialog |
+| **2.21.0** | Unreal Engine support: headless Movie Render Queue, project probing, disk-based progress (VPN/worker friendly) |
 | **2.19.5** | Splash screen logo colors, white-flash fix, GPU UI default |
 | **2.19.0** | Visual redesign: accent bars, gradient progress, brand header, new logo |
 | **2.18.0** | Network stability: token auth, auto-reconnect |
@@ -291,5 +302,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.20.0 — Multi-engine render queue manager</em>
+  <em>Wain v2.21.0 — Multi-engine render queue manager</em>
 </p>

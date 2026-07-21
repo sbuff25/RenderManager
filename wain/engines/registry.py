@@ -12,16 +12,18 @@ from wain.engines.base import RenderEngine
 from wain.engines.blender import BlenderEngine
 from wain.engines.marmoset import MarmosetEngine
 from wain.engines.vantage import VantageEngine
+from wain.engines.unreal import UnrealEngine
 
 
 class EngineRegistry:
     """Registry for render engines."""
-    
+
     def __init__(self):
         self.engines: Dict[str, RenderEngine] = {}
         self.register(BlenderEngine())
         self.register(MarmosetEngine())
         self.register(VantageEngine())
+        self.register(UnrealEngine())
     
     def register(self, engine: RenderEngine):
         self.engines[engine.engine_type] = engine

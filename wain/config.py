@@ -13,7 +13,7 @@ ASSET_VERSION = "v12"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.20.0"
+APP_VERSION = "2.21.0"
 
 
 # ============================================================================
@@ -66,6 +66,7 @@ ENGINE_COLORS = {
     "blender": "#ea7600",    # Orange
     "marmoset": "#ef0343",   # Red
     "vantage": "#77b22a",    # Green (Chaos Vantage brand color)
+    "unreal": "#0d8de3",     # Blue (v2.21.0)
 }
 
 # Engine logo files (in assets/ subfolder) - will be validated at runtime
@@ -73,6 +74,7 @@ ENGINE_LOGOS = {
     "blender": "blender_logo.png",
     "marmoset": "marmoset_logo.png",
     "vantage": "vantage_logo.png",
+    "unreal": "unreal_logo.png",
 }
 
 # Fallback Material icons for engines (used when logo files missing)
@@ -80,6 +82,7 @@ ENGINE_ICONS = {
     "blender": "view_in_ar",
     "marmoset": "diamond",
     "vantage": "landscape",
+    "unreal": "movie",
 }
 
 # Status display configuration

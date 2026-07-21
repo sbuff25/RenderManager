@@ -1,7 +1,7 @@
 # Wain — Multi-Engine Render Queue Manager
 
 > **Repository:** https://github.com/sbuff25/RenderManager
-> **Current Version:** v2.20.0 (check `config.py` for exact version)
+> **Current Version:** v2.21.0 (check `config.py` for exact version)
 > **Developer:** Spencer
 > **License:** MIT
 
@@ -71,6 +71,7 @@ Each render engine has a distinct themed accent color used throughout the UI:
 | Blender   | Orange    | `#ea7600` |
 | Marmoset  | Red       | `#ef0343` |
 | Vantage   | Green     | `#77b22a` |
+| Unreal    | Blue      | `#0d8de3` |
 
 These colors appear on: status badges, action buttons, progress bars, submit buttons, version badges, and all engine-specific UI elements. **Any new engine must get its own distinct accent color.**
 
@@ -243,6 +244,57 @@ The `-hide` flag tells Toolbag to run headlessly. Don't add extra subprocess fla
 - Progress percentage being interpreted as frame number (causes "Frame 1/300" display)
 - Large jobs showing incorrect frame counts due to parsing failures
 - 2-hour timeout killing valid long renders (remove arbitrary timeouts)
+
+---
+
+### Unreal Engine (v2.21.0)
+
+**Architecture:** Headless out-of-process Movie Render Queue via `UnrealEditor-Cmd.exe`
+
+**Command line:**
+```
+UnrealEditor-Cmd.exe "<project>.uproject" <MapPath> -game
+    -LevelSequence="<SequencePath>" -MoviePipelineConfig="<PresetPath>"
+    -windowed -resx=1280 -resy=720 -log -stdout -FullStdOutLogOutput
+    -unattended -RenderOffscreen -NoSplash -NoLoadingScreen
+```
+
+**⚠ CRITICAL — Design decisions (do not "simplify" these away):**
+
+1. **Out-of-process ONLY.** Never render inside a running editor — in-editor MRQ
+   has a known completion-teardown crash (D3D12 `BackingResource->GetRefCount()==1`
+   ensure). A fresh headless process per job also isolates GPU device-hung frames.
+2. **Progress = files on disk, not stdout.** MRQ stdout does not reliably announce
+   per-frame completion across UE versions. The engine polls the job's Output Folder
+   (recursively, every 2s) and counts image files created after render start.
+   This also works over VPN/UNC for network workers. Stdout is only parsed for
+   status text and errors (filtered hard — UE logs thousands of shader lines).
+3. **Resolution/format/frame-range come from the MRQ preset asset**, not from Wain.
+   The job's Output Folder must match the preset's Output Directory. Job
+   frame_start/frame_end are for progress math only.
+4. **Nonzero exit + all frames on disk = success.** UE sometimes exits nonzero on
+   teardown after a complete render; if the expected frame count is present,
+   complete with a logged warning instead of failing the job.
+
+**Version discovery:** `C:\ProgramData\Epic\UnrealEngineLauncher\LauncherInstalled.dat`
+(canonical) + fallback scan of `<drive>:\[Program Files\]Epic Games\UE_*` on all
+drives. Per-project version pick uses the `.uproject`'s `EngineAssociation`.
+
+**Scene probing (no engine launch — launching a headless editor costs minutes):**
+parse `.uproject` JSON; scan `Content/` for `.umap` (maps); sniff first 64KB of
+`.uasset` files for `LevelSequence` / `MoviePipelinePrimaryConfig` class-import
+strings (sequences / MRQ presets). File → soft path: `Content/Foo/Bar.umap` →
+`/Game/Foo/Bar`. Expect some sequence false positives (marketplace anim packs) —
+the lists are autocomplete candidates, not authoritative.
+
+**Engine settings keys:** `map_path`, `sequence_path`, `preset_path`, `extra_args`.
+All three paths required; submit blocks without them.
+
+**GPU crash note (from the Koch project):** long 4K Lumen frames can exceed the
+Windows TDR timeout (default 2s, commonly raised to 20-60s via
+`HKLM\...\GraphicsDrivers\TdrDelay`). A `DEVICE_HUNG` in the log tail means the
+frame was too heavy, not that the scene is broken — the fix is TdrDelay + lighter
+per-frame settings in the preset, and it only kills the child process, never Wain.
 
 ---
 
@@ -575,7 +627,8 @@ Key milestones from iterative development across multiple chat sessions:
 - **v2.19.0** — Visual redesign from companion Figma file (engine accent bars, gradient progress bars, brand header, wagon logo)
 - **v2.19.3** — QtWebEngine GPU compositing enabled by default (`--software-ui` to opt out); software rendering was the root cause of UI sluggishness with richer styling
 - **v2.19.5** — White-flash fix (dark webview base color), splash logo shown in true colors
-- **v2.20.0** — Current version: Windows installer phase. PyInstaller bundle (`wain.spec`, entry `wain_app.py`) + Inno Setup installer (`installer.iss`) via `build_installer.bat`. Frozen builds: data in `%APPDATA%\Wain` (`wain/config.py get_data_dir()`), bootstrap skipped, stdout→`wain_console.log`, worker first-run setup dialog (`wain/network/worker_setup.py`), `multiprocessing.freeze_support()` required at entry
+- **v2.20.0** — Windows installer phase. PyInstaller bundle (`wain.spec`, entry `wain_app.py`) + Inno Setup installer (`installer.iss`) via `build_installer.bat`. Frozen builds: data in `%APPDATA%\Wain` (`wain/config.py get_data_dir()`), bootstrap skipped, stdout→`wain_console.log`, worker first-run setup dialog (`wain/network/worker_setup.py`), `multiprocessing.freeze_support()` required at entry
+- **v2.21.0** — Current version: Unreal Engine support (4th engine, blue `#0d8de3`). Headless MRQ via `UnrealEditor-Cmd.exe` (out-of-process only — avoids in-editor teardown crash), output-folder file-count progress (VPN/worker friendly), `.uproject` probing (LauncherInstalled.dat discovery, `.uasset` header sniffing for sequences/presets), worker capability reporting (`unreal_versions`)
 
 **Design source:** The static UI is designed and iterated in a companion Figma file ("Wain UI") before being ported to code. Keep app CSS and the Figma file in sync when changing visuals.
 

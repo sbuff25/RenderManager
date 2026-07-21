@@ -3,16 +3,18 @@ Wain - Multi-Engine Render Queue Manager
 =========================================
 
 A professional render queue manager for 3D artists.
-Supports Blender, Marmoset Toolbag, and Chaos Vantage with pause/resume capabilities.
+Supports Blender, Marmoset Toolbag, Chaos Vantage, and Unreal Engine
+with pause/resume capabilities.
 
 Built with NiceGUI + pywebview (Qt backend) for native desktop window.
 Works on Python 3.10+ (including 3.13 and 3.14)
 
-v2.20.0 - Installer phase: frozen-build support (PyInstaller + Inno Setup),
-          %APPDATA% data dir, worker first-run setup dialog
+v2.21.0 - Unreal Engine support: headless Movie Render Queue rendering via
+          UnrealEditor-Cmd.exe, output-folder progress tracking (VPN/worker
+          friendly), .uproject probing for maps/sequences/MRQ presets
 """
 
-__version__ = "2.20.0"
+__version__ = "2.21.0"
 __author__ = "Spencer"
 __app_name__ = "Wain"
 

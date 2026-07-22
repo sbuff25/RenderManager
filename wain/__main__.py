@@ -77,8 +77,11 @@ except ImportError as e:
 
 from nicegui import ui, app
 
-from .ui.main import main_page
 from .app import render_app
+
+# NOTE: wain.ui.main is imported lazily inside run_standalone()/run_server().
+# Importing it registers the main app's ui.page routes, which breaks worker
+# mode (NiceGUI forbids mixing registered pages with worker-dashboard UI).
 
 
 # ============================================================================
@@ -303,6 +306,7 @@ def _configure_native_window():
 # ============================================================================
 def run_standalone():
     """Run Wain in standalone mode — existing single-machine behavior."""
+    from .ui.main import main_page  # noqa: F401 - registers the app's ui.page routes
     mode = "Desktop (Native)" if HAS_NATIVE_MODE else "Browser"
     print(f"Starting Wain ({mode} Mode)...")
     print(f"Python: {sys.version}")
@@ -347,6 +351,7 @@ def run_standalone():
 # ============================================================================
 def run_server(args):
     """Run Wain in network server mode with REST API."""
+    from .ui.main import main_page  # noqa: F401 - registers the app's ui.page routes
     from wain.config import DATABASE_FILE, NETWORK_DEFAULT_PORT, AUTH_TOKEN_FILE
     from wain.network.auth import load_or_create_token
     from wain.network.database import JobDatabase
@@ -473,7 +478,10 @@ def run_worker(args):
         app.on_shutdown(client.stop)
 
     from wain.ui.worker_ui import build_worker_ui
-    build_worker_ui(client)
+
+    @ui.page('/')
+    def _worker_page():
+        build_worker_ui(client)
 
     _assets_dir, favicon_path = _setup_assets()
     print("Starting worker dashboard...")

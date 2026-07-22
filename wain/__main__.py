@@ -491,7 +491,17 @@ def run_worker(args):
         build_worker_ui(client)
 
     _assets_dir, favicon_path = _setup_assets()
-    print("Starting worker dashboard...")
+
+    # Pick a free port for the dashboard's local server - multiple workers
+    # per machine (one per GPU) must not collide, and 8080 belongs to a
+    # possible Wain server on the same box.
+    import socket as _socket
+    _s = _socket.socket()
+    _s.bind(('127.0.0.1', 0))
+    ui_port = _s.getsockname()[1]
+    _s.close()
+
+    print(f"Starting worker dashboard (port {ui_port})...")
     ui.run(
         title='Wain Worker',
         favicon=favicon_path,
@@ -502,7 +512,7 @@ def run_worker(args):
         fullscreen=False,
         reconnect_timeout=0,
         show=True,
-        port=8090,  # keep clear of a Wain server on the same machine (8080)
+        port=ui_port,
     )
 
 

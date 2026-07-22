@@ -12,7 +12,8 @@ The Movie Render Queue (MRQ) is driven entirely from the command line:
 
     UnrealEditor-Cmd.exe "<project>.uproject" <MapPath> -game
         -LevelSequence="<SequencePath>" -MoviePipelineConfig="<PresetPath>"
-        -windowed -resx=1280 -resy=720 -log -stdout -unattended -RenderOffscreen
+        -windowed -resx=1280 -resy=720 -log -stdout -unattended
+        [-RenderOffscreen when the job's "Show preview window" is off]
 
 Key design decisions:
 
@@ -74,6 +75,16 @@ STATUS_PATTERNS = [
     (re.compile(r"LogMovieRenderPipeline:.*Warm[- ]?[Uu]p"), "Warming up..."),
     (re.compile(r"LogMovieRenderPipeline:.*[Ff]inaliz"), "Finalizing output..."),
 ]
+
+# Sequence-length auto-detection (v2.23.0). MRQ logs each shot's tick range
+# at init, then announces every camera cut. Ticks-per-frame isn't logged, so:
+#   1. When shot 1 starts, estimate total = ticks / 800 (24000 tick resolution
+#      at 30 fps - the common case - so the bar is sensible immediately).
+#   2. At every later shot boundary, recalibrate exactly from frames-on-disk:
+#      ticks_per_frame = completed_ticks / frames_written.
+SHOT_RANGE_RE = re.compile(r"Registering range: \[(\d+),(\d+)\)")
+CAMERA_CUT_RE = re.compile(r"Initializing Camera Cut \[(\d+)/(\d+)\]")
+DEFAULT_TICKS_PER_FRAME = 800
 
 
 class UnrealEngine(RenderEngine):
@@ -269,7 +280,8 @@ class UnrealEngine(RenderEngine):
         return self.OUTPUT_FORMATS
 
     def get_default_settings(self) -> Dict[str, Any]:
-        return {"map_path": "", "sequence_path": "", "preset_path": "", "extra_args": ""}
+        return {"map_path": "", "sequence_path": "", "preset_path": "",
+                "extra_args": "", "show_preview": True}
 
     def _snapshot_output(self, folder: str) -> set:
         """Set of image files currently in the output folder (recursive)."""
@@ -303,15 +315,20 @@ class UnrealEngine(RenderEngine):
         self.is_cancelling = False
         os.makedirs(job.output_folder, exist_ok=True)
 
+        # show_preview: render in a visible game window (MRQ progress overlay,
+        # frames appear as they're drawn). Off = -RenderOffscreen, fully headless.
+        show_preview = bool(settings.get("show_preview", True))
         cmd = [
             exe, job.file_path, map_path, "-game",
             f"-LevelSequence={sequence_path}",
             f"-MoviePipelineConfig={preset_path}",
             "-windowed", "-resx=1280", "-resy=720",
             "-log", "-stdout", "-FullStdOutLogOutput",
-            "-unattended", "-RenderOffscreen",
+            "-unattended",
             "-NoSplash", "-NoLoadingScreen",
         ]
+        if not show_preview:
+            cmd.append("-RenderOffscreen")
         extra = (settings.get("extra_args") or "").strip()
         if extra:
             cmd.extend(extra.split())
@@ -325,8 +342,24 @@ class UnrealEngine(RenderEngine):
         # Frames present before we start don't count toward progress
         preexisting = self._snapshot_output(job.output_folder)
         total_frames = max(1, job.frame_end - job.frame_start + 1) if job.is_animation else 1
+        shot_spans: List[tuple] = []  # (start_tick, end_tick) per shot, from MRQ log
+
+        def apply_total(n: int, source: str):
+            """Adopt a detected sequence length: fixes the progress denominator
+            and rewrites the job's frame range so the UI shows real numbers."""
+            nonlocal total_frames
+            n = max(1, int(round(n)))
+            if n == total_frames:
+                return
+            total_frames = n
+            job.is_animation = True
+            job.frame_start = 1
+            job.frame_end = n
+            if on_log:
+                on_log(f"[Unreal] Sequence length {source}: {n} frames")
 
         def render_thread():
+            nonlocal total_frames
             try:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -382,6 +415,25 @@ class UnrealEngine(RenderEngine):
 
                         if re.search(r"Fatal error|Assertion failed|GPU Crash|DEVICE_HUNG|DEVICE_REMOVED", line, re.IGNORECASE):
                             fatal_lines.append(safe_line)
+
+                        # Sequence-length auto-detection from MRQ's shot bookkeeping
+                        m = SHOT_RANGE_RE.search(line)
+                        if m:
+                            shot_spans.append((int(m.group(1)), int(m.group(2))))
+                        m = CAMERA_CUT_RE.search(line)
+                        if m and shot_spans:
+                            cut_idx = int(m.group(1))  # 1-based
+                            total_ticks = sum(e - s for s, e in shot_spans)
+                            if cut_idx == 1:
+                                # Provisional estimate so the bar is sane from frame 1
+                                apply_total(total_ticks / DEFAULT_TICKS_PER_FRAME, "estimated")
+                            elif cut_idx - 1 <= len(shot_spans):
+                                # Exact recalibration: ticks completed vs frames on disk
+                                done_ticks = sum(e - s for s, e in shot_spans[:cut_idx - 1])
+                                frames_done = len(self._snapshot_output(job.output_folder) - preexisting)
+                                if done_ticks > 0 and frames_done > 0:
+                                    ticks_per_frame = done_ticks / frames_done
+                                    apply_total(total_ticks / ticks_per_frame, "detected")
 
                         if on_log and LOG_FORWARD_RE.search(line):
                             on_log(safe_line)

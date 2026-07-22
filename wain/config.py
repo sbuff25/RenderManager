@@ -13,7 +13,7 @@ ASSET_VERSION = "v12"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.21.0"
+APP_VERSION = "2.23.0"
 
 
 # ============================================================================

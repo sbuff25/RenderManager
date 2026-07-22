@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.21.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.23.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,9 +34,24 @@
 
 ---
 
-## 🆕 What's New in v2.21
+## 🆕 What's New in v2.23
 
-### Unreal Engine Support (Movie Render Queue)
+### Unreal Engine Job UX
+
+- **Dropdown asset pickers** — Map, Level Sequence, and MRQ Preset are searchable dropdowns populated by probing the `.uproject` (Add and Edit dialogs); type to filter, custom paths still accepted
+- **Preview window toggle** — watch frames render live in a game window, or uncheck for fully headless/offscreen on unattended workers
+- **Automatic sequence length** — no more guessing frame ranges: Wain reads MRQ's shot bookkeeping from the render log, estimates the total before the first frame, and recalibrates exactly at every shot boundary
+- **Cleaner job dialog** — prefix/format/resolution/camera/frame fields are hidden for Unreal jobs, since the MRQ preset and sequence govern all of them
+
+### Previous v2.22 — Live Network Monitor
+
+- **Throughput card on the dashboard** — live upload/download rates with a sparkline, right next to the queue stats
+- Built for watching **project syncs to render nodes** (robocopy/VPN transfers) without leaving Wain
+- Auto-follows the busiest adapter; **click the card to cycle adapters** manually
+- Session totals (sent/received) at a glance
+- Powered by `psutil` (optional — card shows an install hint if missing)
+
+### Previous v2.21 — Unreal Engine Support (Movie Render Queue)
 
 - **Headless MRQ rendering** — jobs run in a fresh `UnrealEditor-Cmd.exe` process, so a finished (or crashed) render never takes an editor down with it
 - **Project probing** — browse a `.uproject` and Wain auto-detects maps, Level Sequences, and MRQ presets for autocomplete
@@ -275,6 +290,8 @@ GPU mode first.
 
 | Version | Highlights |
 |---------|------------|
+| **2.23.0** | Unreal job UX: dropdown asset pickers, preview window toggle, auto sequence length |
+| **2.22.0** | Live network monitor card: per-adapter throughput, sparkline, session totals |
 | **2.20.0** | Windows installer phase: PyInstaller + Inno Setup, %APPDATA% data dir, worker setup dialog |
 | **2.21.0** | Unreal Engine support: headless Movie Render Queue, project probing, disk-based progress (VPN/worker friendly) |
 | **2.19.5** | Splash screen logo colors, white-flash fix, GPU UI default |
@@ -302,5 +319,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.21.0 — Multi-engine render queue manager</em>
+  <em>Wain v2.23.0 — Multi-engine render queue manager</em>
 </p>

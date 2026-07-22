@@ -23,6 +23,9 @@ STAT_CHIP_COLORS = {
     'red': '#ef4444',
 }
 
+# Network monitor accent (v2.22.0) - cyan, distinct from status colors
+NETWORK_CHIP_COLOR = '#06b6d4'
+
 
 def create_stat_card(title: str, status: str, icon: str, color: str):
     count = sum(1 for j in render_app.jobs if j.status == status)
@@ -33,6 +36,65 @@ def create_stat_card(title: str, status: str, icon: str, color: str):
         with ui.column().classes('gap-0'):
             ui.label(title).classes('text-xs text-zinc-500')
             ui.label(str(count)).classes('text-2xl font-bold text-white')
+
+
+def create_network_card():
+    """Live network throughput card (v2.22.0).
+
+    Shows the busiest adapter's up/down rate, session totals and an upload
+    sparkline - built for watching project syncs to render nodes. Click the
+    card to cycle adapters manually. Self-updating via its own 1s timer.
+    """
+    from wain.utils.netmon import NetMonitor, fmt_rate, fmt_bytes, PSUTIL_AVAILABLE
+
+    mon = NetMonitor()
+
+    with ui.card().classes('stat-card').style('cursor: pointer; min-width: 230px;') as card:
+        if not PSUTIL_AVAILABLE:
+            with ui.row().classes('items-center gap-3'):
+                with ui.element('div').classes('stat-icon-chip').style(f'background-color: {NETWORK_CHIP_COLOR}1f;'):
+                    ui.icon('swap_vert').classes('text-2xl').style(f'color: {NETWORK_CHIP_COLOR};')
+                with ui.column().classes('gap-0'):
+                    ui.label('Network').classes('text-xs text-zinc-500')
+                    ui.label('pip install psutil').classes('text-xs text-zinc-400')
+            return
+
+        with ui.row().classes('items-center gap-3 w-full'):
+            with ui.element('div').classes('stat-icon-chip').style(f'background-color: {NETWORK_CHIP_COLOR}1f;'):
+                ui.icon('swap_vert').classes('text-2xl').style(f'color: {NETWORK_CHIP_COLOR};')
+            with ui.column().classes('gap-0 flex-grow'):
+                adapter_label = ui.label('Network').classes('text-xs text-zinc-500')
+                with ui.row().classes('items-baseline gap-2'):
+                    up_label = ui.label('0 KB/s').classes('text-lg font-bold text-white')
+                    down_label = ui.label('').classes('text-xs text-zinc-500')
+                total_label = ui.label('').classes('text-xs text-zinc-500')
+
+        spark = ui.echart({
+            'grid': {'left': 0, 'right': 0, 'top': 2, 'bottom': 0},
+            'xAxis': {'type': 'category', 'show': False},
+            'yAxis': {'type': 'value', 'show': False},
+            'series': [{
+                'type': 'line', 'data': [], 'showSymbol': False, 'smooth': True,
+                'lineStyle': {'width': 1.5, 'color': NETWORK_CHIP_COLOR},
+                'areaStyle': {'color': NETWORK_CHIP_COLOR, 'opacity': 0.15},
+            }],
+            'animation': False,
+        }).classes('w-full').style('height: 30px;')
+
+        def _tick():
+            mon.sample()
+            name = mon.selected or 'Network'
+            # Keep adapter names short in the card
+            adapter_label.set_text(name if len(name) <= 26 else name[:24] + '…')
+            up_label.set_text('▲ ' + fmt_rate(mon.up_bps))
+            down_label.set_text('▼ ' + fmt_rate(mon.down_bps))
+            total_label.set_text(f'sent {fmt_bytes(mon.session_sent)} · recv {fmt_bytes(mon.session_recv)}')
+            spark.options['series'][0]['data'] = [round(v / 1024, 1) for v in mon.up_history]
+            spark.update()
+
+        card.on('click', lambda: (mon.cycle(), _tick()))
+        card.tooltip('Live network throughput - click to cycle adapters')
+        ui.timer(1.0, _tick)
 
 
 def open_folder(path: str):

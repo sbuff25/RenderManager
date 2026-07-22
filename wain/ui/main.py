@@ -9,7 +9,7 @@ from nicegui import ui, app
 
 from wain.config import DARK_THEME, AVAILABLE_LOGOS, ASSET_VERSION, APP_VERSION
 from wain.app import render_app
-from wain.ui.components import create_stat_card, create_job_card
+from wain.ui.components import create_stat_card, create_job_card, create_network_card
 from wain.ui.dialogs import show_add_job_dialog, show_settings_dialog
 
 @ui.page('/')
@@ -264,16 +264,20 @@ def main_page():
             ui.button('Add Job', icon='add', on_click=show_add_job_dialog).props('flat').classes('header-btn-primary')
     
     with ui.column().classes('responsive-container gap-4'):
-        @ui.refreshable
-        def stats_section():
-            with ui.row().classes('w-full gap-4 flex-wrap'):
-                with ui.card().classes('stat-card'): create_stat_card('Rendering', 'rendering', 'play_circle', 'blue')
-                with ui.card().classes('stat-card'): create_stat_card('Queued', 'queued', 'schedule', 'yellow')
-                with ui.card().classes('stat-card'): create_stat_card('Completed', 'completed', 'check_circle', 'green')
-                with ui.card().classes('stat-card'): create_stat_card('Failed', 'failed', 'error', 'red')
-        
-        render_app.stats_container = stats_section
-        stats_section()
+        with ui.row().classes('w-full gap-4 flex-wrap items-stretch'):
+            @ui.refreshable
+            def stats_section():
+                with ui.row().classes('gap-4 flex-wrap'):
+                    with ui.card().classes('stat-card'): create_stat_card('Rendering', 'rendering', 'play_circle', 'blue')
+                    with ui.card().classes('stat-card'): create_stat_card('Queued', 'queued', 'schedule', 'yellow')
+                    with ui.card().classes('stat-card'): create_stat_card('Completed', 'completed', 'check_circle', 'green')
+                    with ui.card().classes('stat-card'): create_stat_card('Failed', 'failed', 'error', 'red')
+
+            render_app.stats_container = stats_section
+            stats_section()
+            # Live network throughput (v2.22.0) - outside the refreshable so
+            # its timer/chart survive queue refreshes
+            create_network_card()
         
         with ui.row().classes('w-full items-center justify-between'):
             ui.label('Render Queue').classes('text-xl font-bold')

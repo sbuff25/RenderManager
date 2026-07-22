@@ -16,6 +16,7 @@ REQUIRED_PACKAGES = [
     ('webview', 'pywebview', True),
     ('PIL', 'Pillow', True),
     ('pywinauto', 'pywinauto', True),
+    ('psutil', 'psutil', False),  # network monitor card (v2.22.0) - optional
 ]
 
 

@@ -26,6 +26,14 @@ def _accent_btn_style(color: str) -> str:
             f'box-shadow: 0 2px 10px rgba({r},{g},{b},0.4);')
 
 
+def _unreal_options(candidates, current) -> list:
+    """Dropdown options for probed UE asset paths, keeping any manual value visible."""
+    opts = list(candidates or [])
+    if current and current not in opts:
+        opts.insert(0, current)
+    return opts
+
+
 def _normalize_denoiser_value(value: str) -> str:
     """Normalize denoiser value to match dropdown options."""
     if value is None:
@@ -59,7 +67,7 @@ async def show_add_job_dialog():
         'vantage_denoiser': 'nvidia',  # nvidia, oidn, off
         # Unreal-specific (v2.21.0) - soft object paths for MRQ
         'unreal_map': '', 'unreal_sequence': '', 'unreal_preset': '',
-        'unreal_extra_args': '',
+        'unreal_extra_args': '', 'unreal_show_preview': True,
         'unreal_maps': [], 'unreal_sequences': [], 'unreal_presets': [],
     }
     
@@ -76,6 +84,7 @@ async def show_add_job_dialog():
     format_select = None
     engine_buttons = {}
     accent_elements = {}
+    generic_section_ref = {'element': None}  # generic controls, hidden for Unreal
 
     ENGINE_FORMAT_OPTIONS = {
         'blender': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
@@ -121,6 +130,11 @@ async def show_add_job_dialog():
                 form['output_format'] = new_formats[0]
                 format_select.value = new_formats[0]
             format_select.update()
+
+        # Unreal: the MRQ preset/sequence govern naming, format, resolution,
+        # camera, and frame range - hide the generic controls entirely
+        if generic_section_ref.get('element'):
+            generic_section_ref['element'].set_visibility(eng_type != 'unreal')
 
         if 'submit_btn' in accent_elements:
             accent_elements['submit_btn'].style(_accent_btn_style(accent_color))
@@ -311,50 +325,56 @@ async def show_add_job_dialog():
                 
                 ui.button('Browse', icon='folder_open', on_click=browse_output).props('flat dense')
             
-            with ui.row().classes('w-full gap-2'):
-                ui.input('Prefix', value='render_').bind_value(form, 'output_name').classes('flex-grow')
-                format_select = ui.select(
-                    ENGINE_FORMAT_OPTIONS.get(form['engine_type'], ['PNG', 'JPEG']),
-                    value='PNG', label='Format'
-                ).bind_value(form, 'output_format').classes('w-28')
+            # Generic render controls - hidden for Unreal, where the MRQ preset
+            # and sequence govern naming, format, resolution, camera, and frames
+            with ui.column().classes('w-full gap-3') as generic_render_section:
+                with ui.row().classes('w-full gap-2'):
+                    ui.input('Prefix', value='render_').bind_value(form, 'output_name').classes('flex-grow')
+                    format_select = ui.select(
+                        ENGINE_FORMAT_OPTIONS.get(form['engine_type'], ['PNG', 'JPEG']),
+                        value='PNG', label='Format'
+                    ).bind_value(form, 'output_format').classes('w-28')
 
-            # Resolution (always visible but only used by non-Vantage engines)
-            ui.label('Resolution:').classes('text-sm text-gray-400')
-            with ui.row().classes('w-full items-center gap-2'):
-                res_w_input = ui.number('Width', value=1920, min=1).classes('w-24')
-                res_w_input.bind_value(form, 'res_width')
-                ui.label('x').classes('text-gray-400')
-                res_h_input = ui.number('Height', value=1080, min=1).classes('w-24')
-                res_h_input.bind_value(form, 'res_height')
-            
-            @ui.refreshable
-            def resolution_scale_buttons():
-                current_scale = get_current_scale()
-                scales = [(0.25, '25%'), (0.5, '50%'), (1.0, '100%'), (1.5, '150%'), (2.0, '200%')]
-                with ui.row().classes('w-full items-center gap-1 flex-wrap'):
-                    ui.label('Scale:').classes('text-xs text-gray-500 mr-1')
-                    for scale, label in scales:
-                        is_active = abs(current_scale - scale) < 0.01
-                        btn_style = 'background-color: #3f3f46 !important;' if is_active else 'background-color: transparent !important; color: #71717a !important;'
-                        ui.button(label, on_click=lambda s=scale: apply_scale(s)).props('flat dense').classes('text-xs px-2 py-1').style(btn_style)
-                    ui.label(f'{form["res_width"]}×{form["res_height"]}').classes('text-xs text-gray-500 ml-2')
-            
-            res_scale_container = resolution_scale_buttons
-            resolution_scale_buttons()
-            
-            # Camera (always visible)
-            camera_select = ui.select(['Scene Default'], value='Scene Default', label='Camera').classes('w-full')
-            camera_select.bind_value(form, 'camera')
-            
-            # Animation frames (always visible)
-            with ui.row().classes('w-full items-center gap-3'):
-                anim_checkbox = ui.checkbox('Animation').props('dense')
-                anim_checkbox.bind_value(form, 'is_animation')
-                frame_start_input = ui.number('Start', value=1, min=1).classes('w-20')
-                frame_start_input.bind_value(form, 'frame_start')
-                ui.label('to').classes('text-gray-400')
-                frame_end_input = ui.number('End', value=250, min=1).classes('w-20')
-                frame_end_input.bind_value(form, 'frame_end')
+                # Resolution (only used by non-Vantage engines)
+                ui.label('Resolution:').classes('text-sm text-gray-400')
+                with ui.row().classes('w-full items-center gap-2'):
+                    res_w_input = ui.number('Width', value=1920, min=1).classes('w-24')
+                    res_w_input.bind_value(form, 'res_width')
+                    ui.label('x').classes('text-gray-400')
+                    res_h_input = ui.number('Height', value=1080, min=1).classes('w-24')
+                    res_h_input.bind_value(form, 'res_height')
+
+                @ui.refreshable
+                def resolution_scale_buttons():
+                    current_scale = get_current_scale()
+                    scales = [(0.25, '25%'), (0.5, '50%'), (1.0, '100%'), (1.5, '150%'), (2.0, '200%')]
+                    with ui.row().classes('w-full items-center gap-1 flex-wrap'):
+                        ui.label('Scale:').classes('text-xs text-gray-500 mr-1')
+                        for scale, label in scales:
+                            is_active = abs(current_scale - scale) < 0.01
+                            btn_style = 'background-color: #3f3f46 !important;' if is_active else 'background-color: transparent !important; color: #71717a !important;'
+                            ui.button(label, on_click=lambda s=scale: apply_scale(s)).props('flat dense').classes('text-xs px-2 py-1').style(btn_style)
+                        ui.label(f'{form["res_width"]}×{form["res_height"]}').classes('text-xs text-gray-500 ml-2')
+
+                res_scale_container = resolution_scale_buttons
+                resolution_scale_buttons()
+
+                # Camera
+                camera_select = ui.select(['Scene Default'], value='Scene Default', label='Camera').classes('w-full')
+                camera_select.bind_value(form, 'camera')
+
+                # Animation frames
+                with ui.row().classes('w-full items-center gap-3'):
+                    anim_checkbox = ui.checkbox('Animation').props('dense')
+                    anim_checkbox.bind_value(form, 'is_animation')
+                    frame_start_input = ui.number('Start', value=1, min=1).classes('w-20')
+                    frame_start_input.bind_value(form, 'frame_start')
+                    ui.label('to').classes('text-gray-400')
+                    frame_end_input = ui.number('End', value=250, min=1).classes('w-20')
+                    frame_end_input.bind_value(form, 'frame_end')
+
+            generic_render_section.set_visibility(form['engine_type'] != 'unreal')
+            generic_section_ref['element'] = generic_render_section
             
             # Engine-specific settings section
             @ui.refreshable
@@ -445,21 +465,29 @@ async def show_add_job_dialog():
                 elif form['engine_type'] == 'unreal':
                     ui.separator()
                     ui.label('Movie Render Queue').classes('text-sm font-bold').style('color: #0d8de3;')
-                    ui.label('Asset paths in /Game/... form. Browse a .uproject above to auto-detect candidates.').classes('text-xs text-zinc-400')
+                    if not (form['unreal_maps'] or form['unreal_sequences'] or form['unreal_presets']):
+                        ui.label('Browse a .uproject above — maps, sequences, and MRQ presets will populate these dropdowns.').classes('text-xs text-zinc-400')
 
-                    ui.input('Map', placeholder='/Game/Maps/MyLevel',
-                             autocomplete=form['unreal_maps']).bind_value(form, 'unreal_map').classes('w-full')
-                    ui.input('Level Sequence', placeholder='/Game/Cinematics/MySequence',
-                             autocomplete=form['unreal_sequences']).bind_value(form, 'unreal_sequence').classes('w-full')
-                    ui.input('MRQ Preset', placeholder='/Game/MyRenderPreset',
-                             autocomplete=form['unreal_presets']).bind_value(form, 'unreal_preset').classes('w-full')
+                    ui.select(_unreal_options(form['unreal_maps'], form['unreal_map']),
+                              label='Map', with_input=True, new_value_mode='add-unique') \
+                        .bind_value(form, 'unreal_map').props('dense outlined').classes('w-full')
+                    ui.select(_unreal_options(form['unreal_sequences'], form['unreal_sequence']),
+                              label='Level Sequence', with_input=True, new_value_mode='add-unique') \
+                        .bind_value(form, 'unreal_sequence').props('dense outlined').classes('w-full')
+                    ui.select(_unreal_options(form['unreal_presets'], form['unreal_preset']),
+                              label='MRQ Preset', with_input=True, new_value_mode='add-unique') \
+                        .bind_value(form, 'unreal_preset').props('dense outlined').classes('w-full')
                     ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
+                    ui.checkbox('Show preview window while rendering', value=form['unreal_show_preview']) \
+                        .props('dense').bind_value(form, 'unreal_show_preview') \
+                        .tooltip('Renders in a visible game window so you can watch frames as they finish. '
+                                 'Uncheck for fully headless (offscreen) rendering on unattended workers.')
 
                     with ui.row().classes('w-full items-center gap-2 mt-1'):
                         ui.icon('info').classes('text-zinc-400')
-                        ui.label('Resolution, format, and frame range come from the MRQ preset. '
-                                 'Set Output Folder to the preset\'s Output Directory so progress can be tracked, '
-                                 'and set the frame range above to match the sequence for accurate percentages.').classes('text-xs text-zinc-400')
+                        ui.label('Resolution, format, and frame range come from the MRQ preset and sequence - '
+                                 'Wain detects the sequence length automatically while rendering. '
+                                 'Set Output Folder to the preset\'s Output Directory so progress can be tracked.').classes('text-xs text-zinc-400')
 
             accent_elements['engine_settings'] = engine_settings_section
             engine_settings_section()
@@ -525,7 +553,15 @@ async def show_add_job_dialog():
                         "sequence_path": form['unreal_sequence'].strip(),
                         "preset_path": form['unreal_preset'].strip(),
                         "extra_args": form['unreal_extra_args'].strip(),
+                        "show_preview": bool(form['unreal_show_preview']),
                     }
+                    # MRQ preset/sequence govern format and frames; the real
+                    # frame count is auto-detected from the render log at runtime
+                    form['is_animation'] = True
+                    form['frame_start'] = 1
+                    form['frame_end'] = 1
+                    form['output_format'] = 'Preset'
+                    form['distribute'] = False  # frame-chunking can't override an MRQ preset
 
                 job = RenderJob(
                     name=form['name'] or "Untitled",
@@ -595,6 +631,7 @@ async def show_edit_job_dialog(job):
         'unreal_sequence': job.engine_settings.get('sequence_path', ''),
         'unreal_preset': job.engine_settings.get('preset_path', ''),
         'unreal_extra_args': job.engine_settings.get('extra_args', ''),
+        'unreal_show_preview': job.engine_settings.get('show_preview', True),
     }
     
     with ui.dialog().props('transition-show="jump-up" transition-hide="jump-down" transition-duration="150"') as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
@@ -629,35 +666,39 @@ async def show_edit_job_dialog(job):
                 'vantage': ['PNG', 'JPEG', 'OpenEXR', 'TIFF'],
                 'unreal': ['Preset', 'EXR', 'PNG', 'JPEG'],
             }
-            with ui.row().classes('w-full gap-2'):
-                ui.input('Prefix', value=form['output_name']).bind_value(form, 'output_name').classes('flex-grow')
-                ui.select(
-                    edit_format_options.get(job.engine_type, ['PNG', 'JPEG']),
-                    value=form['output_format'], label='Format'
-                ).bind_value(form, 'output_format').classes('w-28')
+            # Generic render controls - not shown for Unreal, where the MRQ
+            # preset/sequence govern naming, format, camera, and frame range
+            edit_camera_select = None
+            if job.engine_type != 'unreal':
+                with ui.row().classes('w-full gap-2'):
+                    ui.input('Prefix', value=form['output_name']).bind_value(form, 'output_name').classes('flex-grow')
+                    ui.select(
+                        edit_format_options.get(job.engine_type, ['PNG', 'JPEG']),
+                        value=form['output_format'], label='Format'
+                    ).bind_value(form, 'output_format').classes('w-28')
 
-            # Camera dropdown — start with current value, probe scene in background
-            current_cam = form['camera'] or 'Scene Default'
-            camera_options = [current_cam] if current_cam != 'Scene Default' else ['Scene Default']
+                # Camera dropdown — start with current value, probe scene in background
+                current_cam = form['camera'] or 'Scene Default'
+                camera_options = [current_cam] if current_cam != 'Scene Default' else ['Scene Default']
 
-            def _on_camera_change(e):
-                form['camera'] = e.value
+                def _on_camera_change(e):
+                    form['camera'] = e.value
 
-            edit_camera_select = ui.select(
-                camera_options, value=current_cam, label='Camera',
-                on_change=_on_camera_change,
-            ).classes('w-full')
+                edit_camera_select = ui.select(
+                    camera_options, value=current_cam, label='Camera',
+                    on_change=_on_camera_change,
+                ).classes('w-full')
 
-            with ui.row().classes('w-full items-center gap-2'):
-                ui.number('Width', value=form['res_width'], min=1).bind_value(form, 'res_width').classes('w-24')
-                ui.label('x').classes('text-gray-400')
-                ui.number('Height', value=form['res_height'], min=1).bind_value(form, 'res_height').classes('w-24')
-            
-            with ui.row().classes('w-full items-center gap-3'):
-                ui.checkbox('Animation', value=form['is_animation']).props('dense').bind_value(form, 'is_animation')
-                ui.number('Start', value=form['frame_start'], min=1).bind_value(form, 'frame_start').classes('w-20')
-                ui.label('to').classes('text-gray-400')
-                ui.number('End', value=form['frame_end'], min=1).bind_value(form, 'frame_end').classes('w-20')
+                with ui.row().classes('w-full items-center gap-2'):
+                    ui.number('Width', value=form['res_width'], min=1).bind_value(form, 'res_width').classes('w-24')
+                    ui.label('x').classes('text-gray-400')
+                    ui.number('Height', value=form['res_height'], min=1).bind_value(form, 'res_height').classes('w-24')
+
+                with ui.row().classes('w-full items-center gap-3'):
+                    ui.checkbox('Animation', value=form['is_animation']).props('dense').bind_value(form, 'is_animation')
+                    ui.number('Start', value=form['frame_start'], min=1).bind_value(form, 'frame_start').classes('w-20')
+                    ui.label('to').classes('text-gray-400')
+                    ui.number('End', value=form['frame_end'], min=1).bind_value(form, 'frame_end').classes('w-20')
             
             ui.separator()
             ui.checkbox('Overwrite Existing', value=form['overwrite_existing']).props('dense').bind_value(form, 'overwrite_existing')
@@ -749,13 +790,43 @@ async def show_edit_job_dialog(job):
             elif job.engine_type == 'unreal':
                 ui.separator()
                 ui.label('Movie Render Queue').classes('text-sm font-bold').style('color: #0d8de3;')
-                ui.input('Map', placeholder='/Game/Maps/MyLevel').bind_value(form, 'unreal_map').classes('w-full')
-                ui.input('Level Sequence', placeholder='/Game/Cinematics/MySequence').bind_value(form, 'unreal_sequence').classes('w-full')
-                ui.input('MRQ Preset', placeholder='/Game/MyRenderPreset').bind_value(form, 'unreal_preset').classes('w-full')
+                unreal_map_select = ui.select(_unreal_options([], form['unreal_map']),
+                                              label='Map', with_input=True, new_value_mode='add-unique') \
+                    .bind_value(form, 'unreal_map').props('dense outlined').classes('w-full')
+                unreal_seq_select = ui.select(_unreal_options([], form['unreal_sequence']),
+                                              label='Level Sequence', with_input=True, new_value_mode='add-unique') \
+                    .bind_value(form, 'unreal_sequence').props('dense outlined').classes('w-full')
+                unreal_preset_select = ui.select(_unreal_options([], form['unreal_preset']),
+                                                 label='MRQ Preset', with_input=True, new_value_mode='add-unique') \
+                    .bind_value(form, 'unreal_preset').props('dense outlined').classes('w-full')
                 ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
+
+                async def probe_unreal_candidates():
+                    """Re-probe the .uproject so the dropdowns offer all assets."""
+                    eng = render_app.engine_registry.get('unreal')
+                    if not eng or not os.path.exists(job.file_path):
+                        return
+                    try:
+                        loop = asyncio.get_event_loop()
+                        info = await loop.run_in_executor(None, lambda: eng.get_scene_info(job.file_path))
+                        unreal_map_select.options = _unreal_options(info.get('maps', []), form['unreal_map'])
+                        unreal_seq_select.options = _unreal_options(info.get('sequences', []), form['unreal_sequence'])
+                        unreal_preset_select.options = _unreal_options(info.get('presets', []), form['unreal_preset'])
+                        unreal_map_select.update()
+                        unreal_seq_select.update()
+                        unreal_preset_select.update()
+                    except Exception:
+                        pass
+
+                asyncio.create_task(probe_unreal_candidates())
+                ui.checkbox('Show preview window while rendering', value=form['unreal_show_preview']) \
+                    .props('dense').bind_value(form, 'unreal_show_preview') \
+                    .tooltip('Renders in a visible game window so you can watch frames as they finish. '
+                             'Uncheck for fully headless (offscreen) rendering on unattended workers.')
                 with ui.row().classes('w-full items-center gap-2 mt-1'):
                     ui.icon('info').classes('text-zinc-400')
-                    ui.label('Resolution, format, and frame range come from the MRQ preset. '
+                    ui.label('Resolution, format, and frame range come from the MRQ preset and sequence - '
+                             'Wain detects the sequence length automatically while rendering. '
                              'Output Folder must match the preset\'s Output Directory for progress tracking.').classes('text-xs text-zinc-400')
 
             # Status info
@@ -814,6 +885,7 @@ async def show_edit_job_dialog(job):
                         'sequence_path': form['unreal_sequence'].strip(),
                         'preset_path': form['unreal_preset'].strip(),
                         'extra_args': form['unreal_extra_args'].strip(),
+                        'show_preview': bool(form['unreal_show_preview']),
                     }
 
                 job.camera = form.get('camera', '')
@@ -875,6 +947,8 @@ async def show_edit_job_dialog(job):
 
     # Probe scene cameras in background after dialog is fully built
     async def _probe_cameras():
+        if edit_camera_select is None:  # Unreal: no camera field (preset governs)
+            return
         engine = render_app.engine_registry.get(job.engine_type)
         if not engine or not form['file_path']:
             return

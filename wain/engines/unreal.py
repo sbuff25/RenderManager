@@ -352,7 +352,11 @@ class UnrealEngine(RenderEngine):
                 import struct
                 with open(path, "rb") as f:
                     head = f.read(16384)
-                i = head.find(b"dataWindow")
+                # displayWindow = the delivered frame (overscan cropped);
+                # dataWindow may be padded with camera overscan pixels
+                i = head.find(b"displayWindow")
+                if i < 0:
+                    i = head.find(b"dataWindow")
                 if i < 0:
                     return None
                 i = head.find(b"box2i", i)

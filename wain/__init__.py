@@ -14,7 +14,7 @@ v2.21.0 - Unreal Engine support: headless Movie Render Queue rendering via
           friendly), .uproject probing for maps/sequences/MRQ presets
 """
 
-__version__ = "2.24.0"
+__version__ = "2.25.0"
 __author__ = "Spencer"
 __app_name__ = "Wain"
 

@@ -1,5 +1,5 @@
 ; ============================================================================
-; Wain Inno Setup Script (v2.24.0)
+; Wain Inno Setup Script (v2.25.0)
 ; ============================================================================
 ; Build: ISCC installer.iss  (or via build_installer.bat, which passes the
 ; version from wain/config.py as /DMyAppVersion=x.y.z)
@@ -11,7 +11,7 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.24.0"
+  #define MyAppVersion "2.25.0"
 #endif
 ; Build output directory (passed by build_installer.bat as /DBuildDir=...)
 #ifndef BuildDir

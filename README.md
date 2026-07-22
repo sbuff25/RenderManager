@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.23.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.25.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -34,9 +34,32 @@
 
 ---
 
-## 🆕 What's New in v2.23
+## 🆕 What's New in v2.25
 
-### Unreal Engine Job UX
+### Unreal: Wain Controls the Output (Python Executor)
+
+- **Per-job overrides without touching the preset** — jobs launch through a
+  Wain MRQ executor (`MoviePipelinePythonHostExecutor`): the job's Output
+  Folder, File Name Format, and optional **frame range** override the preset
+  in memory; every quality setting still comes from the preset asset
+- **Frame range per job** — render any slice of a sequence; the foundation
+  for splitting one sequence across workers and GPUs
+- **`--gpu N` worker flag** — pin a worker's Unreal renders to a GPU adapter;
+  run one worker per GPU on multi-GPU boxes (console session required — RDP
+  sessions render black)
+- **Zero project footprint** — the executor ships with Wain and reaches UE
+  via `UE_PYTHONPATH`; nothing is copied into the project, so mirrored
+  project syncs can't break it
+- "Wain controls output" is on by default per job; uncheck for the legacy
+  preset-exact launch
+
+### Previous v2.24 — Worker Dashboard
+
+- Compact status window for worker mode: connection chip, job card with
+  progress, drain mode, cancel, live log tail; `--headless` for terminal-only
+- Unreal preview-window fix (child window was launched hidden)
+
+### Previous v2.23 — Unreal Engine Job UX
 
 - **Dropdown asset pickers** — Map, Level Sequence, and MRQ Preset are searchable dropdowns populated by probing the `.uproject` (Add and Edit dialogs); type to filter, custom paths still accepted
 - **Preview window toggle** — watch frames render live in a game window, or uncheck for fully headless/offscreen on unattended workers
@@ -290,6 +313,8 @@ GPU mode first.
 
 | Version | Highlights |
 |---------|------------|
+| **2.25.0** | Unreal Python executor: per-job output/naming/frame-range overrides, --gpu worker pinning |
+| **2.24.0** | Worker dashboard window; UE preview-window fix; frame-range/resolution sync to server |
 | **2.23.0** | Unreal job UX: dropdown asset pickers, preview window toggle, auto sequence length |
 | **2.22.0** | Live network monitor card: per-adapter throughput, sparkline, session totals |
 | **2.20.0** | Windows installer phase: PyInstaller + Inno Setup, %APPDATA% data dir, worker setup dialog |
@@ -319,5 +344,5 @@ MIT License — Free for personal and commercial use.
 ---
 
 <p align="center">
-  <em>Wain v2.23.0 — Multi-engine render queue manager</em>
+  <em>Wain v2.25.0 — Multi-engine render queue manager</em>
 </p>

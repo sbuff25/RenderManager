@@ -125,6 +125,12 @@ def parse_args():
         help='Worker mode: terminal only, no dashboard window (v2.24.0)',
     )
     parser.add_argument(
+        '--gpu', type=int, default=None,
+        help='Worker mode: pin Unreal renders to a GPU adapter index '
+             '(-graphicsadapter=N). Run one worker per GPU for multi-GPU '
+             'boxes. Console session only - never RDP. (v2.25.0)',
+    )
+    parser.add_argument(
         '--software-ui', action='store_true',
         help='Disable GPU compositing for the UI window (fallback if the UI '
              'conflicts with render engines; default is GPU-accelerated)',
@@ -456,6 +462,7 @@ def run_worker(args):
         worker_id=args.worker_id,
         path_maps=path_maps or None,
         api_token=args.token,
+        gpu_index=args.gpu,
     )
 
     # Headless (terminal-only) worker: --headless flag, or no Qt available

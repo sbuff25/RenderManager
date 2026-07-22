@@ -69,6 +69,10 @@ async def show_add_job_dialog():
         'unreal_map': '', 'unreal_sequence': '', 'unreal_preset': '',
         'unreal_extra_args': '', 'unreal_show_preview': True,
         'unreal_maps': [], 'unreal_sequences': [], 'unreal_presets': [],
+        # v2.25.0 - Wain-side overrides (Python executor)
+        'unreal_use_overrides': True,
+        'unreal_filename': '{sequence_name}.{frame_number}',
+        'unreal_fstart': None, 'unreal_fend': None,
     }
     
     camera_select = None
@@ -500,6 +504,23 @@ async def show_add_job_dialog():
                     # Preset may already be selected (single candidate auto-pick)
                     _auto_output_from_preset()
                     ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
+
+                    with ui.row().classes('w-full items-center gap-3'):
+                        ui.input('File Name Format', placeholder='{sequence_name}.{frame_number}') \
+                            .bind_value(form, 'unreal_filename').classes('flex-grow') \
+                            .tooltip('MRQ tokens allowed. Applied by Wain at render time - the preset asset is not modified.')
+                    with ui.row().classes('w-full items-center gap-3'):
+                        ui.number('Start Frame', min=0, precision=0).bind_value(form, 'unreal_fstart').classes('w-28') \
+                            .tooltip('Optional. Leave both blank to render the whole sequence.')
+                        ui.label('to').classes('text-gray-400')
+                        ui.number('End Frame', min=0, precision=0).bind_value(form, 'unreal_fend').classes('w-28')
+                        ui.label('(blank = full sequence)').classes('text-xs text-zinc-500')
+
+                    ui.checkbox('Wain controls output (recommended)', value=form['unreal_use_overrides']) \
+                        .props('dense').bind_value(form, 'unreal_use_overrides') \
+                        .tooltip('Renders through the Wain MRQ executor: the Output Folder, file name, and '
+                                 'frame range above override the preset. Uncheck to run the preset exactly '
+                                 'as authored (legacy launch).')
                     ui.checkbox('Show preview window while rendering', value=form['unreal_show_preview']) \
                         .props('dense').bind_value(form, 'unreal_show_preview') \
                         .tooltip('Renders in a visible game window so you can watch frames as they finish. '
@@ -507,9 +528,9 @@ async def show_add_job_dialog():
 
                     with ui.row().classes('w-full items-center gap-2 mt-1'):
                         ui.icon('info').classes('text-zinc-400')
-                        ui.label('Resolution, format, and frame range come from the MRQ preset and sequence - '
-                                 'Wain detects the sequence length automatically while rendering. '
-                                 'Set Output Folder to the preset\'s Output Directory so progress can be tracked.').classes('text-xs text-zinc-400')
+                        ui.label('Quality settings come from the MRQ preset. With overrides on, the Output '
+                                 'Folder, file name, and frame range above control the render; sequence '
+                                 'length and resolution are detected automatically.').classes('text-xs text-zinc-400')
 
             accent_elements['engine_settings'] = engine_settings_section
             engine_settings_section()
@@ -570,18 +591,32 @@ async def show_add_job_dialog():
                         "render_pass_data": render_pass_data,
                     }
                 elif form['engine_type'] == 'unreal':
+                    def _opt_int(v):
+                        try:
+                            return int(v)
+                        except (TypeError, ValueError):
+                            return None
+                    ue_fstart = _opt_int(form.get('unreal_fstart'))
+                    ue_fend = _opt_int(form.get('unreal_fend'))
                     engine_settings = {
                         "map_path": form['unreal_map'].strip(),
                         "sequence_path": form['unreal_sequence'].strip(),
                         "preset_path": form['unreal_preset'].strip(),
                         "extra_args": form['unreal_extra_args'].strip(),
                         "show_preview": bool(form['unreal_show_preview']),
+                        "use_overrides": bool(form['unreal_use_overrides']),
+                        "file_name_format": (form.get('unreal_filename') or '').strip(),
+                        "frame_start_override": ue_fstart,
+                        "frame_end_override": ue_fend,
                     }
-                    # MRQ preset/sequence govern format and frames; the real
-                    # frame count is auto-detected from the render log at runtime
+                    # Frames: seed totals from a specified range, otherwise
+                    # auto-detected from the render log at runtime
                     form['is_animation'] = True
                     form['frame_start'] = 1
-                    form['frame_end'] = 1
+                    if ue_fstart is not None and ue_fend is not None and ue_fend >= ue_fstart:
+                        form['frame_end'] = ue_fend - ue_fstart + 1
+                    else:
+                        form['frame_end'] = 1
                     form['output_format'] = 'Preset'
                     form['distribute'] = False  # frame-chunking can't override an MRQ preset
                     # Resolution is governed by the MRQ preset; detected from
@@ -658,6 +693,10 @@ async def show_edit_job_dialog(job):
         'unreal_preset': job.engine_settings.get('preset_path', ''),
         'unreal_extra_args': job.engine_settings.get('extra_args', ''),
         'unreal_show_preview': job.engine_settings.get('show_preview', True),
+        'unreal_use_overrides': job.engine_settings.get('use_overrides', True),
+        'unreal_filename': job.engine_settings.get('file_name_format', '{sequence_name}.{frame_number}'),
+        'unreal_fstart': job.engine_settings.get('frame_start_override'),
+        'unreal_fend': job.engine_settings.get('frame_end_override'),
     }
     
     with ui.dialog().props('transition-show="jump-up" transition-hide="jump-down" transition-duration="150"') as dialog, ui.card().style('width: 600px; max-width: 95vw; padding: 0;'):
@@ -855,15 +894,27 @@ async def show_edit_job_dialog(job):
                         pass
 
                 asyncio.create_task(probe_unreal_candidates())
+                ui.input('File Name Format', placeholder='{sequence_name}.{frame_number}') \
+                    .bind_value(form, 'unreal_filename').classes('w-full') \
+                    .tooltip('MRQ tokens allowed. Applied by Wain at render time - the preset asset is not modified.')
+                with ui.row().classes('w-full items-center gap-3'):
+                    ui.number('Start Frame', min=0, precision=0).bind_value(form, 'unreal_fstart').classes('w-28')
+                    ui.label('to').classes('text-gray-400')
+                    ui.number('End Frame', min=0, precision=0).bind_value(form, 'unreal_fend').classes('w-28')
+                    ui.label('(blank = full sequence)').classes('text-xs text-zinc-500')
+                ui.checkbox('Wain controls output (recommended)', value=form['unreal_use_overrides']) \
+                    .props('dense').bind_value(form, 'unreal_use_overrides') \
+                    .tooltip('Renders through the Wain MRQ executor: Output Folder, file name, and frame '
+                             'range override the preset. Uncheck for the legacy preset-exact launch.')
                 ui.checkbox('Show preview window while rendering', value=form['unreal_show_preview']) \
                     .props('dense').bind_value(form, 'unreal_show_preview') \
                     .tooltip('Renders in a visible game window so you can watch frames as they finish. '
                              'Uncheck for fully headless (offscreen) rendering on unattended workers.')
                 with ui.row().classes('w-full items-center gap-2 mt-1'):
                     ui.icon('info').classes('text-zinc-400')
-                    ui.label('Resolution, format, and frame range come from the MRQ preset and sequence - '
-                             'Wain detects the sequence length automatically while rendering. '
-                             'Output Folder must match the preset\'s Output Directory for progress tracking.').classes('text-xs text-zinc-400')
+                    ui.label('Quality settings come from the MRQ preset. With overrides on, the Output '
+                             'Folder, file name, and frame range above control the render; sequence '
+                             'length and resolution are detected automatically.').classes('text-xs text-zinc-400')
 
             # Status info
             ui.separator()
@@ -916,13 +967,27 @@ async def show_edit_job_dialog(job):
                     else:
                         job.engine_settings = {'use_custom_settings': False}
                 elif job.engine_type == 'unreal':
+                    def _opt_int(v):
+                        try:
+                            return int(v)
+                        except (TypeError, ValueError):
+                            return None
+                    ue_fstart = _opt_int(form.get('unreal_fstart'))
+                    ue_fend = _opt_int(form.get('unreal_fend'))
                     job.engine_settings = {
                         'map_path': form['unreal_map'].strip(),
                         'sequence_path': form['unreal_sequence'].strip(),
                         'preset_path': form['unreal_preset'].strip(),
                         'extra_args': form['unreal_extra_args'].strip(),
                         'show_preview': bool(form['unreal_show_preview']),
+                        'use_overrides': bool(form['unreal_use_overrides']),
+                        'file_name_format': (form.get('unreal_filename') or '').strip(),
+                        'frame_start_override': ue_fstart,
+                        'frame_end_override': ue_fend,
                     }
+                    if ue_fstart is not None and ue_fend is not None and ue_fend >= ue_fstart:
+                        job.frame_start = 1
+                        job.frame_end = ue_fend - ue_fstart + 1
 
                 job.camera = form.get('camera', '')
 

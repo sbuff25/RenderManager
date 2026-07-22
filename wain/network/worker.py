@@ -54,7 +54,8 @@ class WorkerClient:
 
     def __init__(self, server_url: str, worker_id: Optional[str] = None,
                  path_maps: Optional[List[tuple]] = None,
-                 api_token: Optional[str] = None):
+                 api_token: Optional[str] = None,
+                 gpu_index: Optional[int] = None):
         self.server_url = server_url.rstrip("/")
         if not self.server_url.startswith("http"):
             self.server_url = f"http://{self.server_url}"
@@ -64,6 +65,7 @@ class WorkerClient:
         self.ip_address = self._get_local_ip()
         self.path_maps = path_maps or []
         self.api_token = api_token or ""
+        self.gpu_index = gpu_index  # pin UE renders to -graphicsadapter=N
 
         self.engine_registry = EngineRegistry()
         # Engines this worker can claim. Blender/Marmoset render headless from
@@ -438,6 +440,13 @@ class WorkerClient:
             job.engine_settings["path_maps"] = [
                 {"from": f, "to": t} for f, t in self.path_maps
             ]
+
+        # GPU pinning (v2.25.0): route UE renders to this worker's adapter
+        if self.gpu_index is not None and job.engine_type == "unreal":
+            extra = job.engine_settings.get("extra_args", "") or ""
+            if "-graphicsadapter" not in extra:
+                job.engine_settings["extra_args"] = (
+                    f"{extra} -graphicsadapter={self.gpu_index}".strip())
 
         self._current_job = job
         self._render_done.clear()

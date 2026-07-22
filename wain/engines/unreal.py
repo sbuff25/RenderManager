@@ -326,7 +326,19 @@ class UnrealEngine(RenderEngine):
 
     def get_default_settings(self) -> Dict[str, Any]:
         return {"map_path": "", "sequence_path": "", "preset_path": "",
-                "extra_args": "", "show_preview": True}
+                "extra_args": "", "show_preview": True,
+                # v2.25.0 - Wain-side overrides via the Python executor
+                "use_overrides": True,
+                "file_name_format": "{sequence_name}.{frame_number}",
+                "frame_start_override": None,
+                "frame_end_override": None}
+
+    # Directory holding init_unreal.py (the Wain MRQ executor). Delivered to
+    # UE via the UE_PYTHONPATH env var - never copied into the project, so a
+    # mirrored project sync can't delete it.
+    @staticmethod
+    def _ue_scripts_dir() -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ue_scripts")
 
     @staticmethod
     def _image_dims(path: str):
@@ -389,15 +401,60 @@ class UnrealEngine(RenderEngine):
         # show_preview: render in a visible game window (MRQ progress overlay,
         # frames appear as they're drawn). Off = -RenderOffscreen, fully headless.
         show_preview = bool(settings.get("show_preview", True))
-        cmd = [
-            exe, job.file_path, map_path, "-game",
-            f"-LevelSequence={sequence_path}",
-            f"-MoviePipelineConfig={preset_path}",
+
+        # v2.25.0: with use_overrides, launch through the Wain Python executor
+        # (MoviePipelinePythonHostExecutor) so the job's Output Folder, file
+        # naming, and optional frame range actually control the render. The
+        # preset still supplies every quality setting. Falls back to the
+        # legacy stock command if the script directory is missing.
+        def _to_int(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        f_start = _to_int(settings.get("frame_start_override"))
+        f_end = _to_int(settings.get("frame_end_override"))
+        have_range = f_start is not None and f_end is not None and f_end >= f_start
+        file_name_format = (settings.get("file_name_format") or "").strip()
+        scripts_dir = self._ue_scripts_dir()
+        use_overrides = (bool(settings.get("use_overrides", True))
+                         and os.path.exists(os.path.join(scripts_dir, "init_unreal.py")))
+
+        common = [
             "-windowed", "-resx=1280", "-resy=720",
             "-log", "-stdout", "-FullStdOutLogOutput",
             "-unattended",
             "-NoSplash", "-NoLoadingScreen",
         ]
+        if use_overrides:
+            # Load the map under MoviePipelineGameMode (what the stock MRQ
+            # command line does implicitly) - the project's normal game mode
+            # would run gameplay systems during the render
+            mrq_map = f"{map_path}?game=/Script/MovieRenderPipelineCore.MoviePipelineGameMode"
+            cmd = [
+                exe, job.file_path, mrq_map, "-game",
+                "-MoviePipelineLocalExecutorClass=/Script/MovieRenderPipelineCore.MoviePipelinePythonHostExecutor",
+                "-ExecutorPythonClass=/Engine/PythonTypes.WainMRQExecutor",
+                *common,
+                f"-WainMap={map_path}",
+                f"-WainSequence={sequence_path}",
+                f"-WainPreset={preset_path}",
+                f"-WainJobName={job.name or 'Wain Render'}",
+                f"-WainOutputDir={job.output_folder.replace(chr(92), '/')}",
+            ]
+            if file_name_format:
+                cmd.append(f"-WainFileName={file_name_format}")
+            if have_range:
+                cmd.append(f"-WainStartFrame={f_start}")
+                cmd.append(f"-WainEndFrame={f_end}")
+        else:
+            cmd = [
+                exe, job.file_path, map_path, "-game",
+                f"-LevelSequence={sequence_path}",
+                f"-MoviePipelineConfig={preset_path}",
+                *common,
+            ]
         if not show_preview:
             cmd.append("-RenderOffscreen")
         extra = (settings.get("extra_args") or "").strip()
@@ -407,8 +464,13 @@ class UnrealEngine(RenderEngine):
         if on_log:
             on_log(f"[Unreal] Engine: {exe}")
             on_log(f"[Unreal] Command: {' '.join(cmd)}")
-            on_log("[Unreal] Resolution/format/frame-range come from the MRQ preset; "
-                   "progress is tracked by files appearing in the output folder.")
+            if use_overrides:
+                on_log("[Unreal] Wain executor: output dir/naming"
+                       + (f" and frame range {f_start}-{f_end}" if have_range else "")
+                       + " override the preset; quality settings come from the preset.")
+            else:
+                on_log("[Unreal] Legacy launch: resolution/format/frame-range come from "
+                       "the MRQ preset; progress is tracked by files in the output folder.")
 
         # Frames present before we start don't count toward progress
         preexisting = self._snapshot_output(job.output_folder)
@@ -429,6 +491,11 @@ class UnrealEngine(RenderEngine):
             if on_log:
                 on_log(f"[Unreal] Sequence length {source}: {n} frames")
 
+        # A Wain-specified range fixes the total upfront; otherwise the log
+        # calibration below detects it during the render
+        if use_overrides and have_range:
+            apply_total(f_end - f_start + 1, "specified")
+
         def render_thread():
             nonlocal total_frames
             try:
@@ -444,6 +511,11 @@ class UnrealEngine(RenderEngine):
                 for key in ["QTWEBENGINE_CHROMIUM_FLAGS", "QT_QUICK_BACKEND",
                             "QTWEBENGINE_DISABLE_SANDBOX", "QT_API", "PYWEBVIEW_GUI"]:
                     env.pop(key, None)
+
+                # Deliver the Wain MRQ executor to UE's Python plugin
+                if use_overrides:
+                    prior = env.get("UE_PYTHONPATH", "")
+                    env["UE_PYTHONPATH"] = scripts_dir + (os.pathsep + prior if prior else "")
 
                 self.current_process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

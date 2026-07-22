@@ -273,6 +273,50 @@ class UnrealEngine(RenderEngine):
         info["presets"] = sorted(presets)
         return info
 
+    def get_preset_output_dir(self, uproject_path: str, preset_path: str):
+        """Best-effort: read the MRQ preset's Output Directory from its .uasset.
+
+        The preset asset stores the directory as a plain string (usually
+        '{project_dir}/Saved/MovieRenders/...'). We scan for it, resolve
+        {project_dir} against the .uproject location, and drop any trailing
+        segments containing unresolved tokens like {date} - a static parent
+        folder is fine because frame counting walks recursively.
+        Returns an absolute path or None.
+        """
+        try:
+            project_dir = os.path.dirname(os.path.abspath(uproject_path))
+            rel = preset_path.replace("/Game/", "", 1)
+            asset = os.path.join(project_dir, "Content", rel + ".uasset")
+            if not os.path.exists(asset):
+                return None
+            with open(asset, "rb") as f:
+                data = f.read()
+            candidates = []
+            for m in re.finditer(rb"[ -~]{6,}", data):
+                s = m.group().decode("ascii", "ignore")
+                if ("{project_dir}" in s or "MovieRenders" in s
+                        or re.match(r"^[A-Za-z]:[\\/].{3,}", s)):
+                    candidates.append(s)
+            if not candidates:
+                # OutputDirectory left at MRQ's default - UE doesn't serialize
+                # default values, so the string simply isn't in the asset
+                return os.path.join(project_dir, "Saved", "MovieRenders")
+            # Prefer the {project_dir} token form - it's MRQ's default and
+            # machine-portable (resolves correctly on any worker)
+            best = next((s for s in candidates if "{project_dir}" in s), candidates[0])
+            segments = re.split(r"[\\/]+", best)
+            clean = []
+            for seg in segments:
+                if "{" in seg and seg != "{project_dir}":
+                    break  # unresolved token ({date}, {sequence_name}, ...)
+                clean.append(seg)
+            if not clean:
+                return None
+            path = "/".join(clean).replace("{project_dir}", project_dir)
+            return os.path.normpath(path)
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------

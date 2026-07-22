@@ -468,6 +468,24 @@ async def show_add_job_dialog():
                     if not (form['unreal_maps'] or form['unreal_sequences'] or form['unreal_presets']):
                         ui.label('Browse a .uproject above — maps, sequences, and MRQ presets will populate these dropdowns.').classes('text-xs text-zinc-400')
 
+                    def _auto_output_from_preset(_e=None):
+                        """Fill Output Folder with the preset's actual output
+                        directory (never overwrite a hand-edited value)."""
+                        eng = render_app.engine_registry.get('unreal')
+                        if not (eng and form['file_path'] and form['unreal_preset']):
+                            return
+                        out = eng.get_preset_output_dir(form['file_path'], form['unreal_preset'])
+                        if not out:
+                            return
+                        current = (form['output_folder'] or '').strip()
+                        auto_values = ('', os.path.dirname(form['file_path']),
+                                       form.get('_auto_output', None))
+                        if current in auto_values:
+                            form['output_folder'] = out
+                            form['_auto_output'] = out
+                            if output_input:
+                                output_input.value = out
+
                     ui.select(_unreal_options(form['unreal_maps'], form['unreal_map']),
                               label='Map', with_input=True, new_value_mode='add-unique') \
                         .bind_value(form, 'unreal_map').props('dense outlined').classes('w-full')
@@ -475,8 +493,12 @@ async def show_add_job_dialog():
                               label='Level Sequence', with_input=True, new_value_mode='add-unique') \
                         .bind_value(form, 'unreal_sequence').props('dense outlined').classes('w-full')
                     ui.select(_unreal_options(form['unreal_presets'], form['unreal_preset']),
-                              label='MRQ Preset', with_input=True, new_value_mode='add-unique') \
+                              label='MRQ Preset', with_input=True, new_value_mode='add-unique',
+                              on_change=_auto_output_from_preset) \
                         .bind_value(form, 'unreal_preset').props('dense outlined').classes('w-full')
+
+                    # Preset may already be selected (single candidate auto-pick)
+                    _auto_output_from_preset()
                     ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
                     ui.checkbox('Show preview window while rendering', value=form['unreal_show_preview']) \
                         .props('dense').bind_value(form, 'unreal_show_preview') \
@@ -800,8 +822,18 @@ async def show_edit_job_dialog(job):
                 unreal_seq_select = ui.select(_unreal_options([], form['unreal_sequence']),
                                               label='Level Sequence', with_input=True, new_value_mode='add-unique') \
                     .bind_value(form, 'unreal_sequence').props('dense outlined').classes('w-full')
+                def _edit_auto_output(_e=None):
+                    """Point Output Folder at the selected preset's output dir."""
+                    eng = render_app.engine_registry.get('unreal')
+                    if not (eng and form['file_path'] and form['unreal_preset']):
+                        return
+                    out = eng.get_preset_output_dir(form['file_path'], form['unreal_preset'])
+                    if out:
+                        form['output_folder'] = out
+
                 unreal_preset_select = ui.select(_unreal_options([], form['unreal_preset']),
-                                                 label='MRQ Preset', with_input=True, new_value_mode='add-unique') \
+                                                 label='MRQ Preset', with_input=True, new_value_mode='add-unique',
+                                                 on_change=_edit_auto_output) \
                     .bind_value(form, 'unreal_preset').props('dense outlined').classes('w-full')
                 ui.input('Extra Args', placeholder='-dpcvars=... (optional)').bind_value(form, 'unreal_extra_args').classes('w-full')
 

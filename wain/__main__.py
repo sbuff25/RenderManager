@@ -118,6 +118,10 @@ def parse_args():
         help='API token for worker authentication (shown when server starts)',
     )
     parser.add_argument(
+        '--headless', action='store_true',
+        help='Worker mode: terminal only, no dashboard window (v2.24.0)',
+    )
+    parser.add_argument(
         '--software-ui', action='store_true',
         help='Disable GPU compositing for the UI window (fallback if the UI '
              'conflicts with render engines; default is GPU-accelerated)',
@@ -448,7 +452,43 @@ def run_worker(args):
         path_maps=path_maps or None,
         api_token=args.token,
     )
-    client.run()
+
+    # Headless (terminal-only) worker: --headless flag, or no Qt available
+    if args.headless or not HAS_NATIVE_MODE:
+        client.run()
+        return
+
+    # Dashboard mode (v2.24.0): worker loop in a background thread, compact
+    # NiceGUI status window in the main thread.
+    #
+    # NiceGUI's native window is a multiprocessing child that re-imports this
+    # module and re-executes run_worker() up to its ui.run() call (which
+    # no-ops in the child). Guard the worker thread so only the real main
+    # process polls for jobs - otherwise every job would be claimed twice.
+    import multiprocessing
+    is_window_child = multiprocessing.parent_process() is not None
+
+    if not is_window_child:
+        threading.Thread(target=client.run, daemon=True).start()
+        app.on_shutdown(client.stop)
+
+    from wain.ui.worker_ui import build_worker_ui
+    build_worker_ui(client)
+
+    _assets_dir, favicon_path = _setup_assets()
+    print("Starting worker dashboard...")
+    ui.run(
+        title='Wain Worker',
+        favicon=favicon_path,
+        dark=True,
+        reload=False,
+        native=True,
+        window_size=(470, 720),
+        fullscreen=False,
+        reconnect_timeout=0,
+        show=True,
+        port=8090,  # keep clear of a Wain server on the same machine (8080)
+    )
 
 
 # ============================================================================

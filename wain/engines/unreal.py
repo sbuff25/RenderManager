@@ -361,8 +361,12 @@ class UnrealEngine(RenderEngine):
         def render_thread():
             nonlocal total_frames
             try:
+                # Hide the child's window only for offscreen renders -
+                # STARTF_USESHOWWINDOW defaults wShowWindow to SW_HIDE, which
+                # would swallow the preview window the user asked for
                 startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                if not show_preview:
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
                 env = os.environ.copy()
                 env["PYTHONIOENCODING"] = "utf-8"

@@ -91,6 +91,16 @@ class WorkerClient:
         self._soft_cancel = False
         self._log_file = self._init_log_file()
 
+        # Worker UI state (v2.24.0) -----------------------------------------
+        # drain_mode: finish the current job but claim nothing new
+        # _ui_log: ring buffer for the dashboard's log tail (the server
+        #          log-shipping buffer above gets flushed/cleared, so the UI
+        #          needs its own copy)
+        self.drain_mode = False
+        self.stats = {"completed": 0, "failed": 0}
+        self.started_at = time.time()
+        self._ui_log: List[str] = []
+
         # Connection state -----------------------------------------------
         self._conn_state = CONN_DISCONNECTED
         self._conn_lock = threading.Lock()
@@ -137,8 +147,12 @@ class WorkerClient:
             return None
 
     def _log(self, msg: str):
-        """Write to both console and log file."""
+        """Write to console, log file, and the dashboard's log tail."""
         print(msg)
+        with self._log_lock:
+            self._ui_log.append(str(msg))
+            if len(self._ui_log) > 600:
+                del self._ui_log[:200]
         if self._log_file:
             try:
                 from datetime import datetime
@@ -232,11 +246,18 @@ class WorkerClient:
 
         return False  # shutdown
 
+    def cancel_current(self):
+        """Request graceful cancellation of the running job (worker UI)."""
+        if self._current_job:
+            self._log("[Worker] Cancel requested from worker dashboard")
+            self._soft_cancel = True
+
     def _poll_loop(self):
         """Poll for jobs until the server becomes unreachable."""
         while self.running:
             try:
-                job_data = self._poll_for_job()
+                # Drain mode: keep heartbeating, claim nothing new
+                job_data = None if self.drain_mode else self._poll_for_job()
                 if job_data:
                     self._render_job(job_data)
                 else:
@@ -478,12 +499,14 @@ class WorkerClient:
             self._render_done.wait()
 
             if self._render_result["status"] == "completed":
+                self.stats["completed"] += 1
                 self._log(f"[Worker] Job '{job.name or job.id}' completed")
                 self._report_complete(job.id)
             elif self._render_result["status"] == "cancelled":
                 self._log(f"[Worker] Job '{job.name or job.id}' cancelled")
                 # Server already set the status, no need to report
             else:
+                self.stats["failed"] += 1
                 error = self._render_result.get("error", "Unknown error")
                 self._log(f"[Worker] Job '{job.name or job.id}' failed: {error}")
                 self._report_error(job.id, error)

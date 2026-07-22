@@ -574,7 +574,12 @@ class UnrealEngine(RenderEngine):
                         # Sequence-length auto-detection from MRQ's shot bookkeeping
                         m = SHOT_RANGE_RE.search(line)
                         if m:
-                            shot_spans.append((int(m.group(1)), int(m.group(2))))
+                            span = (int(m.group(1)), int(m.group(2)))
+                            # The Python-executor path can log each shot's
+                            # range twice - counting duplicates doubles the
+                            # estimated total (observed: 3902 vs 1951)
+                            if span not in shot_spans:
+                                shot_spans.append(span)
                         m = CAMERA_CUT_RE.search(line)
                         if m and shot_spans:
                             cut_idx = int(m.group(1))  # 1-based

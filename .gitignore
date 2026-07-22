@@ -33,3 +33,11 @@ _ErrorExampleScreenshots/
 .env
 venv/
 .venv/
+
+# Machine-local runtime data (never commit - contains tokens/job state)
+wain_config.json
+wain_jobs.db
+wain_auth_token.txt
+wain_worker.json
+wain_render_log.txt
+logs/

@@ -82,8 +82,8 @@ STATUS_PATTERNS = [
 #      at 30 fps - the common case - so the bar is sensible immediately).
 #   2. At every later shot boundary, recalibrate exactly from frames-on-disk:
 #      ticks_per_frame = completed_ticks / frames_written.
-SHOT_RANGE_RE = re.compile(r"Registering range: \[(\d+),(\d+)\)")
-CAMERA_CUT_RE = re.compile(r"Initializing Camera Cut \[(\d+)/(\d+)\]")
+SHOT_RANGE_RE = re.compile(r"Registering range: \[(\d+),(\d+)\) \(InnerName: (.+?) OuterName")
+CAMERA_CUT_RE = re.compile(r"Initializing Camera Cut \[(\d+)/(\d+)\] in \[.*?\] (.+?)\.\s*$")
 DEFAULT_TICKS_PER_FRAME = 800
 
 
@@ -475,7 +475,10 @@ class UnrealEngine(RenderEngine):
         # Frames present before we start don't count toward progress
         preexisting = self._snapshot_output(job.output_folder)
         total_frames = max(1, job.frame_end - job.frame_start + 1) if job.is_animation else 1
-        shot_spans: List[tuple] = []  # (start_tick, end_tick) per shot, from MRQ log
+        shot_spans: List[tuple] = []  # (start_tick, end_tick, name) per shot, from MRQ log
+        # Live shot context for the job card: which camera cut is rendering,
+        # and the tick->frame conversion once calibrated
+        shot_state = {"idx": 0, "total": 0, "name": "", "tpf": DEFAULT_TICKS_PER_FRAME}
 
         def apply_total(n: int, source: str):
             """Adopt a detected sequence length: fixes the progress denominator
@@ -545,6 +548,19 @@ class UnrealEngine(RenderEngine):
                                         on_log(f"[Unreal] Output resolution detected: {dims[0]}x{dims[1]}")
                             seen_frames = n
                             msg = f"Frame {n}/{total_frames} written"
+                            # Enrich with live shot context when we have it:
+                            # "Shot 3/12 Garage-WingSpin-01 - frame 32/150 (21%)"
+                            idx = shot_state["idx"]
+                            if idx >= 1 and idx <= len(shot_spans):
+                                tpf = shot_state["tpf"] or DEFAULT_TICKS_PER_FRAME
+                                before = sum(e - s for s, e, _n2 in shot_spans[:idx - 1])
+                                s, e, _n2 = shot_spans[idx - 1]
+                                shot_len = max(1, round((e - s) / tpf))
+                                in_shot = max(0, min(shot_len, n - round(before / tpf)))
+                                pct = int(in_shot / shot_len * 100)
+                                msg = (f"Shot {idx}/{shot_state['total']} "
+                                       f"{shot_state['name']} - frame {in_shot}/{shot_len} ({pct}%) "
+                                       f"- total {n}/{total_frames}")
                             if job.is_animation:
                                 # app.py convention: report the frame number,
                                 # then -1 to commit it as "saved"
@@ -574,25 +590,29 @@ class UnrealEngine(RenderEngine):
                         # Sequence-length auto-detection from MRQ's shot bookkeeping
                         m = SHOT_RANGE_RE.search(line)
                         if m:
-                            span = (int(m.group(1)), int(m.group(2)))
+                            span = (int(m.group(1)), int(m.group(2)), m.group(3).strip())
                             # The Python-executor path can log each shot's
                             # range twice - counting duplicates doubles the
                             # estimated total (observed: 3902 vs 1951)
-                            if span not in shot_spans:
+                            if all(span[:2] != s[:2] for s in shot_spans):
                                 shot_spans.append(span)
                         m = CAMERA_CUT_RE.search(line)
                         if m and shot_spans:
                             cut_idx = int(m.group(1))  # 1-based
-                            total_ticks = sum(e - s for s, e in shot_spans)
+                            shot_state["idx"] = cut_idx
+                            shot_state["total"] = int(m.group(2))
+                            shot_state["name"] = m.group(3).strip()
+                            total_ticks = sum(e - s for s, e, _n in shot_spans)
                             if cut_idx == 1:
                                 # Provisional estimate so the bar is sane from frame 1
                                 apply_total(total_ticks / DEFAULT_TICKS_PER_FRAME, "estimated")
                             elif cut_idx - 1 <= len(shot_spans):
                                 # Exact recalibration: ticks completed vs frames on disk
-                                done_ticks = sum(e - s for s, e in shot_spans[:cut_idx - 1])
+                                done_ticks = sum(e - s for s, e, _n in shot_spans[:cut_idx - 1])
                                 frames_done = len(self._snapshot_output(job.output_folder) - preexisting)
                                 if done_ticks > 0 and frames_done > 0:
                                     ticks_per_frame = done_ticks / frames_done
+                                    shot_state["tpf"] = ticks_per_frame
                                     apply_total(total_ticks / ticks_per_frame, "detected")
 
                         if on_log and LOG_FORWARD_RE.search(line):

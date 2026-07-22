@@ -530,8 +530,14 @@ class RenderApp:
         
         if self.current_job is None:
             # Try regular jobs first (skip distributed parents — they never render directly)
+            local_names = ("", "local", socket.gethostname().lower())
             for job in self.jobs:
                 if job.status == "queued" and not job.assigned_to and not job.is_distributed:
+                    # Jobs targeted at a specific worker are theirs alone —
+                    # the server must not render them locally
+                    target = (getattr(job, "target_worker", "") or "").lower()
+                    if target not in local_names:
+                        continue
                     self.start_render(job)
                     break
             # In network mode, also claim chunk jobs from DB for server rendering

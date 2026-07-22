@@ -601,6 +601,8 @@ class WorkerClient:
             # the sequence length from the MRQ log) - keep the server in sync
             "frame_start": job.frame_start,
             "frame_end": job.frame_end,
+            "res_width": job.res_width,
+            "res_height": job.res_height,
             "status": "rendering",
             "status_message": msg[:200] if msg else "",
             "elapsed_time": elapsed,

@@ -218,7 +218,8 @@ class UnrealEngine(RenderEngine):
         """
         info: Dict[str, Any] = {
             "cameras": [], "active_camera": "",
-            "resolution_x": 3840, "resolution_y": 2160,
+            # 0x0 = "the MRQ preset decides" - keeps stale defaults out of the UI
+            "resolution_x": 0, "resolution_y": 0,
             "frame_start": 1, "frame_end": 1, "has_animation": True,
             "engine_version": "", "maps": [], "sequences": [], "presets": [],
         }
@@ -282,6 +283,32 @@ class UnrealEngine(RenderEngine):
     def get_default_settings(self) -> Dict[str, Any]:
         return {"map_path": "", "sequence_path": "", "preset_path": "",
                 "extra_args": "", "show_preview": True}
+
+    @staticmethod
+    def _image_dims(path: str):
+        """Read pixel dimensions from a rendered frame (EXR/PNG/JPG/BMP).
+
+        EXR is parsed by hand (PIL doesn't read it): scan the header for the
+        dataWindow box2i attribute. Returns (width, height) or None.
+        """
+        try:
+            if path.lower().endswith(".exr"):
+                import struct
+                with open(path, "rb") as f:
+                    head = f.read(16384)
+                i = head.find(b"dataWindow")
+                if i < 0:
+                    return None
+                i = head.find(b"box2i", i)
+                if i < 0:
+                    return None
+                x0, y0, x1, y1 = struct.unpack("<4i", head[i + 10:i + 26])
+                return (x1 - x0 + 1, y1 - y0 + 1)
+            from PIL import Image
+            with Image.open(path) as img:
+                return img.size
+        except Exception:
+            return None
 
     def _snapshot_output(self, folder: str) -> set:
         """Set of image files currently in the output folder (recursive)."""
@@ -392,6 +419,14 @@ class UnrealEngine(RenderEngine):
                         current = self._snapshot_output(job.output_folder) - preexisting
                         n = len(current)
                         if n > seen_frames:
+                            # First delivered frame: read the real output size
+                            # (the MRQ preset governs it; the job starts at 0x0)
+                            if seen_frames == 0 and not job.res_width:
+                                dims = self._image_dims(sorted(current)[0])
+                                if dims:
+                                    job.res_width, job.res_height = dims
+                                    if on_log:
+                                        on_log(f"[Unreal] Output resolution detected: {dims[0]}x{dims[1]}")
                             seen_frames = n
                             msg = f"Frame {n}/{total_frames} written"
                             if job.is_animation:

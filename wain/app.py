@@ -337,6 +337,10 @@ class RenderApp:
                     if db_job.frame_end > local_job.frame_end:
                         local_job.frame_start = db_job.frame_start
                         local_job.frame_end = db_job.frame_end
+                    # ...and the real output resolution from the first frame
+                    if db_job.res_width and not local_job.res_width:
+                        local_job.res_width = db_job.res_width
+                        local_job.res_height = db_job.res_height
                     local_job.elapsed_time = db_job.elapsed_time
                     local_job.accumulated_seconds = db_job.accumulated_seconds
                     local_job.current_sample = db_job.current_sample

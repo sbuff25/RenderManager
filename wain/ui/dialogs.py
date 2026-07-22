@@ -562,6 +562,10 @@ async def show_add_job_dialog():
                     form['frame_end'] = 1
                     form['output_format'] = 'Preset'
                     form['distribute'] = False  # frame-chunking can't override an MRQ preset
+                    # Resolution is governed by the MRQ preset; detected from
+                    # the first rendered frame at render time
+                    form['res_width'] = 0
+                    form['res_height'] = 0
 
                 job = RenderJob(
                     name=form['name'] or "Untitled",

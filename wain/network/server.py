@@ -215,6 +215,7 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None,
         for key in (
             "progress", "current_frame", "rendering_frame",
             "frame_start", "frame_end",
+            "res_width", "res_height",
             "elapsed_time", "accumulated_seconds",
             "current_sample", "total_samples",
             "current_tile", "total_tiles",

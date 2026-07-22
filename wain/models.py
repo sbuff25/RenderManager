@@ -198,8 +198,12 @@ class RenderJob:
             return f"0/{self.frame_end}"
         return str(self.frame_start)
     
-    @property 
+    @property
     def resolution_display(self) -> str:
+        # Unreal jobs start at 0x0 (the MRQ preset governs output size);
+        # the engine fills in real dimensions from the first rendered frame
+        if not self.res_width or not self.res_height:
+            return "preset res"
         return f"{self.res_width}x{self.res_height}"
     
     @property

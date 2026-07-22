@@ -66,7 +66,16 @@ class WorkerClient:
         self.api_token = api_token or ""
 
         self.engine_registry = EngineRegistry()
+        # Engines this worker can claim. Blender/Marmoset render headless from
+        # the CLI; Unreal joins the list when an engine install is detected.
+        # (Vantage stays excluded - it needs interactive UI automation.)
         self.supported_engines = ["blender", "marmoset"]
+        try:
+            unreal = self.engine_registry.get("unreal")
+            if unreal and getattr(unreal, "installed_versions", None):
+                self.supported_engines.append("unreal")
+        except Exception:
+            pass
         self.capabilities = self._build_capabilities()
 
         self.running = True

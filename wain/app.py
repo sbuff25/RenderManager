@@ -333,6 +333,10 @@ class RenderApp:
                     local_job.progress = db_job.progress
                     local_job.current_frame = db_job.current_frame
                     local_job.rendering_frame = db_job.rendering_frame
+                    # Worker may have auto-detected the real frame range (Unreal)
+                    if db_job.frame_end > local_job.frame_end:
+                        local_job.frame_start = db_job.frame_start
+                        local_job.frame_end = db_job.frame_end
                     local_job.elapsed_time = db_job.elapsed_time
                     local_job.accumulated_seconds = db_job.accumulated_seconds
                     local_job.current_sample = db_job.current_sample

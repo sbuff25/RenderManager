@@ -597,6 +597,10 @@ class WorkerClient:
             "progress": job.progress,
             "current_frame": job.current_frame,
             "rendering_frame": job.rendering_frame,
+            # Engines may refine the frame range mid-render (Unreal detects
+            # the sequence length from the MRQ log) - keep the server in sync
+            "frame_start": job.frame_start,
+            "frame_end": job.frame_end,
             "status": "rendering",
             "status_message": msg[:200] if msg else "",
             "elapsed_time": elapsed,

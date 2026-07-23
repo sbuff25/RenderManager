@@ -21,6 +21,8 @@ only logistics (where, which frames, what name) on the in-memory job.
 https://github.com/sbuff25/RenderManager
 """
 
+import time
+
 import unreal
 
 
@@ -32,6 +34,34 @@ class WainMRQExecutor(unreal.MoviePipelinePythonHostExecutor):
 
     def _post_init(self):
         self.wain_pipeline = None
+        self._last_progress_emit = 0.0
+
+    # ------------------------------------------------------------------
+    # Live authoritative progress (v2.25.3): once per second, report MRQ's
+    # own bookkeeping so Wain doesn't have to infer progress from files
+    # appearing in the output folder. Parsed by wain/engines/unreal.py:
+    #   [WainProgress] frame=<cur>/<total> pct=<0-100> segment=<inner name>
+    # APIs verified against MoviePipelineBlueprintLibrary.h (5.8).
+    @unreal.ufunction(override=True)
+    def on_begin_frame(self):
+        super(WainMRQExecutor, self).on_begin_frame()
+        if not self.wain_pipeline:
+            return
+        now = time.time()
+        if now - self._last_progress_emit < 1.0:
+            return
+        self._last_progress_emit = now
+        try:
+            cur, total = unreal.MoviePipelineLibrary.get_overall_output_frames(
+                self.wain_pipeline)
+            pct = unreal.MoviePipelineLibrary.get_completion_percentage(
+                self.wain_pipeline) * 100.0
+            _outer, inner = unreal.MoviePipelineLibrary.get_current_segment_name(
+                self.wain_pipeline)
+            unreal.log(f"[WainProgress] frame={cur}/{total} pct={pct:.1f} "
+                       f"segment={inner}")
+        except Exception:
+            pass  # never let progress reporting hurt the render
 
     # ------------------------------------------------------------------
     @unreal.ufunction(override=True)

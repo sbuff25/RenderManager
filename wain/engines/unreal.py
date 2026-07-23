@@ -85,6 +85,11 @@ STATUS_PATTERNS = [
 SHOT_RANGE_RE = re.compile(r"Registering range: \[(\d+),(\d+)\) \(InnerName: (.+?) OuterName")
 CAMERA_CUT_RE = re.compile(r"Initializing Camera Cut \[(\d+)/(\d+)\] in \[.*?\] (.+?)\.\s*$")
 DEFAULT_TICKS_PER_FRAME = 800
+# Authoritative live progress from the WainMRQExecutor inside the render
+# process (v2.25.3) - MRQ's own frame bookkeeping, no filesystem inference:
+#   [WainProgress] frame=12/150 pct=8.0 segment=Garage-BarPan-01
+WAIN_PROGRESS_RE = re.compile(
+    r"\[WainProgress\] frame=(\d+)/(\d+) pct=([\d.]+) segment=(.*?)\s*$")
 
 
 class UnrealEngine(RenderEngine):
@@ -560,9 +565,14 @@ class UnrealEngine(RenderEngine):
                 seen_frames = 0
                 fatal_lines: List[str] = []
                 stop_polling = threading.Event()
+                # True once the in-process executor starts streaming
+                # [WainProgress] markers - MRQ's own numbers then drive the
+                # card and the disk poller goes quiet (it keeps running for
+                # resolution detection and stays the truth for final tallies)
+                mrq_live = {"on": False}
 
                 def poll_output_folder():
-                    """Count delivered frames on disk - the primary progress signal."""
+                    """Count delivered frames on disk - fallback progress signal."""
                     nonlocal seen_frames
                     while not stop_polling.wait(self.POLL_INTERVAL_SECONDS):
                         if self.is_cancelling:
@@ -579,6 +589,8 @@ class UnrealEngine(RenderEngine):
                                     if on_log:
                                         on_log(f"[Unreal] Output resolution detected: {dims[0]}x{dims[1]}")
                             seen_frames = n
+                            if mrq_live["on"]:
+                                continue  # executor markers own the card now
                             msg = f"Frame {n}/{total_frames} written"
                             # Enrich with live shot context when we have it:
                             # "Shot 3/12 Garage-WingSpin-01 - frame 32/150 (21%)"
@@ -620,6 +632,26 @@ class UnrealEngine(RenderEngine):
 
                         if re.search(r"Fatal error|Assertion failed|GPU Crash|DEVICE_HUNG|DEVICE_REMOVED", line, re.IGNORECASE):
                             fatal_lines.append(safe_line)
+
+                        # Authoritative in-process progress (v2.25.3): the
+                        # WainMRQExecutor streams MRQ's own frame counters.
+                        # First marker seen -> these own the job card; the
+                        # disk poller stays as fallback + final tally.
+                        m = WAIN_PROGRESS_RE.search(line)
+                        if m:
+                            cur, total = int(m.group(1)), int(m.group(2))
+                            pct, seg = float(m.group(3)), m.group(4).strip()
+                            mrq_live["on"] = True
+                            if total > 0:
+                                apply_total(total, "reported by MRQ")
+                            msg = (f"{seg} - frame {cur}/{total} ({pct:.0f}%)"
+                                   if seg else f"Frame {cur}/{total} ({pct:.0f}%)")
+                            if job.is_animation and cur > 0:
+                                on_progress(job.frame_start + cur - 1, msg)
+                                on_progress(-1, msg)
+                            else:
+                                on_progress(0, msg)
+                            continue
 
                         # Sequence-length auto-detection from MRQ's shot bookkeeping.
                         # MRQ first registers EVERY shot in the sequence, then

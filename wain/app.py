@@ -585,13 +585,28 @@ class RenderApp:
                     self.start_render(chunk)
     
     def start_render(self, job):
+        # HARD single-render guard (v2.25.2): this machine renders ONE job at
+        # a time, period. Whatever the trigger - queue races, mis-clicked
+        # buttons during card drags, double events - a second local render
+        # must never start while one is active.
+        if self.current_job is not None and self.current_job is not job:
+            self.log(f"Refusing to start '{job.name}' - already rendering "
+                     f"'{self.current_job.name}' (one local render at a time)")
+            return
         engine = self.engine_registry.get(job.engine_type)
         if not engine:
             job.status = "failed"
             job.error_message = "Engine not found"
             if self.queue_container: self.queue_container.refresh()
             return
-        
+        # Second layer: refuse if ANY engine still has a live render process
+        # (covers current_job being cleared while a process lingers)
+        for eng in self.engine_registry.get_all():
+            if getattr(eng, 'current_process', None) is not None:
+                self.log(f"Refusing to start '{job.name}' - engine "
+                         f"'{eng.name}' still has an active render process")
+                return
+
         self.current_job = job
         job.status = "rendering"
         self.render_start_time = datetime.now()

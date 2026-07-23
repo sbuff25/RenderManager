@@ -306,6 +306,15 @@ def main_page():
                     easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
                     ghostClass: 'job-card-ghost',
                     chosenClass: 'job-card-chosen',
+                    // Buttons/inputs never initiate a drag (but still click
+                    // normally) - prevents pause/play/delete misfires while
+                    // grabbing a card
+                    filter: '.q-btn, button, a, input, .q-checkbox, .q-select',
+                    preventOnFilter: false,
+                    // Small hold-to-drag delay so quick clicks are never
+                    // interpreted as drags
+                    delay: 120,
+                    delayOnTouchOnly: false,
                     onEnd: function (evt) {
                         if (evt.oldIndex !== evt.newIndex) {
                             emitEvent('wain_job_reorder', {o: evt.oldIndex, n: evt.newIndex});

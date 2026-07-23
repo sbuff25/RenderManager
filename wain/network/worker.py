@@ -554,6 +554,13 @@ class WorkerClient:
         """Handle progress callback from engine, throttle API reports."""
         now = time.time()
 
+        # Keep the local job's status line current so the worker dashboard
+        # shows the same rich info the server card gets ("Shot 1/1 ... frame
+        # 12/150"), updated every callback even when the API send is
+        # throttled below (v2.25.2).
+        if msg:
+            job.status_message = msg[:200]
+
         # Update local job state
         if frame >= 0:
             job.rendering_frame = frame

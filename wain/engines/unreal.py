@@ -563,8 +563,10 @@ class UnrealEngine(RenderEngine):
                                 in_shot = max(0, min(shot_len, n - round(before / tpf)))
                                 pct = int(in_shot / shot_len * 100)
                                 msg = (f"Shot {idx}/{shot_state['total']} "
-                                       f"{shot_state['name']} - frame {in_shot}/{shot_len} ({pct}%) "
-                                       f"- total {n}/{total_frames}")
+                                       f"{shot_state['name']} - frame {in_shot}/{shot_len} ({pct}%)")
+                                if shot_state['total'] > 1:
+                                    # multi-shot job: also show whole-job position
+                                    msg += f" - total {n}/{total_frames}"
                             if job.is_animation:
                                 # app.py convention: report the frame number,
                                 # then -1 to commit it as "saved"
@@ -591,7 +593,15 @@ class UnrealEngine(RenderEngine):
                         if re.search(r"Fatal error|Assertion failed|GPU Crash|DEVICE_HUNG|DEVICE_REMOVED", line, re.IGNORECASE):
                             fatal_lines.append(safe_line)
 
-                        # Sequence-length auto-detection from MRQ's shot bookkeeping
+                        # Sequence-length auto-detection from MRQ's shot bookkeeping.
+                        # MRQ first registers EVERY shot in the sequence, then
+                        # (after "Initializing overall Movie Pipeline") re-registers
+                        # only the set that actually renders - a single shot when a
+                        # preset/Wain range solos one. Reset at the marker so totals
+                        # reflect the real workload, not the whole sequence
+                        # (observed: 150-frame shot showing "12/1951"). v2.25.2
+                        if "Initializing overall Movie Pipeline" in line and shot_state["idx"] == 0:
+                            shot_spans.clear()
                         m = SHOT_RANGE_RE.search(line)
                         if m:
                             span = (int(m.group(1)), int(m.group(2)), m.group(3).strip())

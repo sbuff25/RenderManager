@@ -370,6 +370,32 @@ class UnrealEngine(RenderEngine):
         except Exception:
             return None
 
+    def _snapshot_output_meta(self, folder: str) -> dict:
+        """{path: (mtime_ns, size)} of image files in the output folder.
+        Metadata (not just names) so OVERWRITTEN frames register as progress:
+        with overwrite_existing, re-rendered frames reuse the same filenames,
+        and a name-only diff counts 0 forever (v2.25.2 bug fix). Comparing
+        before/after metadata needs no clock agreement between machines."""
+        found = {}
+        try:
+            for root, _dirs, files in os.walk(folder):
+                for fn in files:
+                    if os.path.splitext(fn)[1].lower() in FRAME_EXTENSIONS:
+                        p = os.path.join(root, fn)
+                        try:
+                            st = os.stat(p)
+                            found[p] = (st.st_mtime_ns, st.st_size)
+                        except OSError:
+                            found[p] = (0, 0)
+        except Exception:
+            pass
+        return found
+
+    def _frames_since(self, baseline: dict, folder: str) -> list:
+        """Paths that are new OR changed since the baseline snapshot."""
+        cur = self._snapshot_output_meta(folder)
+        return [p for p, meta in cur.items() if baseline.get(p) != meta]
+
     def _snapshot_output(self, folder: str) -> set:
         """Set of image files currently in the output folder (recursive)."""
         found = set()
@@ -476,8 +502,10 @@ class UnrealEngine(RenderEngine):
                 on_log("[Unreal] Legacy launch: resolution/format/frame-range come from "
                        "the MRQ preset; progress is tracked by files in the output folder.")
 
-        # Frames present before we start don't count toward progress
-        preexisting = self._snapshot_output(job.output_folder)
+        # Frames present before we start don't count toward progress.
+        # Metadata snapshot: overwritten frames (same name, new mtime/size)
+        # count as progress too - critical with overwrite_existing jobs.
+        preexisting = self._snapshot_output_meta(job.output_folder)
         total_frames = max(1, job.frame_end - job.frame_start + 1) if job.is_animation else 1
         shot_spans: List[tuple] = []  # (start_tick, end_tick, name) per shot, from MRQ log
         # Live shot context for the job card: which camera cut is rendering,
@@ -539,7 +567,7 @@ class UnrealEngine(RenderEngine):
                     while not stop_polling.wait(self.POLL_INTERVAL_SECONDS):
                         if self.is_cancelling:
                             return
-                        current = self._snapshot_output(job.output_folder) - preexisting
+                        current = self._frames_since(preexisting, job.output_folder)
                         n = len(current)
                         if n > seen_frames:
                             # First delivered frame: read the real output size
@@ -623,7 +651,7 @@ class UnrealEngine(RenderEngine):
                             elif cut_idx - 1 <= len(shot_spans):
                                 # Exact recalibration: ticks completed vs frames on disk
                                 done_ticks = sum(e - s for s, e, _n in shot_spans[:cut_idx - 1])
-                                frames_done = len(self._snapshot_output(job.output_folder) - preexisting)
+                                frames_done = len(self._frames_since(preexisting, job.output_folder))
                                 if done_ticks > 0 and frames_done > 0:
                                     ticks_per_frame = done_ticks / frames_done
                                     shot_state["tpf"] = ticks_per_frame
@@ -646,7 +674,7 @@ class UnrealEngine(RenderEngine):
                 stop_polling.set()
 
                 # Final frame count (poller may not have caught the last write)
-                final_frames = len(self._snapshot_output(job.output_folder) - preexisting)
+                final_frames = len(self._frames_since(preexisting, job.output_folder))
                 self.current_process = None
 
                 if self.is_cancelling:

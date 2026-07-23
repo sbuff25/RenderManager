@@ -229,10 +229,12 @@ class RenderApp:
                 self.current_job = None
                 self.render_start_time = None
             elif self.network_mode and self.db and job.assigned_to:
-                # Remote worker job — tell the server DB to cancel it
-                # Worker will pick up the status change and stop
+                # Remote worker job — tell the server DB to cancel it.
+                # The worker's cancel watch notices within ~1-3s and replaces
+                # this message with "Paused at frame N" once actually stopped.
                 self.db.update_job(job.id, status="paused",
-                                   status_message="Cancelled by server")
+                                   status_message=f"Stopping on {job.assigned_to}...")
+                job.status_message = f"Stopping on {job.assigned_to}..."
             job.status = "paused"
         elif action == "retry":
             job.assigned_to = None

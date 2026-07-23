@@ -485,12 +485,16 @@ class WorkerClient:
             self._handle_progress(job, frame, msg)
 
         def on_complete():
-            self._render_result["status"] = "completed"
+            # A cancel kill makes the engine fire completion/error afterwards -
+            # never let that overwrite an intentional cancellation
+            if self._render_result["status"] != "cancelled":
+                self._render_result["status"] = "completed"
             self._render_done.set()
 
         def on_error(err):
-            self._render_result["status"] = "failed"
-            self._render_result["error"] = str(err)
+            if self._render_result["status"] != "cancelled":
+                self._render_result["status"] = "failed"
+                self._render_result["error"] = str(err)
             self._render_done.set()
 
         def on_log(msg):
@@ -503,6 +507,25 @@ class WorkerClient:
                 job, start_frame,
                 on_progress, on_complete, on_error, on_log,
             )
+
+            # Cancel watch (v2.25.2): engines like Unreal can go a long time
+            # between progress callbacks (warm-up emits none at all), which
+            # used to delay cancellation until the next callback. This thread
+            # notices a server cancel or a dashboard cancel within ~1-3s and
+            # stops the render directly. Blender is left to the callback path
+            # (it saves the in-progress frame at the next 'Saved:' boundary).
+            def _cancel_watch():
+                while not self._render_done.wait(1.0):
+                    if self._current_job is None:
+                        return
+                    if not self._soft_cancel and self._check_cancellation(job.id):
+                        self._log(f"[Worker] Server cancelled '{job.name or job.id}' - stopping now")
+                        self._soft_cancel = True
+                    if self._soft_cancel and job.engine_type != "blender":
+                        self._stop_render_now(job)
+                        return
+
+            threading.Thread(target=_cancel_watch, daemon=True).start()
 
             # Wait for render to finish
             self._render_done.wait()
@@ -572,20 +595,7 @@ class WorkerClient:
             # Marmoset: no intermediate save point, cancel immediately
             can_stop = (job.engine_type != "blender") or (msg and "Saved:" in msg)
             if can_stop:
-                self._log(f"[Worker] Stopping render (paused at frame {job.current_frame})")
-                self._flush_log_buffer()
-                # Report final position so resume works correctly
-                self._api_call("PUT", f"/api/jobs/{job.id}/progress", {
-                    "worker_id": self.worker_id,
-                    "current_frame": job.current_frame,
-                    "rendering_frame": job.rendering_frame,
-                    "status": "paused",
-                    "status_message": f"Paused at frame {job.current_frame}",
-                })
-                if self._current_engine:
-                    self._current_engine.cancel_render()
-                self._render_result["status"] = "cancelled"
-                self._render_done.set()
+                self._stop_render_now(job)
                 return
 
         # Throttle API calls
@@ -624,6 +634,28 @@ class WorkerClient:
             "current_pass_num": job.current_pass_num,
             "total_passes": job.total_passes,
         })
+
+    def _stop_render_now(self, job: RenderJob):
+        """Stop the running render and report the pause position (idempotent)."""
+        if self._render_result.get("status") == "cancelled":
+            return
+        self._render_result["status"] = "cancelled"
+        self._log(f"[Worker] Stopping render (paused at frame {job.current_frame})")
+        self._flush_log_buffer()
+        # Report final position so resume works correctly
+        self._api_call("PUT", f"/api/jobs/{job.id}/progress", {
+            "worker_id": self.worker_id,
+            "current_frame": job.current_frame,
+            "rendering_frame": job.rendering_frame,
+            "status": "paused",
+            "status_message": f"Paused at frame {job.current_frame}",
+        })
+        if self._current_engine:
+            try:
+                self._current_engine.cancel_render()
+            except Exception as e:
+                self._log(f"[Worker] cancel_render error: {e}")
+        self._render_done.set()
 
     def _check_cancellation(self, job_id: str) -> bool:
         """Check if the server has cancelled this job. Returns True if cancelled."""

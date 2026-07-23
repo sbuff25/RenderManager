@@ -667,12 +667,24 @@ class UnrealEngine(RenderEngine):
 
     def cancel_render(self):
         self.is_cancelling = True
-        if self.current_process:
+        proc = self.current_process
+        self.current_process = None
+        if proc:
+            # terminate() asks politely and UE can take many seconds to comply
+            # (or ignore it mid-D3D work). Kill hard, then sweep the whole
+            # process tree so ShaderCompileWorker children die too (v2.25.2).
             try:
-                self.current_process.terminate()
+                proc.kill()
             except Exception:
                 pass
-            self.current_process = None
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True, timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except Exception:
+                pass
 
     def open_file_in_app(self, file_path: str, version: str = None):
         """Open the project in the full (GUI) editor."""

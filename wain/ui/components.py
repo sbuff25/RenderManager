@@ -222,8 +222,9 @@ def create_job_card(job):
             </div>
         ''', sanitize=False)
         
-        # Status message - shows current activity for rendering jobs
-        if job.status_message and job.status in ["rendering", "queued"]:
+        # Status message - shows current activity for rendering jobs, and
+        # cancel/pause progress ("Stopping on X..." -> "Paused at frame N")
+        if job.status_message and job.status in ["rendering", "queued", "paused"]:
             ui.html(f'''
                 <div id="job-status-msg-{job.id}" class="job-status-message">
                     {job.status_message}

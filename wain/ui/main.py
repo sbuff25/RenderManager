@@ -55,9 +55,11 @@ def main_page():
             display: flex; align-items: center; justify-content: center; flex-shrink: 0;
         }
         .log-expansion { border: 1px solid #27272a; border-radius: 10px; overflow: hidden; }
+        /* SortableJS drag states (v2.25.2) - cosmetic queue reordering */
         .job-card-draggable { cursor: grab; }
         .job-card-draggable:active { cursor: grabbing; }
-        .job-card-drop-target { outline: 2px dashed #3b82f6 !important; outline-offset: -2px; }
+        .job-card-ghost { opacity: 0.35; border: 1px dashed #52525b !important; }
+        .job-card-chosen { box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important; transform: scale(1.01); }
         
         /* Hide NiceGUI reconnection notification - we're a desktop app */
         .q-notification, .q-notifications, .nicegui-reconnecting, 
@@ -290,6 +292,32 @@ def main_page():
             render_app.job_count_container = job_count
             job_count()
         
+        # Smooth drag-to-reorder (v2.25.2): the card column is a SortableJS
+        # list - cards animate out of the way while dragging. Cosmetic only.
+        ui.add_body_html(f'<script src="/logos/Sortable.min.js?{ASSET_VERSION}"></script>')
+
+        _SORTABLE_INIT_JS = '''
+            (function () {
+                const el = document.getElementById('wain-job-queue');
+                if (!el || !window.Sortable) return;
+                if (el._wainSortable) { el._wainSortable.destroy(); }
+                el._wainSortable = Sortable.create(el, {
+                    animation: 220,
+                    easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+                    ghostClass: 'job-card-ghost',
+                    chosenClass: 'job-card-chosen',
+                    onEnd: function (evt) {
+                        if (evt.oldIndex !== evt.newIndex) {
+                            emitEvent('wain_job_reorder', {o: evt.oldIndex, n: evt.newIndex});
+                        }
+                    },
+                });
+            })();
+        '''
+
+        ui.on('wain_job_reorder',
+              lambda e: render_app.reorder_job_index(e.args.get('o'), e.args.get('n')))
+
         @ui.refreshable
         def queue_list():
             if not render_app.jobs:
@@ -303,9 +331,12 @@ def main_page():
                         ui.label('The wagon is empty').classes('text-lg font-bold text-zinc-400 mt-3')
                         ui.label('Click "Add Job" to load it up').classes('text-sm text-gray-500')
             else:
-                for job in render_app.jobs:
-                    create_job_card(job)
-        
+                with ui.column().classes('w-full gap-4').props('id=wain-job-queue'):
+                    for job in render_app.jobs:
+                        create_job_card(job)
+                # (Re)attach SortableJS after this refresh lands in the DOM
+                ui.timer(0.15, lambda: ui.run_javascript(_SORTABLE_INIT_JS), once=True)
+
         render_app.queue_container = queue_list
         queue_list()
         

@@ -55,6 +55,9 @@ def main_page():
             display: flex; align-items: center; justify-content: center; flex-shrink: 0;
         }
         .log-expansion { border: 1px solid #27272a; border-radius: 10px; overflow: hidden; }
+        .job-card-draggable { cursor: grab; }
+        .job-card-draggable:active { cursor: grabbing; }
+        .job-card-drop-target { outline: 2px dashed #3b82f6 !important; outline-offset: -2px; }
         
         /* Hide NiceGUI reconnection notification - we're a desktop app */
         .q-notification, .q-notifications, .nicegui-reconnecting, 

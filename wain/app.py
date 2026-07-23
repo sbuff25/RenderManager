@@ -73,9 +73,13 @@ class RenderApp:
                     pass
             self.log(f"Network mode enabled (migrated {migrated} jobs to database)")
         else:
-            # Fresh load from database (startup path)
+            # Fresh load from database (startup path). Display in queue order:
+            # priority DESC (drag-reorder persists there), then oldest first -
+            # matching the order workers actually claim in.
             self.jobs.clear()
-            self.jobs.extend(db.get_all_jobs())
+            loaded = db.get_all_jobs()
+            loaded.sort(key=lambda j: (-int(j.priority or 0), j.created_at or ""))
+            self.jobs.extend(loaded)
             self.log(f"Network mode enabled ({len(self.jobs)} jobs loaded from database)")
         self.save_config()
 
@@ -179,6 +183,29 @@ class RenderApp:
         if self.queue_container: self.queue_container.refresh()
         if self.stats_container: self.stats_container.refresh()
         if self.job_count_container: self.job_count_container.refresh()
+
+    def reorder_job(self, dragged_id, target_id):
+        """Drag-and-drop reorder: place the dragged card ABOVE the target card.
+        Queue order persists as claim priority (top of list = claimed first)."""
+        self._drag_job_id = None
+        if not dragged_id or dragged_id == target_id:
+            return
+        dragged = next((j for j in self.jobs if j.id == dragged_id), None)
+        target = next((j for j in self.jobs if j.id == target_id), None)
+        if dragged is None or target is None:
+            return
+        self.jobs.remove(dragged)
+        self.jobs.insert(self.jobs.index(target), dragged)
+        # Persist: top card = highest priority so workers claim in display order
+        n = len(self.jobs)
+        for i, j in enumerate(self.jobs):
+            j.priority = n - i
+            if self.network_mode and self.db:
+                self.db.update_job(j.id, priority=j.priority)
+        self.save_config()
+        self.log(f"Reordered: {dragged.name}")
+        if self.queue_container:
+            self.queue_container.refresh()
 
     def handle_action(self, action: str, job):
         import threading

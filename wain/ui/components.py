@@ -127,7 +127,18 @@ def create_job_card(job):
     engine_icon = ENGINE_ICONS.get(job.engine_type, "help")
     
     # v2.19.0 — engine accent bar on left edge
-    with ui.card().classes('w-full').style(f'border-left: 3px solid {engine_color};'):
+    # v2.25.2 — cards are drag-reorderable: drop a card onto another to place
+    # it above that card. Order persists as claim priority (top = first).
+    card = ui.card().classes('w-full job-card-draggable') \
+        .style(f'border-left: 3px solid {engine_color};') \
+        .props('draggable=true')
+    card.on('dragstart', lambda j=job: setattr(render_app, '_drag_job_id', j.id))
+    card.on('dragover.prevent', lambda: None)
+    card.on('dragenter', lambda c=card: c.classes(add='job-card-drop-target'))
+    card.on('dragleave', lambda c=card: c.classes(remove='job-card-drop-target'))
+    card.on('drop', lambda j=job: render_app.reorder_job(
+        getattr(render_app, '_drag_job_id', None), j.id))
+    with card:
         with ui.row().classes('w-full items-center gap-3'):
             if engine_logo:
                 ui.image(f'/logos/{engine_logo}?{ASSET_VERSION}').classes('w-8 h-8 object-contain')

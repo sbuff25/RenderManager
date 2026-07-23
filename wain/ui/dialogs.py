@@ -680,6 +680,7 @@ async def show_edit_job_dialog(job):
         'res_width': job.res_width,
         'res_height': job.res_height,
         'overwrite_existing': job.overwrite_existing,
+        'target_worker': getattr(job, 'target_worker', '') or '',
         # Engine-specific (restored from job)
         'render_type': job.engine_settings.get('render_type', 'still'),
         'samples': job.engine_settings.get('samples', 256),
@@ -716,7 +717,22 @@ async def show_edit_job_dialog(job):
                         ui.icon(ENGINE_ICONS.get(job.engine_type, 'help')).classes('text-lg')
                     engine = render_app.engine_registry.get(job.engine_type)
                     ui.label(engine.name if engine else job.engine_type).classes('text-sm')
-            
+
+            # Render target - editable here so a failed job can be re-aimed
+            # at a different worker before resubmitting (v2.25.1)
+            if render_app.network_mode and render_app.db:
+                worker_options = {'': 'Any Worker', 'local': 'Local (This Machine)'}
+                for w in render_app.db.get_workers():
+                    if not w.get('is_stale'):
+                        worker_options[w['worker_id']] = w['worker_id']
+                # keep the job's current target selectable even if that worker is offline
+                cur_target = form.get('target_worker', '')
+                if cur_target and cur_target not in worker_options:
+                    worker_options[cur_target] = f"{cur_target} (offline)"
+                ui.select(worker_options, value=cur_target, label='Render On') \
+                    .props('dense outlined').classes('w-full') \
+                    .bind_value(form, 'target_worker')
+
             ui.input('Job Name', value=form['name']).bind_value(form, 'name').classes('w-full')
             
             ui.label('Scene File:').classes('text-sm text-gray-400')
@@ -990,6 +1006,7 @@ async def show_edit_job_dialog(job):
                         job.frame_end = ue_fend - ue_fstart + 1
 
                 job.camera = form.get('camera', '')
+                job.target_worker = form.get('target_worker', '') or ''
 
                 render_app.save_config()
                 if render_app.network_mode and render_app.db:
@@ -1001,6 +1018,7 @@ async def show_edit_job_dialog(job):
                         is_animation=job.is_animation,
                         frame_start=job.frame_start, frame_end=job.frame_end,
                         camera=job.camera, overwrite_existing=job.overwrite_existing,
+                        target_worker=job.target_worker,
                         engine_settings=job.engine_settings)
                 render_app.log(f"Updated: {job.name}")
                 ui.notify('Job updated', type='positive')
@@ -1032,8 +1050,10 @@ async def show_edit_job_dialog(job):
                         status='queued', progress=0,
                         current_frame=0, rendering_frame=0,
                         error_message='', accumulated_seconds=0,
-                        elapsed_time='', assigned_to=None)
-                ui.notify('Job resubmitted', type='positive')
+                        elapsed_time='', assigned_to=None,
+                        target_worker=job.target_worker)
+                _target_label = job.target_worker or 'any worker'
+                ui.notify(f'Job resubmitted to {_target_label}', type='positive')
                 if render_app.queue_container:
                     render_app.queue_container.refresh()
                 if render_app.stats_container:

@@ -878,13 +878,20 @@ async def show_edit_job_dialog(job):
                                               label='Level Sequence', with_input=True, new_value_mode='add-unique') \
                     .bind_value(form, 'unreal_sequence').props('dense outlined').classes('w-full')
                 def _edit_auto_output(_e=None):
-                    """Point Output Folder at the selected preset's output dir."""
+                    """Point Output Folder at the selected preset's output dir -
+                    but NEVER clobber a folder the user set by hand. Only fill
+                    when the field is empty or still holds the last auto value
+                    (same guard as the submit dialog)."""
                     eng = render_app.engine_registry.get('unreal')
                     if not (eng and form['file_path'] and form['unreal_preset']):
                         return
+                    cur = form.get('output_folder', '') or ''
+                    if cur and cur != form.get('_auto_output'):
+                        return  # hand-set (or came in with the job) - leave it alone
                     out = eng.get_preset_output_dir(form['file_path'], form['unreal_preset'])
                     if out:
                         form['output_folder'] = out
+                        form['_auto_output'] = out
 
                 unreal_preset_select = ui.select(_unreal_options([], form['unreal_preset']),
                                                  label='MRQ Preset', with_input=True, new_value_mode='add-unique',

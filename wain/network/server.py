@@ -109,7 +109,11 @@ def register_api_routes(nicegui_app, db: JobDatabase, render_app=None,
 
         try:
             job = RenderJob.from_dict(body)
-            job.status = "queued"
+            # Honor an explicitly requested 'paused' status so batches can be
+            # staged without workers instantly claiming them (v2.25.1).
+            # Anything else is normalized to 'queued'.
+            requested = str(body.get("status", "queued")).lower()
+            job.status = "paused" if requested == "paused" else "queued"
             # Route through render_app.add_job() when available so
             # lifecycle hooks (UI refresh, config save) trigger properly.
             if render_app:

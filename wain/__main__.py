@@ -216,9 +216,13 @@ def _setup_assets():
     return assets_dir, favicon_path
 
 
-def _configure_native_window():
+def _configure_native_window(icon_path=None):
     """Configure the native PyQt6/pywebview window."""
     print("Configuring native window...")
+    # Taskbar/window icon (v2.25.5): pywebview's Qt backend accepts an icon
+    # via webview.start(icon=...) - NiceGUI forwards start_args to it.
+    if icon_path and os.path.exists(icon_path):
+        app.native.start_args['icon'] = icon_path
     app.native.window_args['title'] = 'Wain'
     app.native.window_args['frameless'] = True
     app.native.window_args['easy_drag'] = False
@@ -332,7 +336,7 @@ def run_standalone():
     _assets_dir, favicon_path = _setup_assets()
 
     if HAS_NATIVE_MODE:
-        _configure_native_window()
+        _configure_native_window(favicon_path)
         print("Starting UI (native mode)...")
         ui.run(
             title='Wain',
@@ -403,7 +407,7 @@ def run_server(args):
     _assets_dir, favicon_path = _setup_assets()
 
     if HAS_NATIVE_MODE:
-        _configure_native_window()
+        _configure_native_window(favicon_path)
         print(f"Starting UI (native + network mode, port {port})...")
         ui.run(
             title='Wain',
@@ -508,6 +512,9 @@ def run_worker(args):
     ui_port = _s.getsockname()[1]
     _s.close()
 
+    if favicon_path and os.path.exists(favicon_path):
+        app.native.start_args['icon'] = favicon_path
+
     print(f"Starting worker dashboard (port {ui_port})...")
     ui.run(
         title='Wain Worker',
@@ -526,6 +533,18 @@ def run_worker(args):
 # ============================================================================
 # ENTRY POINT
 # ============================================================================
+def _set_windows_app_identity():
+    """Give the process its own taskbar identity (v2.25.5): without an
+    explicit AppUserModelID, Windows groups the window under python.exe
+    and shows the Python icon regardless of the window's own icon."""
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Wain.RenderManager')
+        except Exception:
+            pass
+
+
 def run():
     """Main entry point — dispatches to the appropriate mode.
 
@@ -534,6 +553,7 @@ def run():
     honour that preference and start in server mode automatically — no
     need for the ``--network`` flag.
     """
+    _set_windows_app_identity()
     args = parse_args()
 
     if args.worker:

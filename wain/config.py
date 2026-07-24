@@ -13,7 +13,7 @@ ASSET_VERSION = "v12"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.25.3"
+APP_VERSION = "2.25.4"
 
 
 # ============================================================================
@@ -140,8 +140,9 @@ def check_assets(assets_dir: str):
 NETWORK_DEFAULT_PORT = 8080
 WORKER_HEARTBEAT_INTERVAL = 30      # seconds between heartbeats
 WORKER_STALE_TIMEOUT = 120          # seconds before worker is considered dead
-WORKER_POLL_INTERVAL = 5            # seconds between job polling
-PROGRESS_REPORT_INTERVAL = 2        # minimum seconds between progress API calls
+WORKER_POLL_INTERVAL = 2            # seconds between job polling (v2.25.4: was 5 - faster pickup)
+PROGRESS_REPORT_INTERVAL = 1        # min seconds between routine progress calls (v2.25.4: was 2)
+CANCEL_CHECK_INTERVAL = 1.0         # seconds between server cancel checks mid-render (v2.25.4)
 DATABASE_FILE = os.path.join(DATA_DIR, "wain_jobs.db")
 
 # Authentication

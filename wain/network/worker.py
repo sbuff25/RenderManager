@@ -21,6 +21,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from wain.config import (
+    CANCEL_CHECK_INTERVAL,
     PROGRESS_REPORT_INTERVAL,
     WORKER_HEARTBEAT_INTERVAL,
     WORKER_POLL_INTERVAL,
@@ -249,10 +250,20 @@ class WorkerClient:
         return False  # shutdown
 
     def cancel_current(self):
-        """Request graceful cancellation of the running job (worker UI)."""
-        if self._current_job:
-            self._log("[Worker] Cancel requested from worker dashboard")
-            self._soft_cancel = True
+        """Cancel the running job from the worker dashboard.
+
+        Non-Blender engines stop IMMEDIATELY (hard kill in a background
+        thread so the UI never blocks); Blender keeps the graceful path so
+        its in-progress frame finishes saving first (v2.25.4)."""
+        job = self._current_job
+        if not job:
+            return
+        self._log("[Worker] Cancel requested from worker dashboard")
+        self._soft_cancel = True
+        if job.engine_type != "blender":
+            threading.Thread(
+                target=self._stop_render_now, args=(job,), daemon=True
+            ).start()
 
     def _poll_loop(self):
         """Poll for jobs until the server becomes unreachable."""
@@ -515,7 +526,7 @@ class WorkerClient:
             # stops the render directly. Blender is left to the callback path
             # (it saves the in-progress frame at the next 'Saved:' boundary).
             def _cancel_watch():
-                while not self._render_done.wait(1.0):
+                while not self._render_done.wait(0.5):
                     if self._current_job is None:
                         return
                     if not self._soft_cancel and self._check_cancellation(job.id):
@@ -605,9 +616,14 @@ class WorkerClient:
                 self._stop_render_now(job)
                 return
 
-        # Throttle API calls
-        if now - self._last_progress_report < PROGRESS_REPORT_INTERVAL:
+        # Throttle API calls - but a FRAME CHANGE always reports promptly
+        # (0.3s burst guard) so the card's frame counter never lags behind
+        # reality by a full throttle window (v2.25.4)
+        frame_changed = job.current_frame != getattr(self, "_last_reported_frame", None)
+        min_gap = 0.3 if frame_changed else PROGRESS_REPORT_INTERVAL
+        if now - self._last_progress_report < min_gap:
             return
+        self._last_reported_frame = job.current_frame
         self._last_progress_report = now
 
         self._flush_log_buffer()
@@ -668,7 +684,7 @@ class WorkerClient:
         """Check if the server has cancelled this job. Returns True if cancelled."""
         now = time.time()
         # Only check every 3 seconds to avoid spamming the server
-        if now - self._last_cancel_check < 3.0:
+        if now - self._last_cancel_check < CANCEL_CHECK_INTERVAL:
             return False
         self._last_cancel_check = now
 

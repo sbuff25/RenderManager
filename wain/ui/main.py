@@ -473,7 +473,9 @@ def main_page():
                 pass
 
     ui.timer(5.0, _periodic_workers_refresh)
-    ui.timer(2.0, render_app.sync_from_db)
+    # 1s DB sync (v2.25.4: was 2s) - remote worker progress reaches the cards
+    # within ~1s of landing in the DB; SQLite read of a dozen rows is trivial
+    ui.timer(1.0, render_app.sync_from_db)
     ui.timer(0.25, render_app.process_queue)
 
     render_app.log(f"Wain v{APP_VERSION} started")

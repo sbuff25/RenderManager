@@ -7,6 +7,7 @@ Main application state and render queue management.
 
 import os
 import socket
+import subprocess
 import sys
 import json
 import re
@@ -89,6 +90,32 @@ class RenderApp:
                 pass
             self.jobs.extend(loaded)
             self.log(f"Network mode enabled ({len(self.jobs)} jobs loaded from database)")
+
+            # ---- Startup reconciliation (v2.25.3) -------------------------
+            # A restart mid-render leaves jobs marked 'rendering' in the DB
+            # with nobody driving them. Jobs owned by a REMOTE worker are left
+            # alone (the worker is still rendering and reporting). Jobs owned
+            # by THIS machine (or unassigned) are parked as paused - the old
+            # limbo state made the queue start ADDITIONAL local renders on
+            # top of orphaned ones.
+            host = socket.gethostname().lower()
+            for j in self.jobs:
+                owner = str(j.assigned_to or "").lower()
+                if j.status in ("rendering", "claimed") and owner in ("", host):
+                    j.status = "paused"
+                    j.status_message = "Interrupted by Wain restart - press play to resume"
+                    j.assigned_to = None
+                    try:
+                        db.update_job(j.id, status="paused", assigned_to=None,
+                                      status_message=j.status_message)
+                    except Exception:
+                        pass
+                    self.log(f"Reconciled '{j.name}': was mid-render at shutdown -> paused")
+            orphans = self._headless_ue_pids()
+            if orphans:
+                self.log(f"WARNING: {len(orphans)} orphaned UnrealEditor-Cmd "
+                         f"process(es) still running (PIDs {orphans}) - local "
+                         f"renders will WAIT until they exit")
         self.save_config()
 
     def disable_network_mode(self):
@@ -584,6 +611,29 @@ class RenderApp:
                 if chunk and chunk.parent_job_id:
                     self.start_render(chunk)
     
+    def _headless_ue_pids(self):
+        """PIDs of ALL UnrealEditor-Cmd.exe processes on this machine -
+        including orphans from a previous Wain session that this instance
+        has no handle to. A headless UE render is never legitimate twice
+        on a single-GPU box."""
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq UnrealEditor-Cmd.exe",
+                 "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).stdout
+            pids = []
+            for line in out.splitlines():
+                if line.startswith('"UnrealEditor-Cmd.exe'):
+                    try:
+                        pids.append(int(line.split('","')[1].strip('"')))
+                    except (IndexError, ValueError):
+                        pass
+            return pids
+        except Exception:
+            return []
+
     def start_render(self, job):
         # HARD single-render guard (v2.25.2): this machine renders ONE job at
         # a time, period. Whatever the trigger - queue races, mis-clicked
@@ -593,6 +643,18 @@ class RenderApp:
             self.log(f"Refusing to start '{job.name}' - already rendering "
                      f"'{self.current_job.name}' (one local render at a time)")
             return
+        # Orphan guard (v2.25.3): a headless UE process from a previous Wain
+        # session (or any external one) is still using the GPU. Leave the job
+        # queued - it starts automatically once that process exits.
+        if job.engine_type == "unreal":
+            pids = self._headless_ue_pids()
+            if pids:
+                now_ts = datetime.now().timestamp()
+                if now_ts - getattr(self, "_orphan_block_log_ts", 0) > 60:
+                    self._orphan_block_log_ts = now_ts
+                    self.log(f"Holding '{job.name}' - UnrealEditor-Cmd already "
+                             f"running (PIDs {pids}); starts when it exits")
+                return
         engine = self.engine_registry.get(job.engine_type)
         if not engine:
             job.status = "failed"

@@ -131,6 +131,12 @@ def parse_args():
              'boxes. Console session only - never RDP. (v2.25.0)',
     )
     parser.add_argument(
+        '--min-free-ram', type=float, default=None,
+        help='Worker mode: do not claim a new job while available system '
+             'RAM (GB) is below this - guards multi-GPU boxes against two '
+             'simultaneous scene loads. Default 16. (v2.25.5)',
+    )
+    parser.add_argument(
         '--software-ui', action='store_true',
         help='Disable GPU compositing for the UI window (fallback if the UI '
              'conflicts with render engines; default is GPU-accelerated)',
@@ -463,6 +469,7 @@ def run_worker(args):
         path_maps=path_maps or None,
         api_token=args.token,
         gpu_index=args.gpu,
+        min_free_ram_gb=args.min_free_ram,
     )
 
     # Headless (terminal-only) worker: --headless flag, or no Qt available

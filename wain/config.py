@@ -13,7 +13,7 @@ ASSET_VERSION = "v12"
 
 # Application info
 APP_NAME = "Wain"
-APP_VERSION = "2.25.4"
+APP_VERSION = "2.25.5"
 
 
 # ============================================================================
@@ -140,9 +140,13 @@ def check_assets(assets_dir: str):
 NETWORK_DEFAULT_PORT = 8080
 WORKER_HEARTBEAT_INTERVAL = 30      # seconds between heartbeats
 WORKER_STALE_TIMEOUT = 120          # seconds before worker is considered dead
-WORKER_POLL_INTERVAL = 2            # seconds between job polling (v2.25.4: was 5 - faster pickup)
-PROGRESS_REPORT_INTERVAL = 1        # min seconds between routine progress calls (v2.25.4: was 2)
-CANCEL_CHECK_INTERVAL = 1.0         # seconds between server cancel checks mid-render (v2.25.4)
+WORKER_POLL_INTERVAL = 2            # seconds between job polling (v2.25.5: was 5 - faster pickup)
+PROGRESS_REPORT_INTERVAL = 1        # min seconds between routine progress calls (v2.25.5: was 2)
+CANCEL_CHECK_INTERVAL = 1.0         # seconds between server cancel checks mid-render (v2.25.5)
+WORKER_MIN_FREE_RAM_GB = 16.0       # don't CLAIM a new job below this much available RAM
+                                    # (v2.25.5) - guards multi-GPU boxes where a sibling
+                                    # worker's scene load is spiking system memory.
+                                    # Override per machine: --min-free-ram N
 DATABASE_FILE = os.path.join(DATA_DIR, "wain_jobs.db")
 
 # Authentication

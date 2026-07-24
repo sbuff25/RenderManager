@@ -56,7 +56,8 @@ class WorkerClient:
     def __init__(self, server_url: str, worker_id: Optional[str] = None,
                  path_maps: Optional[List[tuple]] = None,
                  api_token: Optional[str] = None,
-                 gpu_index: Optional[int] = None):
+                 gpu_index: Optional[int] = None,
+                 min_free_ram_gb: Optional[float] = None):
         self.server_url = server_url.rstrip("/")
         if not self.server_url.startswith("http"):
             self.server_url = f"http://{self.server_url}"
@@ -67,6 +68,14 @@ class WorkerClient:
         self.path_maps = path_maps or []
         self.api_token = api_token or ""
         self.gpu_index = gpu_index  # pin UE renders to -graphicsadapter=N
+        # RAM admission gate (v2.25.5): don't claim a new job while available
+        # system memory is below this - on multi-GPU boxes the sibling
+        # worker's scene load spikes RAM, and two simultaneous UE scene loads
+        # can exhaust it. Rendering phases are steadier, so the gate clears.
+        from wain.config import WORKER_MIN_FREE_RAM_GB
+        self.min_free_ram_gb = (min_free_ram_gb if min_free_ram_gb is not None
+                                else WORKER_MIN_FREE_RAM_GB)
+        self._ram_gate_log_ts = 0.0
 
         self.engine_registry = EngineRegistry()
         # Engines this worker can claim. Blender/Marmoset render headless from
@@ -265,12 +274,57 @@ class WorkerClient:
                 target=self._stop_render_now, args=(job,), daemon=True
             ).start()
 
+    @staticmethod
+    def _available_ram_gb() -> float:
+        """Available physical RAM in GB (Windows, stdlib only).
+        Returns a huge value on failure/non-Windows so the gate never
+        false-blocks."""
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return st.ullAvailPhys / (1024 ** 3)
+        except Exception:
+            pass
+        return 9999.0
+
+    def _ram_gate_open(self) -> bool:
+        """True when there's enough free RAM to safely start another job."""
+        avail = self._available_ram_gb()
+        if avail >= self.min_free_ram_gb:
+            return True
+        now = time.time()
+        if now - self._ram_gate_log_ts > 30:
+            self._ram_gate_log_ts = now
+            self._log(f"[Worker] RAM gate: {avail:.1f} GB available < "
+                      f"{self.min_free_ram_gb:.0f} GB minimum - waiting to "
+                      f"claim (another job is likely loading its scene)")
+        return False
+
     def _poll_loop(self):
         """Poll for jobs until the server becomes unreachable."""
         while self.running:
             try:
-                # Drain mode: keep heartbeating, claim nothing new
-                job_data = None if self.drain_mode else self._poll_for_job()
+                # Drain mode: keep heartbeating, claim nothing new.
+                # RAM gate (v2.25.5): defer claiming while system memory is
+                # tight - e.g. the sibling GPU's worker is mid-scene-load.
+                claim_ok = (not self.drain_mode) and self._ram_gate_open()
+                job_data = self._poll_for_job() if claim_ok else None
                 if job_data:
                     self._render_job(job_data)
                 else:
